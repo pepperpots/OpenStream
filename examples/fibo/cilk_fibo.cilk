@@ -1,0 +1,69 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <getopt.h>
+
+
+#define _WITH_OUTPUT 0
+
+#include <sys/time.h>
+#include <unistd.h>
+double
+tdiff (struct timeval *end, struct timeval *start)
+{
+  return (double)end->tv_sec - (double)start->tv_sec +
+    (double)(end->tv_usec - start->tv_usec) / 1e6;
+}
+
+int
+fibo (int n)
+{
+  if (n < 2)
+    return n;
+  return fibo (n-1) + fibo (n-2);
+}
+
+cilk int
+cilk_fibo (int n, int c)
+{
+  int a, b;
+
+  if (n <= c)
+    return fibo (n);
+
+
+  a = spawn cilk_fibo (n - 1, c);
+  b = spawn cilk_fibo (n - 2, c);
+
+  sync;
+
+  return a + b;
+}
+
+
+cilk int
+main (int argc, char **argv)
+{
+  int result;
+  int size = 32;
+  int cutoff = 16;
+
+  struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
+  struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
+
+  if (argc >= 3)
+    {
+      size = atoi(argv[1]);
+      cutoff = atoi (argv[2]);
+    }
+
+  gettimeofday (start, NULL);
+  result = spawn cilk_fibo (size, cutoff);
+  sync;
+  gettimeofday (end, NULL);
+
+  printf ("%.5f\n", tdiff (end, start));
+
+  if (_WITH_OUTPUT)
+    printf ("[Cilk] Fibo (%d, %d) = %d\n", size, cutoff, result);
+}
