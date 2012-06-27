@@ -1187,6 +1187,7 @@ static void c_parser_omp_barrier (c_parser *);
 static void c_parser_omp_flush (c_parser *);
 static void c_parser_omp_taskwait (c_parser *);
 static void c_parser_omp_taskyield (c_parser *);
+static void c_parser_omp_tick (c_parser *);
 
 enum pragma_context { pragma_external, pragma_stmt, pragma_compound };
 static bool c_parser_pragma (c_parser *, enum pragma_context);
@@ -8538,6 +8539,17 @@ c_parser_pragma (c_parser *parser, enum pragma_context context)
       c_parser_omp_taskyield (parser);
       return false;
 
+    case PRAGMA_OMP_TICK:
+      if (context != pragma_compound)
+	{
+	  if (context == pragma_stmt)
+	    c_parser_error (parser, "%<#pragma omp tick%> may only be "
+			    "used in compound statements");
+	  goto bad_stmt;
+	}
+      c_parser_omp_tick (parser);
+      return false;
+
     case PRAGMA_OMP_THREADPRIVATE:
       c_parser_omp_threadprivate (parser);
       return false;
@@ -8658,6 +8670,10 @@ c_parser_omp_clause_name (c_parser *parser)
 	  else if (!strcmp ("firstprivate", p))
 	    result = PRAGMA_OMP_CLAUSE_FIRSTPRIVATE;
 	  break;
+	case 'i':
+	  if (!strcmp ("input", p))
+	    result = PRAGMA_OMP_CLAUSE_INPUT;
+	  break;
 	case 'l':
 	  if (!strcmp ("lastprivate", p))
 	    result = PRAGMA_OMP_CLAUSE_LASTPRIVATE;
@@ -8675,9 +8691,13 @@ c_parser_omp_clause_name (c_parser *parser)
 	case 'o':
 	  if (!strcmp ("ordered", p))
 	    result = PRAGMA_OMP_CLAUSE_ORDERED;
+	  else if (!strcmp ("output", p))
+	    result = PRAGMA_OMP_CLAUSE_OUTPUT;
 	  break;
 	case 'p':
-	  if (!strcmp ("private", p))
+	  if (!strcmp ("peek", p))
+	    result = PRAGMA_OMP_CLAUSE_PEEK;
+	  else if (!strcmp ("private", p))
 	    result = PRAGMA_OMP_CLAUSE_PRIVATE;
 	  break;
 	case 'r':
@@ -8771,6 +8791,274 @@ c_parser_omp_variable_list (c_parser *parser,
     }
 
   return list;
+}
+
+/* OpenMP X.X:
+   stream-list:
+     identifier ************************
+     variable-list , identifier
+
+   KIND must be OMP_CLAUSE_INPUT or OMP_CLAUSE_OUTPUT.  */
+static bool
+c_parser_omp_stream_identifier (c_parser *parser, location_t loc,
+				tree *id, tree *sub, tree *view_array)
+{
+  if (c_parser_next_token_is_not (parser, CPP_NAME)
+      || c_parser_peek_token (parser)->id_kind != C_ID_ID)
+    c_parser_error (parser, "expected stream or view identifier");
+
+  *id = lookup_name (c_parser_peek_token (parser)->value);
+  if (*id == NULL_TREE)
+    {
+      inform (loc, "OpenMP stream and view identifiers must"
+	      " be declared before use in streaming clauses.");
+      undeclared_variable (c_parser_peek_token (parser)->location,
+			   c_parser_peek_token (parser)->value);
+      return false;
+    }
+
+  if (*id == error_mark_node)
+    return false;
+
+  c_parser_consume_token (parser);
+
+  /* If this is an array reference (possibly multi-dimensional).  */
+  *sub = NULL_TREE;
+  while (c_parser_next_token_is (parser, CPP_OPEN_SQUARE))
+    {
+      tree t;
+
+      c_parser_consume_token (parser);
+      t = c_parser_expression (parser).value;
+      c_parser_skip_until_found (parser, CPP_CLOSE_SQUARE,
+				 "expected %<]%>");
+      if (*sub)
+	*view_array = *sub;
+      *sub = t;
+    }
+
+  /* Next, we must either connect a view or have another stream use
+     separated by a comma, or the closing parenthesis.  This test
+     prevents all other syntaxes that will be supported later (like
+     dot or deref ...)  */
+  if (c_parser_next_token_is_not (parser, CPP_LSHIFT)
+      && c_parser_next_token_is_not (parser, CPP_RSHIFT)
+      && c_parser_next_token_is_not (parser, CPP_CLOSE_PAREN)
+      && c_parser_next_token_is_not (parser, CPP_COMMA))
+    {
+      c_parser_error (parser, "wrong syntax on streaming clause");
+      return false;
+    }
+
+  return true;
+}
+
+static tree
+c_parser_omp_stream_clause (c_parser *parser,
+			    enum omp_clause_code kind,
+			    tree list)
+{
+  /* The clause's location.  */
+  location_t clause_loc = c_parser_peek_token (parser)->location;
+
+  gcc_assert (kind == OMP_CLAUSE_INPUT || kind == OMP_CLAUSE_OUTPUT
+	      || kind == OMP_CLAUSE_PEEK);
+
+  if (!c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
+    return list;
+
+  /* Every stream clause must start with either a stream identifier or
+     a view identifier.  */
+  while (true)
+    {
+      tree stream_id = NULL_TREE;
+      tree stream_idx = NULL_TREE;
+      tree view_id = NULL_TREE;
+      tree view_idx = NULL_TREE;
+      tree view_array_left = NULL_TREE;
+      tree view_array_right = NULL_TREE;
+      tree omp_clause, private_view_clause;
+
+      if (!c_parser_omp_stream_identifier (parser, clause_loc,
+					   &stream_id, &stream_idx, &view_array_left))
+	break;
+
+      omp_clause = build_omp_clause (clause_loc, kind);
+      OMP_CLAUSE_STREAM_ID (omp_clause) = stream_id;
+      OMP_CLAUSE_STREAM_SUB (omp_clause) = stream_idx;
+
+      if (c_parser_next_token_is (parser, CPP_LSHIFT)
+	  || c_parser_next_token_is (parser, CPP_RSHIFT))
+	{
+	  bool lshift_stream_operator_p =
+	    c_parser_next_token_is (parser, CPP_LSHIFT);
+
+	  c_parser_consume_token (parser);
+
+	  if (!c_parser_omp_stream_identifier (parser, clause_loc,
+					       &view_id, &view_idx, &view_array_right))
+	    break;
+
+	  /* If the clause is reversed ("view << >> stream" instead of
+	     "stream << >> view"), swap the roles.  */
+	  if ((kind == OMP_CLAUSE_INPUT && lshift_stream_operator_p)
+	      || (kind == OMP_CLAUSE_OUTPUT && !lshift_stream_operator_p))
+	    {
+	      OMP_CLAUSE_STREAM_ID (omp_clause) = view_id;
+	      view_id = stream_id;
+	      OMP_CLAUSE_STREAM_SUB (omp_clause) = view_idx;
+	      view_idx = stream_idx;
+	      view_array_right = view_array_left;
+	    }
+
+	  OMP_CLAUSE_VIEW_ID (omp_clause) = view_id;
+	  OMP_CLAUSE_BURST_SIZE (omp_clause) = view_idx;
+	  OMP_CLAUSE_VIEW_ARRAY_SIZE (omp_clause) = view_array_right;
+
+	  /* FIXME-apop: clarify whether implicit streams are OK.  For
+	     now we allow those, but emit a warning.  */
+	  if (DECL_STREAMING_FLAG_0 (stream_id) != 1)
+	    {
+	      warning_at (clause_loc, 0,
+			  "Stream %qE is implicitely typed, which may be unsafe if it is used outside of its declaration scope.",
+			  stream_id);
+	      set_stream_type (stream_id, false);
+	    }
+	  DECL_STREAMING_FLAG_1 (view_id) = 1;
+
+	  if (OMP_CLAUSE_VIEW_ARRAY_SIZE (omp_clause) != NULL_TREE)
+	    DECL_STREAMING_FLAG_2 (view_id) = 1;
+
+	  //if (kind != OMP_CLAUSE_PEEK
+	  //|| OMP_CLAUSE_BURST_SIZE (omp_clause) == NULL_TREE)
+	  //c_parser_error (parser, "a burst may not be specified on a peek clause");
+
+	  /* For now, silently ignore the burst and make it 0.  */
+	  if (kind == OMP_CLAUSE_PEEK)
+	    OMP_CLAUSE_BURST_SIZE (omp_clause) = integer_zero_node;
+
+	  if (OMP_CLAUSE_BURST_SIZE (omp_clause) == NULL_TREE)
+	    OMP_CLAUSE_BURST_SIZE (omp_clause) = integer_one_node;
+	}
+      else
+	{
+	  tree view_decl, view_type;
+
+	  /* The view should never be implicit if an array of streams
+	     is used.  If it's implicit, it's the stream variable,
+	     with a burst of one.  */
+	  gcc_assert (OMP_CLAUSE_STREAM_SUB (omp_clause) == NULL_TREE);
+
+	  /* FIXME-apop: clarify whether implicit streams are OK.  For
+	     now we allow those, but emit a warning.  */
+	  if (DECL_STREAMING_FLAG_0 (stream_id) != 1)
+	    {
+	      warning_at (clause_loc, 0,
+			  "Stream %qE is implicitely typed, which may be unsafe if it is used outside of its declaration scope.",
+			  stream_id);
+	      set_stream_type (stream_id, false);
+	    }
+
+	  /* Implicit view: the stream variable is used as a view.
+	     Make the view explicit here, same name, original stream
+	     variable's type.  */
+	  view_type = DECL_INITIAL_TYPE (stream_id);
+	  view_decl = build_decl (clause_loc, VAR_DECL,
+				  DECL_NAME (stream_id), view_type);
+	  pushdecl (view_decl);
+	  OMP_CLAUSE_VIEW_ID (omp_clause) = view_decl;
+	  OMP_CLAUSE_VIEW_ARRAY_SIZE (omp_clause) = NULL_TREE;
+	  DECL_STREAMING_FLAG_1 (view_decl) = 1;
+
+
+	  OMP_CLAUSE_BURST_SIZE (omp_clause) = (kind == OMP_CLAUSE_PEEK) ?
+	    integer_zero_node : integer_one_node;
+
+	}
+
+      /* If this is a peek clause, then just treat it as an input
+	 clause (same semantics, just 0 burst).  */
+      if (kind == OMP_CLAUSE_PEEK)
+	OMP_CLAUSE_CODE (omp_clause) = OMP_CLAUSE_INPUT;
+
+      OMP_CLAUSE_CHAIN (omp_clause) = list;
+      list = omp_clause;
+
+      /* We add a private clause on the view variable to avoid copy-in
+	 expansion.  We handle the view at the streaming clause
+	 level.  */
+      private_view_clause = build_omp_clause (clause_loc, OMP_CLAUSE_PRIVATE);
+      OMP_CLAUSE_DECL (private_view_clause) = OMP_CLAUSE_VIEW_ID (omp_clause);
+      OMP_CLAUSE_CHAIN (private_view_clause) = list;
+      list = private_view_clause;
+
+      if (c_parser_next_token_is (parser, CPP_COMMA))
+	c_parser_consume_token (parser);
+      else if (c_parser_next_token_is (parser, CPP_CLOSE_PAREN))
+	break;
+      else
+	{
+	  c_parser_error (parser, "expected %<,%> or %<)%>");
+	  break;
+	}
+    }
+
+  c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
+  return list;
+}
+
+/* Parse a TICK pragma (OpenMP streaming extension).  The clauses are
+   unnamed and are handled here.  */
+
+static void
+c_parser_omp_tick (c_parser *parser)
+{
+  c_parser_consume_pragma (parser);
+
+  while (c_parser_next_token_is_not (parser, CPP_PRAGMA_EOL))
+    {
+      location_t here = c_parser_peek_token (parser)->location;
+      tree stream_id = NULL_TREE;
+      tree stream_idx = NULL_TREE;
+      tree second_idx = NULL_TREE;
+      tree burst = NULL_TREE;
+      tree stmt = NULL_TREE;
+
+      /* All clauses are unnamed and just a set of parenthesized
+	 expressions of the form (stream >> burst).  */
+      if (!c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
+	break;
+
+      /* Parse the stream expression.  */
+      if (!c_parser_omp_stream_identifier (parser, here,
+					   &stream_id, &stream_idx, &second_idx))
+	break;
+
+      gcc_assert (second_idx == NULL_TREE);
+
+      /* If this uses an access in an array of streams, build a
+	 classical array ref.  */
+      if (stream_idx != NULL_TREE)
+	stream_id = build_array_ref (here, stream_id, stream_idx);
+
+      if (c_parser_next_token_is (parser, CPP_RSHIFT))
+	{
+	  c_parser_consume_token (parser);
+	  burst = c_parser_expression (parser).value;
+	}
+      else
+	{
+	  /* This tick implicitly represents a burst of one
+	     element.  */
+	  burst = integer_one_node;
+	}
+      c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
+
+      stmt = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TICK);
+      stmt = build_call_expr_loc (here, stmt, 2, stream_id, burst);
+      add_stmt (stmt);
+    }
+  c_parser_skip_to_pragma_eol (parser);
 }
 
 /* Similarly, but expect leading and trailing parenthesis.  This is a very
@@ -8957,6 +9245,15 @@ c_parser_omp_clause_if (c_parser *parser, tree list)
   return list;
 }
 
+/* OpenMP stream extension:
+   input ( variable-list ) */
+
+static tree
+c_parser_omp_clause_input (c_parser *parser, tree list)
+{
+  return c_parser_omp_stream_clause (parser, OMP_CLAUSE_INPUT, list);
+}
+
 /* OpenMP 2.5:
    lastprivate ( variable-list ) */
 
@@ -9060,6 +9357,24 @@ c_parser_omp_clause_ordered (c_parser *parser, tree list)
   OMP_CLAUSE_CHAIN (c) = list;
 
   return c;
+}
+
+/* OpenMP stream extension:
+   output ( variable-list ) */
+
+static tree
+c_parser_omp_clause_output (c_parser *parser, tree list)
+{
+  return c_parser_omp_stream_clause (parser, OMP_CLAUSE_OUTPUT, list);
+}
+
+/* OpenMP stream extension:
+   peek ( variable-list ) */
+
+static tree
+c_parser_omp_clause_peek (c_parser *parser, tree list)
+{
+  return c_parser_omp_stream_clause (parser, OMP_CLAUSE_PEEK, list);
 }
 
 /* OpenMP 2.5:
@@ -9332,6 +9647,10 @@ c_parser_omp_all_clauses (c_parser *parser, unsigned int mask,
 	  clauses = c_parser_omp_clause_if (parser, clauses);
 	  c_name = "if";
 	  break;
+	case PRAGMA_OMP_CLAUSE_INPUT:
+	  clauses = c_parser_omp_clause_input (parser, clauses);
+	  c_name = "input";
+	  break;
 	case PRAGMA_OMP_CLAUSE_LASTPRIVATE:
 	  clauses = c_parser_omp_clause_lastprivate (parser, clauses);
 	  c_name = "lastprivate";
@@ -9351,6 +9670,14 @@ c_parser_omp_all_clauses (c_parser *parser, unsigned int mask,
 	case PRAGMA_OMP_CLAUSE_ORDERED:
 	  clauses = c_parser_omp_clause_ordered (parser, clauses);
 	  c_name = "ordered";
+	  break;
+	case PRAGMA_OMP_CLAUSE_OUTPUT:
+	  clauses = c_parser_omp_clause_output (parser, clauses);
+	  c_name = "output";
+	  break;
+	case PRAGMA_OMP_CLAUSE_PEEK:
+	  clauses = c_parser_omp_clause_peek (parser, clauses);
+	  c_name = "peek";
 	  break;
 	case PRAGMA_OMP_CLAUSE_PRIVATE:
 	  clauses = c_parser_omp_clause_private (parser, clauses);
@@ -10439,19 +10766,30 @@ c_parser_omp_single (location_t loc, c_parser *parser)
 	| (1u << PRAGMA_OMP_CLAUSE_FIRSTPRIVATE)	\
 	| (1u << PRAGMA_OMP_CLAUSE_SHARED)		\
 	| (1u << PRAGMA_OMP_CLAUSE_FINAL)		\
-	| (1u << PRAGMA_OMP_CLAUSE_MERGEABLE))
+	| (1u << PRAGMA_OMP_CLAUSE_MERGEABLE))		\
+ 	| (1u << PRAGMA_OMP_CLAUSE_INPUT)		\
+ 	| (1u << PRAGMA_OMP_CLAUSE_OUTPUT)		\
+ 	| (1u << PRAGMA_OMP_CLAUSE_PEEK)		\
+	| (1u << PRAGMA_OMP_CLAUSE_NUM_THREADS)
 
 static tree
 c_parser_omp_task (location_t loc, c_parser *parser)
 {
-  tree clauses, block;
+  tree clauses, block, view_bind;
+
+  keep_next_level ();
+  view_bind = c_begin_compound_stmt (true);
 
   clauses = c_parser_omp_all_clauses (parser, OMP_TASK_CLAUSE_MASK,
 				      "#pragma omp task");
 
   block = c_begin_omp_task ();
   c_parser_statement (parser);
-  return c_finish_omp_task (loc, clauses, block);
+  block = c_finish_omp_task (loc, clauses, block);
+
+  view_bind = c_end_compound_stmt (loc, view_bind, true);
+
+  return add_stmt (view_bind);
 }
 
 /* OpenMP 3.0:

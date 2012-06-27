@@ -46,6 +46,16 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfgloop.h"
 
 
+
+typedef struct wstream_df_frame
+{
+  tree wstream_df_frame_type;
+  tree wstream_df_frame_field_next;
+  tree wstream_df_frame_field_work_fn;
+  tree wstream_df_frame_field_sc;
+} wstream_df_frame;
+
+
 /* Lowering of OpenMP parallel and workshare constructs proceeds in two
    phases.  The first phase scans the function looking for OMP statements
    and then for variables that must be replaced to satisfy data sharing
@@ -78,6 +88,12 @@ typedef struct omp_context
   tree record_type;
   tree sender_decl;
   tree receiver_decl;
+
+  wstream_df_frame base_frame;
+
+  /* Map view identifiers to the view data structures used to store
+     information about each view.  */
+  splay_tree view_map;
 
   /* These are used just by task contexts, if task firstprivate fn is
      needed.  srecord_type is used to communicate from the thread
@@ -143,6 +159,74 @@ static tree scan_omp_1_op (tree *, int *, void *);
       /* The sub-statements for these should be walked.  */ \
       *handled_ops_p = false; \
       break;
+
+/****************************************************************************/
+/*  WSTREAM_DF Expansion  */
+/****************************************************************************/
+
+static void scan_omp_streaming_task (gimple_stmt_iterator *,
+				     omp_context *);
+
+/* Data structure used to keep track of the fields used when building
+   up the records for representing views.  */
+typedef struct wstream_df_view
+{
+  tree wstream_df_view_type;
+  tree wstream_df_view_field_next;
+  tree wstream_df_view_field_sibling;
+  tree wstream_df_view_field_data;
+  tree wstream_df_view_field_burst;
+  tree wstream_df_view_field_horizon;
+  tree wstream_df_view_field_owner;
+  tree wstream_df_view_field_reached_pos;
+
+  bool is_array_view;
+  tree base_offset;
+  tree base_data_offset;
+} wstream_df_view;
+
+static struct wstream_df_view *build_wstream_df_view_type (omp_context *, tree);
+
+static struct wstream_df_view *
+lookup_wstream_df_view (omp_context *ctx, tree key)
+{
+  splay_tree_node n;
+
+  n = splay_tree_lookup (ctx->view_map, (splay_tree_key) key);
+  gcc_assert (n != NULL);
+
+  return (struct wstream_df_view *) n->value;
+}
+
+/* Return true if STMT is a streaming task statement.  */
+
+static bool
+is_streaming_task (gimple stmt)
+{
+  return true;
+
+  tree c  = gimple_omp_task_clauses (stmt);
+
+  if (find_omp_clause (c, OMP_CLAUSE_INPUT) != NULL
+      || find_omp_clause (c, OMP_CLAUSE_OUTPUT) != NULL)
+    return true;
+  return false;
+}
+
+/* Return true if STMT is a streaming task statement.  */
+
+static bool
+is_streaming_task_ctx (struct omp_context *ctx)
+{
+  if (gimple_code (ctx->stmt) != GIMPLE_OMP_TASK)
+    return false;
+
+  return is_streaming_task (ctx->stmt);
+}
+
+/****************************************************************************/
+/*  WSTREAM_DF Expansion (end)  */
+/****************************************************************************/
 
 /* Convenience function for calling scan_omp_1_op on tree operands.  */
 
@@ -669,7 +753,9 @@ determine_parallel_type (struct omp_region *region)
 static inline bool
 is_variable_sized (const_tree expr)
 {
-  return !TREE_CONSTANT (TYPE_SIZE_UNIT (TREE_TYPE (expr)));
+  return (!TREE_CONSTANT (TYPE_SIZE_UNIT (TREE_TYPE (expr)))
+	  && !DECL_STREAMING_FLAG_1 (expr));
+    //&& !TREE_CONSTANT (TYPE_SIZE_UNIT (DECL_INITIAL_TYPE (expr)))));
 }
 
 /* Return true if DECL is a reference type.  */
@@ -1397,6 +1483,39 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	  OMP_CLAUSE_SET_CODE (c, OMP_CLAUSE_FIRSTPRIVATE);
 	  goto do_private;
 
+	  /* Install a view in the record used for the frame.  */
+	case OMP_CLAUSE_INPUT:
+	case OMP_CLAUSE_OUTPUT:
+	  {
+	    tree field, view;
+	    struct wstream_df_view *v;
+	    splay_tree_node n;
+	    bool is_array_view;
+
+	    /* lookup_wstream_df_view */
+	    view = OMP_CLAUSE_VIEW_ID (c);
+	    n = splay_tree_lookup (ctx->view_map, (splay_tree_key) view);
+	    if (n != NULL)
+	      error_at (DECL_SOURCE_LOCATION (view),
+			"View %qE is used in multiple streaming clauses",
+			DECL_NAME (view));
+
+	    v = build_wstream_df_view_type (ctx, TREE_TYPE (view));
+	    splay_tree_insert (ctx->view_map, (splay_tree_key) view,
+			       (splay_tree_value) v);
+	    v->is_array_view = DECL_STREAMING_FLAG_2 (view);
+
+	    field = build_decl (gimple_location (ctx->stmt),
+				FIELD_DECL, DECL_NAME (view),
+				v->wstream_df_view_type);
+	    DECL_ABSTRACT_ORIGIN (field) = view;
+	    DECL_ALIGN (field) = TYPE_ALIGN (v->wstream_df_view_type);
+	    insert_field_into_struct (ctx->record_type, field);
+	    splay_tree_insert (ctx->field_map, (splay_tree_key) view,
+			       (splay_tree_value) field);
+	  }
+	  break;
+
 	case OMP_CLAUSE_LASTPRIVATE:
 	  /* Let the corresponding firstprivate clause create
 	     the variable.  */
@@ -1495,6 +1614,11 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	  decl = OMP_CLAUSE_DECL (c);
 	  if (! is_global_var (maybe_lookup_decl_in_outer_ctx (decl, ctx)))
 	    fixup_remapped_decl (decl, ctx, false);
+	  break;
+
+	case OMP_CLAUSE_INPUT:
+	case OMP_CLAUSE_OUTPUT:
+	  /* Nothing to do here.  */
 	  break;
 
 	case OMP_CLAUSE_COPYPRIVATE:
@@ -1991,7 +2115,10 @@ scan_omp_1_stmt (gimple_stmt_iterator *gsi, bool *handled_ops_p,
 
     case GIMPLE_OMP_TASK:
       taskreg_nesting_level++;
-      scan_omp_task (gsi, ctx);
+      if (is_streaming_task (stmt))
+	scan_omp_streaming_task (gsi, ctx);
+      else
+	scan_omp_task (gsi, ctx);
       taskreg_nesting_level--;
       break;
 
@@ -2266,6 +2393,42 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		  continue;
 		}
 	    case OMP_CLAUSE_FIRSTPRIVATE:
+	      if (pass == 0)
+		{
+		  /* If this is used to pass a stream to the task, we
+		     need to call the stream destructor on exit, which
+		     serves to decrement the reference count on the
+		     stream.  */
+		  tree decl = OMP_CLAUSE_DECL (c);
+
+		  if (DECL_STREAMING_FLAG_0 (decl))
+		    {
+		      tree stream_dtor = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_DTOR);
+		      tree type, num_streams;
+		      gimple_seq tseq = NULL;
+		      gimple call;
+
+		      /* Find the number of streams to deallocate if
+			 this is an array of streams.  */
+		      type = DECL_INITIAL_TYPE (decl);
+		      num_streams = size_one_node;
+		      if (TREE_CODE (type) == ARRAY_TYPE)
+			{
+			  tree size = TYPE_MAX_VALUE (TYPE_DOMAIN (type));
+			  size = maybe_lookup_decl (size, ctx);
+			  num_streams = fold_build2 (PLUS_EXPR, size_type_node,
+						     size, size_one_node);
+			}
+
+		      /* Add DTOR call.  */
+		      call = gimple_build_call (stream_dtor, 2,
+						maybe_lookup_decl (decl, ctx),
+						num_streams);
+		      gimple_seq_add_stmt_without_update (&tseq, call);
+		      gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
+		    }
+		}
+	      /* Fallthru.  */
 	    case OMP_CLAUSE_COPYIN:
 	    case OMP_CLAUSE_REDUCTION:
 	      break;
@@ -2277,6 +2440,99 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		    continue;
 		}
 	      break;
+
+	    case OMP_CLAUSE_INPUT:
+	    case OMP_CLAUSE_OUTPUT:
+	      if (pass == 0)
+		{
+		  tree view = OMP_CLAUSE_VIEW_ID (c);
+		  tree view_ref, ref;
+		  struct wstream_df_view *v = lookup_wstream_df_view (ctx, view);
+
+		  new_var = maybe_lookup_decl (view, ctx);
+		  if (new_var == NULL_TREE)
+		    new_var = view;
+
+		  /* If we deal with a scalar view, then we need only
+		     substitute the view with a deref on the data
+		     field of this view.  The case of arrays of views
+		     is more complicated: we need to use the first
+		     subscript to find the real view, then get the
+		     data field.  */
+		  if (v->is_array_view == false)
+		    {
+		      view_ref = build_receiver_ref (view, false, ctx);
+		      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_data),
+				    view_ref, v->wstream_df_view_field_data, NULL);
+		      ref = build_fold_indirect_ref (ref);
+		    }
+		  else
+		    {
+		      /* We just point to the beginning of the array
+			 of views, then the final lookup need to be
+			 done on the use site.  */
+		      view_ref = build_receiver_ref (view, false, ctx);
+		      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_next),
+				    view_ref, v->wstream_df_view_field_next, NULL);
+		      DECL_STREAMING_FLAG_1 (new_var) = 1;
+		    }
+
+		  SET_DECL_VALUE_EXPR (new_var, ref);
+		  DECL_HAS_VALUE_EXPR_P (new_var) = 1;
+
+		  /* Issue wstream_df_tdecrease calls for all output views
+		     on the owner frame (consumer).  */
+		  if (c_kind == OMP_CLAUSE_OUTPUT)
+		    {
+		      tree prefetch = builtin_decl_explicit (BUILT_IN_PREFETCH);
+
+		      if (v->is_array_view == false)
+			{
+			  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE_N);
+			  gimple_seq tseq = NULL;
+			  tree owner_ref, burst_ref;
+
+			  tree bcast_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_BROADCAST);
+			  x = build_call_expr (bcast_fn, 1, build_fold_addr_expr (view_ref));
+			  gimplify_stmt (&x, &tseq);
+
+			  owner_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_owner),
+					      view_ref, v->wstream_df_view_field_owner, NULL);
+			  burst_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst),
+					      view_ref, v->wstream_df_view_field_burst, NULL);
+			  x = build_call_expr (tdec_fn, 2, owner_ref, burst_ref);
+			  gimplify_stmt (&x, &tseq);
+
+			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
+
+			  /* Issue prefetch on the owner of this
+			     task's consumer frame as it will need to
+			     be written then tdecreased.  */
+			  /* TODO: handle view arrays.  */
+			  x = build_call_expr (prefetch, 3, owner_ref,
+					       integer_zero_node,
+					       build_int_cst (integer_type_node, 3));
+			  gimplify_stmt (&x, ilist);
+			}
+		      else
+			{
+			  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE_N_VEC);
+			  gimple_seq tseq = NULL;
+			  tree size_ref, burst_ref;
+
+			  burst_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst),
+					      view_ref, v->wstream_df_view_field_burst, NULL);
+			  size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+					      view_ref, v->wstream_df_view_field_reached_pos, NULL);
+			  x = build_call_expr (tdec_fn, 3, size_ref,
+					       build_fold_addr_expr (view_ref), burst_ref);
+			  gimplify_stmt (&x, &tseq);
+			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
+			}
+		    }
+		}
+	      continue;
+
 	    default:
 	      continue;
 	    }
@@ -2759,11 +3015,287 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
     		    omp_context *ctx)
 {
   tree c;
+  gimple_seq post_tcreate_list = NULL;
+  gimple_seq pre_tcreate_list = NULL;
+  bool is_wstream_df_frame = false;
+
+  if (is_streaming_task_ctx (ctx))
+    {
+      tree t, workfn;
+      location_t loc = gimple_location (ctx->stmt);
+      tree tcreate_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TCREATE);
+      tree frame_ptr = gimple_omp_taskreg_data_arg (ctx->stmt);
+      tree synch_ctr = size_zero_node;
+
+      tree data_offset = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
+      tree view_array_offset = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
+
+      is_wstream_df_frame = true;
+
+      /* Compute the synchronization counter and the frame size.  Also
+	 prepare the statements to set up the views in the frame.  */
+
+
+      /* Pre-compute the combined size of all arrays of views to know
+	 the offset of the data block.  Also add in the sizes of
+	 pass-by-copy arrays of streams.  */
+      /* First pass.  */
+      for (c = clauses; c ; c = OMP_CLAUSE_CHAIN (c))
+	{
+	  if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_INPUT
+	      || OMP_CLAUSE_CODE (c) == OMP_CLAUSE_OUTPUT)
+	    {
+	      tree view = OMP_CLAUSE_VIEW_ID (c);
+	      tree tmp, view_ref, field, ref, resolve_fn, stream;
+	      struct wstream_df_view *v = lookup_wstream_df_view (ctx, view);
+	      tree view_array_size = OMP_CLAUSE_VIEW_ARRAY_SIZE (c);
+	      tree effective_array_size = size_zero_node;
+
+	      /* Compute the space we need to set aside for a potential
+		 array of views.  */
+	      if (view_array_size != NULL_TREE)
+		effective_array_size = fold_build2 (MULT_EXPR, size_type_node,
+						    fold_convert (size_type_node, view_array_size),
+						    TYPE_SIZE_UNIT (v->wstream_df_view_type));
+
+	      /* Compute the cumulated offset needed to reach the data
+		 block.  As we need to go through all of the clauses
+		 before knowing its final position, we'll set the data
+		 pointers in a second pass.  */
+	      data_offset = fold_build2 (PLUS_EXPR, TREE_TYPE (data_offset),
+					 data_offset, unshare_expr (effective_array_size));
+
+	      field = lookup_sfield (OMP_CLAUSE_VIEW_ID (c), ctx);
+	      tmp = build_simple_mem_ref_loc (loc, ctx->sender_decl);
+	      view_ref = build3 (COMPONENT_REF, TREE_TYPE (field),
+				 tmp, field, NULL);
+
+
+	      /* Set the owner of this view's data block as this very
+		 same frame (consumer owns memory).  */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_owner),
+			    unshare_expr (view_ref), v->wstream_df_view_field_owner, NULL);
+	      tmp = fold_convert (TREE_TYPE (v->wstream_df_view_field_owner), frame_ptr);
+	      gimplify_assign (ref, tmp, &post_tcreate_list);
+
+	      /* Set the reached position to 0 if this is a normal
+		 view, to the size of the array if it's an array of
+		 views.  */
+	      tmp = (v->is_array_view) ? view_array_size : size_zero_node;
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+			    unshare_expr (view_ref), v->wstream_df_view_field_reached_pos, NULL);
+	      gimplify_assign (ref, tmp, &post_tcreate_list);
+
+	      /* If this clause uses an array of views, use the "next"
+		 field of the view to pass the pointer of the true array
+		 of views.  The current view is only a stub.  */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_next),
+			    unshare_expr (view_ref), v->wstream_df_view_field_next, NULL);
+	      if (v->is_array_view == false)
+		gimplify_assign (ref, null_pointer_node, &post_tcreate_list);
+	      else
+		{
+		  t = fold_build2 (POINTER_PLUS_EXPR, ptr_type_node,
+				   fold_convert (ptr_type_node, frame_ptr),
+				   fold_convert (size_type_node, view_array_offset));
+		  gimplify_assign (ref, t, &post_tcreate_list);
+		  /* Update offset for next array of views.  */
+		  view_array_offset = fold_build2 (PLUS_EXPR, TREE_TYPE (view_array_offset),
+						   view_array_offset, unshare_expr (effective_array_size));
+		}
+	    }
+
+	  /* FXAP -- add case of firstprivate on array of streams:
+	     increase the size of the frame and prepare offset of VLAs ...  */
+	  if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_FIRSTPRIVATE)
+	    {
+	      tree decl = OMP_CLAUSE_DECL (c);
+
+	      if (DECL_STREAMING_FLAG_0 (decl)
+		  && TREE_CODE (DECL_INITIAL_TYPE (decl)) == ARRAY_TYPE)
+		{
+		  tree type = DECL_INITIAL_TYPE (decl);
+		  tree size = TYPE_MAX_VALUE (TYPE_DOMAIN (type));
+
+		  size = fold_build2 (PLUS_EXPR, size_type_node,
+					     size, size_one_node);
+		  size = fold_build2 (MULT_EXPR, size_type_node,
+				      size, TYPE_SIZE_UNIT (ptr_type_node));
+
+		  /* Save the position of this array.  */
+		  gcc_assert (!DECL_HAS_VALUE_EXPR_P (decl));
+		  SET_DECL_VALUE_EXPR (decl, unshare_expr (data_offset));
+
+		  /* Update the new size of the frame.  */
+		  data_offset = fold_build2 (PLUS_EXPR, TREE_TYPE (data_offset),
+					     data_offset, unshare_expr (size));
+		}
+	    }
+	}
+
+      /* Second pass.  */
+      for (c = clauses; c ; c = OMP_CLAUSE_CHAIN (c))
+	{
+	  if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_INPUT
+	      || OMP_CLAUSE_CODE (c) == OMP_CLAUSE_OUTPUT)
+	    {
+	      tree view = OMP_CLAUSE_VIEW_ID (c);
+	      tree tmp, view_ref, field, ref, resolve_fn, stream;
+	      struct wstream_df_view *v = lookup_wstream_df_view (ctx, view);
+	      tree view_burst = OMP_CLAUSE_BURST_SIZE (c);
+	      tree view_array_size = OMP_CLAUSE_VIEW_ARRAY_SIZE (c);
+	      tree is_input_view;
+
+	      tree data_loc = create_tmp_var (ptr_type_node, ".wstream_df_data_p");
+	      tree burst = create_tmp_var (size_type_node, ".burst");
+	      tree horizon = create_tmp_var (size_type_node, ".horizon");
+
+	      /* Compute the view's burst size.  */
+	      t = TREE_TYPE (OMP_CLAUSE_VIEW_ID (c));
+	      while (TREE_CODE (t) == ARRAY_TYPE)
+		t = TREE_TYPE (t);
+	      t = fold_build2 (MULT_EXPR, size_type_node, view_burst,
+			       TYPE_SIZE_UNIT (t));
+	      gimplify_assign (burst, t, &pre_tcreate_list);
+
+	      /* Get the view's horizon size.  */
+	      gimplify_assign (horizon, OMP_CLAUSE_VIEW_SIZE (c), &pre_tcreate_list);
+
+	      /* Get a ref to the view in the DF frame.  */
+	      field = lookup_sfield (OMP_CLAUSE_VIEW_ID (c), ctx);
+	      tmp = build_simple_mem_ref_loc (loc, ctx->sender_decl);
+	      view_ref = build3 (COMPONENT_REF, TREE_TYPE (field),
+				 tmp, field, NULL);
+
+	      /* Set the burst size field in the view.  */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst),
+			    unshare_expr (view_ref), v->wstream_df_view_field_burst, NULL);
+	      gimplify_assign (ref, burst, &post_tcreate_list);
+
+	      /* Set the horizon size field in the view.  */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon),
+			    unshare_expr (view_ref), v->wstream_df_view_field_horizon, NULL);
+	      gimplify_assign (ref, horizon, &post_tcreate_list);
+
+
+	      if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_INPUT)
+		{
+		  t = fold_build2 (POINTER_PLUS_EXPR, ptr_type_node,
+				   fold_convert (ptr_type_node, frame_ptr),
+				   fold_convert (size_type_node, unshare_expr (data_offset)));
+		  gimplify_assign (data_loc, t, &post_tcreate_list);
+
+		  /* Set the data pointer in the view.  */
+		  ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_data),
+				unshare_expr (view_ref), v->wstream_df_view_field_data, NULL);
+		  tmp = fold_convert (TREE_TYPE (v->wstream_df_view_field_data), data_loc);
+		  gimplify_assign (ref, tmp, &post_tcreate_list);
+
+		  /* If this is an array of views, we need to compute
+		     the positions for the data_offset based on
+		     N*burst.  */
+		  if (v->is_array_view == true)
+		    {
+		      tree array_view_data_size =
+			fold_build2 (MULT_EXPR, size_type_node, horizon,
+				     fold_convert (size_type_node, view_array_size));
+		      data_offset = fold_build2 (POINTER_PLUS_EXPR, size_type_node,
+						 data_offset, unshare_expr (array_view_data_size));
+
+		      synch_ctr = fold_build2 (PLUS_EXPR, TREE_TYPE (synch_ctr),
+					       synch_ctr, unshare_expr (array_view_data_size));
+		    }
+		  else
+		    {
+		      data_offset = fold_build2 (POINTER_PLUS_EXPR, size_type_node,
+						 data_offset, horizon);
+		      synch_ctr = fold_build2 (PLUS_EXPR, TREE_TYPE (synch_ctr),
+					       synch_ctr, horizon);
+		    }
+
+		  is_input_view = boolean_true_node;
+		}
+	      else /* (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_OUTPUT) */
+		{
+		  if (v->is_array_view == true)
+		    synch_ctr = fold_build2 (PLUS_EXPR, size_type_node,
+					     synch_ctr, fold_convert (size_type_node, view_array_size));
+		  else
+		    synch_ctr = fold_build2 (PLUS_EXPR, TREE_TYPE (synch_ctr),
+					     synch_ctr, size_one_node);
+
+		  /* Set the data pointer in the view.  */
+		  ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_data),
+				unshare_expr (view_ref), v->wstream_df_view_field_data, NULL);
+		  gimplify_assign (ref, null_pointer_node, &post_tcreate_list);
+
+		  is_input_view = boolean_false_node;
+		}
+
+	      /* Issue call to resolve dependences.  */
+	      tmp = build_simple_mem_ref_loc (loc, ctx->sender_decl);
+	      view_ref = build3 (COMPONENT_REF, TREE_TYPE (field), tmp, field, NULL);
+	      ref = build_fold_addr_expr (view_ref);
+	      stream = OMP_CLAUSE_STREAM_ID (c);
+
+	      //if (TREE_CODE (DECL_INITIAL_TYPE (stream)) == ARRAY_TYPE)
+	      //stream = build_fold_addr_expr (stream);
+
+	      if (OMP_CLAUSE_STREAM_SUB (c) != NULL_TREE)
+		{
+		  tree index = OMP_CLAUSE_STREAM_SUB (c);
+		  tree vss_type = build_pointer_type (ptr_type_node);
+		  tree offset = fold_build2 (MULT_EXPR, size_type_node,
+					     TYPE_SIZE_UNIT (vss_type),
+					     fold_convert (size_type_node, index));
+		  stream = fold_build2 (POINTER_PLUS_EXPR, vss_type,
+					fold_convert (vss_type, stream), offset);
+		  stream = build_fold_indirect_ref (stream);
+		}
+
+	      if (v->is_array_view == false)
+		{
+		  resolve_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_RESOLVE_DEPENDENCES);
+		  t = build_call_expr (resolve_fn, 3, ref,
+				       stream, is_input_view);
+		}
+	      else
+		{
+		  resolve_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_RESOLVE_N_DEPENDENCES);
+		  //if (TREE_CODE (TREE_TYPE (stream)) == ARRAY_TYPE)
+		  //stream = build_fold_addr_expr (stream);
+		  t = build_call_expr (resolve_fn, 4, fold_convert (size_type_node, view_array_size), ref,
+				       stream, is_input_view);
+		}
+	      gimplify_and_add (t, &post_tcreate_list);
+
+	      DECL_ABSTRACT_ORIGIN (TREE_OPERAND (view_ref, 1)) = NULL;
+	    }
+	}
+
+      /* In the case of tasks that have neither inputs nor outputs
+	 (side effects only), we need to add some more calls to get
+	 them on the ready queues.  */
+      if (synch_ctr == size_zero_node)
+	{
+	  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE);
+	  t = build_call_expr (tdec_fn, 1, frame_ptr);
+	  gimplify_and_add (t, &post_tcreate_list);
+
+	  synch_ctr = size_one_node;
+	}
+
+      workfn = gimple_omp_task_child_fn (ctx->stmt);
+      workfn = build_fold_addr_expr_loc (loc, workfn);
+      t = build_call_expr (tcreate_fn, 3, synch_ctr, data_offset, workfn);
+      gimplify_assign (frame_ptr, fold_convert (TREE_TYPE (frame_ptr), t), ilist);
+    }
 
   for (c = clauses; c ; c = OMP_CLAUSE_CHAIN (c))
     {
       tree val, ref, x, var;
       bool by_ref, do_in = false, do_out = false;
+      bool stream_array_do_in = false;
       location_t clause_loc = OMP_CLAUSE_LOCATION (c);
 
       switch (OMP_CLAUSE_CODE (c))
@@ -2793,8 +3325,51 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 
       switch (OMP_CLAUSE_CODE (c))
 	{
-	case OMP_CLAUSE_PRIVATE:
 	case OMP_CLAUSE_FIRSTPRIVATE:
+	  /* Add a reference to a stream if it is passed as
+	     firstprivate to a task.  Additionally, if this is an
+	     array of streams or an array of stream references, handle the copy */
+	  if (DECL_STREAMING_FLAG_0 (val))
+	    {
+	      tree ref_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_REFERENCE);
+	      tree t, num_streams = size_one_node;
+	      tree type = DECL_INITIAL_TYPE (val);
+
+	      if (TREE_CODE (type) == ARRAY_TYPE)
+		{
+		  tree cpy = builtin_decl_explicit (BUILT_IN_MEMCPY);
+		  tree size, offset, dest;
+
+		  num_streams = fold_build2 (PLUS_EXPR, size_type_node,
+					     TYPE_MAX_VALUE (TYPE_DOMAIN (type)),
+					     size_one_node);
+		  size = fold_build2 (MULT_EXPR, size_type_node,
+				      num_streams,
+				      TYPE_SIZE_UNIT (ptr_type_node));
+
+		  /* Add a copy statement of the array of streams to
+		     the frame.  */
+		  dest = gimple_omp_taskreg_data_arg (ctx->stmt);
+		  dest = fold_convert (ptr_type_node, dest);
+		  offset = unshare_expr (DECL_VALUE_EXPR (val));
+		  offset = fold_convert (size_type_node, offset);
+		  dest = fold_build2 (POINTER_PLUS_EXPR, ptr_type_node,
+				      dest, offset);
+
+		  t = build_call_expr (cpy, 3, dest, val, size);
+		  gimplify_and_add (t, ilist);
+
+		  /* Ensure that the stream array field points in the
+		     local frame copy.  */
+		  stream_array_do_in = true;
+		  SET_DECL_VALUE_EXPR (val, unshare_expr (dest));
+		}
+
+	      t = build_call_expr (ref_fn, 2, val, num_streams);
+	      gimplify_and_add (t, ilist);
+	    }
+	  /* Fallthru.  */
+	case OMP_CLAUSE_PRIVATE:
 	case OMP_CLAUSE_COPYIN:
 	  do_in = true;
 	  break;
@@ -2825,19 +3400,40 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 
       if (do_in)
 	{
-	  ref = build_sender_ref (val, ctx);
 	  x = by_ref ? build_fold_addr_expr_loc (clause_loc, var) : var;
+
+	  if (is_wstream_df_frame == true)
+	    {
+	      tree field = lookup_sfield (val, ctx);
+	      tree src = build_simple_mem_ref_loc (clause_loc, ctx->sender_decl);
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (field),
+			    src, field, NULL);
+
+	      /* In the case of arrays of streams, replace the source
+		 of the assignment with the address of the copy of the
+		 array.  */
+	      if (stream_array_do_in)
+		x = DECL_VALUE_EXPR (val);
+	    }
+	  else
+	    ref = build_sender_ref (val, ctx);
+
 	  gimplify_assign (ref, x, ilist);
 	  if (is_task_ctx (ctx))
 	    DECL_ABSTRACT_ORIGIN (TREE_OPERAND (ref, 1)) = NULL;
 	}
 
+      /* FIXME-apop: maybe handle the do_out as well .. though it
+	 doesn't make much sense with dataflow frames.  */
       if (do_out)
 	{
 	  ref = build_sender_ref (val, ctx);
 	  gimplify_assign (var, ref, olist);
 	}
     }
+  gimple_seq_add_seq (ilist, post_tcreate_list);
+  gimple_seq_add_seq (&pre_tcreate_list, *ilist);
+  *ilist = pre_tcreate_list;
 }
 
 /* Generate code to implement SHARED from the sender (aka parent)
@@ -3598,8 +4194,9 @@ expand_omp_taskreg (struct omp_region *region)
   /* Emit a library call to launch the children threads.  */
   if (gimple_code (entry_stmt) == GIMPLE_OMP_PARALLEL)
     expand_parallel_call (region, new_bb, entry_stmt, ws_args);
-  else
+  else if (!is_streaming_task (entry_stmt))
     expand_task_call (new_bb, entry_stmt);
+
   update_ssa (TODO_update_ssa_only_virtuals);
 }
 
@@ -6721,7 +7318,30 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
   record_vars_into (ctx->block_vars, child_fn);
   record_vars_into (gimple_bind_vars (par_bind), child_fn);
 
-  if (ctx->record_type)
+  if (is_streaming_task_ctx (ctx))
+    {
+      tree tend_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TEND);
+      tree get_cfp_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_GET_CFP);
+      gimple_seq iseq = NULL;
+      tree x;
+
+      ctx->sender_decl
+	= create_tmp_var (build_pointer_type (ctx->record_type),
+			  ".wstream_df_frame_pointer");
+      DECL_NAMELESS (ctx->sender_decl) = 1;
+      TREE_ADDRESSABLE (ctx->sender_decl) = 1;
+      gimple_omp_taskreg_set_data_arg (stmt, ctx->sender_decl);
+
+      /* Issue get_cfp and tend calls.  */
+      x = build_call_expr (get_cfp_fn, 0);
+      gimplify_assign (ctx->receiver_decl, x, &iseq);
+      gimple_seq_add_seq (&iseq, par_ilist);
+      par_ilist = iseq;
+
+      x = build_call_expr (tend_fn, 0);
+      gimplify_stmt (&x, &par_olist);
+    }
+  else if (ctx->record_type)
     {
       ctx->sender_decl
 	= create_tmp_var (ctx->srecord_type ? ctx->srecord_type
@@ -6960,7 +7580,255 @@ struct gimple_opt_pass pass_lower_omp =
   0                                     /* todo_flags_finish */
  }
 };
-
+
+/****************************************************************************/
+/*  WSTREAM_DF Expansion  */
+/****************************************************************************/
+
+/* Build a decl for the work function of a WSTREAM_DF frame.  It'll not
+   contain a body yet, just the bare decl.  */
+
+static void
+create_wstream_df_work_function (omp_context *ctx)
+{
+  tree decl, type, name, t;
+
+  name = clone_function_name (current_function_decl, "_wstream_df_workfn");
+  type = build_function_type_list (void_type_node, ptr_type_node, NULL_TREE);
+  decl = build_decl (gimple_location (ctx->stmt), FUNCTION_DECL, name, type);
+  ctx->cb.dst_fn = decl;
+
+  TREE_STATIC (decl) = 1;
+  TREE_USED (decl) = 1;
+  DECL_ARTIFICIAL (decl) = 1;
+  DECL_NAMELESS (decl) = 1;
+  DECL_IGNORED_P (decl) = 0;
+  TREE_PUBLIC (decl) = 0;
+  DECL_UNINLINABLE (decl) = 1;
+  DECL_EXTERNAL (decl) = 0;
+  DECL_CONTEXT (decl) = NULL_TREE;
+  DECL_INITIAL (decl) = make_node (BLOCK);
+
+  t = build_decl (DECL_SOURCE_LOCATION (decl),
+		  RESULT_DECL, NULL_TREE, void_type_node);
+  DECL_ARTIFICIAL (t) = 1;
+  DECL_IGNORED_P (t) = 1;
+  DECL_CONTEXT (t) = decl;
+  DECL_RESULT (decl) = t;
+
+  t = build_decl (DECL_SOURCE_LOCATION (decl),
+		  PARM_DECL, get_identifier (".wstream_df_frame_i"),
+		  build_pointer_type (ctx->record_type));
+  DECL_ARTIFICIAL (t) = 1;
+  DECL_NAMELESS (t) = 1;
+  DECL_ARG_TYPE (t) = ptr_type_node;
+  DECL_CONTEXT (t) = current_function_decl;
+  TREE_USED (t) = 1;
+  DECL_ARGUMENTS (decl) = t;
+
+  ctx->receiver_decl = t;
+
+  /* Allocate memory for the function structure.  The call to
+     allocate_struct_function clobbers CFUN, so we need to restore
+     it afterward.  */
+  push_struct_function (decl);
+  cfun->function_end_locus = gimple_location (ctx->stmt);
+  pop_cfun ();
+}
+
+static struct wstream_df_view *
+build_wstream_df_view_type (omp_context *ctx, tree data_type)
+{
+  tree field, name, type, view_t;
+
+  struct wstream_df_view *ret = XCNEW (struct wstream_df_view);
+
+  /* Build the struct base.  */
+  view_t = lang_hooks.types.make_type (RECORD_TYPE);
+  name = create_tmp_var_name (".wstream_df_view_s");
+  name = build_decl (gimple_location (ctx->stmt),
+		     TYPE_DECL, name, view_t);
+  DECL_ARTIFICIAL (name) = 1;
+  DECL_NAMELESS (name) = 1;
+  TYPE_NAME (view_t) = name;
+
+  /* Add fields.  */
+  name = create_tmp_var_name ("reached_position");
+  type = size_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_reached_pos = field;
+
+  name = create_tmp_var_name ("owner");
+  type = ptr_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_owner = field;
+
+  name = create_tmp_var_name ("horizon");
+  type = size_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_horizon = field;
+
+  name = create_tmp_var_name ("burst");
+  type = size_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_burst = field;
+
+  /* MUST always be 3rd field.  */
+  name = create_tmp_var_name ("sibling");
+  type = ptr_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_sibling = field;
+
+  /* MUST always be 2nd field.  */
+  name = create_tmp_var_name ("data");
+  //if (data_type == NULL || *data_type == NULL_TREE)
+  //type = ptr_type_node;
+  //else
+  type = build_pointer_type (data_type);
+
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_data = field;
+
+  /* MUST always be 1st field.  */
+  name = create_tmp_var_name ("next");
+  type = ptr_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_next = field;
+
+  ret->wstream_df_view_type = view_t;
+
+  layout_type (ret->wstream_df_view_type);
+
+  return ret;
+}
+
+static void
+build_wstream_df_frame_base_type (omp_context *ctx)
+{
+  tree name, field, type;
+  /* The type built for copying openmp task parameters need to be
+     added afterwards to ensure that the first three fields are the
+     ones used by the runtime:
+
+     void * __next_placeholder;
+     void (*work_fn) (void);
+     int synchronization_counter;
+
+     Reversed order to ensure the above order is actually obtained.
+  */
+
+  name = create_tmp_var_name ("synchronization_counter");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_sc = field;
+
+  name = create_tmp_var_name ("work_fn");
+  type = ptr_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /*  insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_work_fn = field;
+
+  name = create_tmp_var_name ("next");
+  type = ptr_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /*  insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_next = field;
+
+  ctx->base_frame.wstream_df_frame_type = ctx->record_type;
+}
+
+
+/* Scan an OpenMP task directive with streaming semantics.  */
+
+static void
+scan_omp_streaming_task (gimple_stmt_iterator *gsi, omp_context *outer_ctx)
+{
+  tree name;
+  omp_context *ctx;
+  gimple stmt = gsi_stmt (*gsi);
+  location_t loc = gimple_location (stmt);
+
+  ctx = new_omp_context (stmt, outer_ctx);
+  if (taskreg_nesting_level > 1)
+    ctx->is_nested = true;
+  ctx->field_map = splay_tree_new (splay_tree_compare_pointers, 0, 0);
+  ctx->view_map = splay_tree_new (splay_tree_compare_pointers, 0, 0);
+  ctx->default_kind = OMP_CLAUSE_DEFAULT_SHARED;
+
+  ctx->record_type = lang_hooks.types.make_type (RECORD_TYPE);
+  name = create_tmp_var_name (".wstream_df_frame_s");
+  name = build_decl (gimple_location (ctx->stmt),
+		     TYPE_DECL, name, ctx->record_type);
+  DECL_ARTIFICIAL (name) = 1;
+  DECL_NAMELESS (name) = 1;
+  TYPE_NAME (ctx->record_type) = name;
+
+  create_wstream_df_work_function (ctx);
+  gimple_omp_task_set_child_fn (stmt, ctx->cb.dst_fn);
+
+  scan_sharing_clauses (gimple_omp_task_clauses (stmt), ctx);
+
+  scan_omp (gimple_omp_body (stmt), ctx);
+
+  build_wstream_df_frame_base_type (ctx);
+
+  {
+    tree *p, t, vla_fields = NULL_TREE, *q = &vla_fields;
+    /* Move VLA fields to the end.  */
+    p = &TYPE_FIELDS (ctx->record_type);
+    while (*p)
+      if (!TYPE_SIZE_UNIT (TREE_TYPE (*p))
+	  || ! TREE_CONSTANT (TYPE_SIZE_UNIT (TREE_TYPE (*p))))
+	{
+	  *q = *p;
+	  *p = TREE_CHAIN (*p);
+	  TREE_CHAIN (*q) = NULL_TREE;
+	  q = &TREE_CHAIN (*q);
+	}
+      else
+	p = &DECL_CHAIN (*p);
+    *p = vla_fields;
+    layout_type (ctx->record_type);
+    fixup_child_record_type (ctx);
+    if (ctx->srecord_type)
+      layout_type (ctx->srecord_type);
+    t = fold_convert_loc (loc, long_integer_type_node,
+			  TYPE_SIZE_UNIT (ctx->record_type));
+    gimple_omp_task_set_arg_size (stmt, t);
+    t = build_int_cst (long_integer_type_node,
+		       TYPE_ALIGN_UNIT (ctx->record_type));
+    gimple_omp_task_set_arg_align (stmt, t);
+  }
+}
+
+/****************************************************************************/
+/*  WSTREAM_DF Expansion (end)  */
+/****************************************************************************/
+
+
 /* The following is a utility to diagnose OpenMP structured block violations.
    It is not part of the "omplower" pass, as that's invoked too late.  It
    should be invoked by the respective front ends after gimplification.  */

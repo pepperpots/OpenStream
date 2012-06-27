@@ -309,6 +309,15 @@ dump_omp_clause (pretty_printer *buffer, tree clause, int spc, int flags)
     case OMP_CLAUSE_LASTPRIVATE:
       name = "lastprivate";
       goto print_remap;
+    case OMP_CLAUSE_INPUT:
+      name = "input";
+      goto print_remap;
+    case OMP_CLAUSE_OUTPUT:
+      name = "output";
+      goto print_remap;
+    case OMP_CLAUSE_PEEK:
+      name = "peek";
+      goto print_remap;
     case OMP_CLAUSE_COPYIN:
       name = "copyin";
       goto print_remap;
@@ -2145,6 +2154,11 @@ dump_generic_node (pretty_printer *buffer, tree node, int spc, int flags,
       dump_omp_clauses (buffer, OMP_TASK_CLAUSES (node), spc, flags);
       goto dump_omp_body;
 
+      /*case OMP_TICK:
+      pp_string (buffer, "#pragma omp tick");
+      dump_omp_clauses (buffer, OMP_TICK_CLAUSES (node), spc, flags);
+      break;
+      */
     case OMP_FOR:
       pp_string (buffer, "#pragma omp for");
       dump_omp_clauses (buffer, OMP_FOR_CLAUSES (node), spc, flags);

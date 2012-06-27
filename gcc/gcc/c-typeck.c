@@ -10854,6 +10854,27 @@ c_finish_omp_clauses (tree clauses)
 	    bitmap_set_bit (&lastprivate_head, DECL_UID (t));
 	  break;
 
+	case OMP_CLAUSE_INPUT:
+	  name = "input";
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_OUTPUT:
+	  name = "output";
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_PEEK:
+	  name = "peek";
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
 	case OMP_CLAUSE_IF:
 	case OMP_CLAUSE_NUM_THREADS:
 	case OMP_CLAUSE_SCHEDULE:

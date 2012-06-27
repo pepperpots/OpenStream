@@ -362,6 +362,15 @@ enum omp_clause_code
   /* OpenMP clause: lastprivate (variable_list).  */
   OMP_CLAUSE_LASTPRIVATE,
 
+  /* OpenMP clause: input (variable_list).  */
+  OMP_CLAUSE_INPUT,
+
+  /* OpenMP clause: output (variable_list).  */
+  OMP_CLAUSE_OUTPUT,
+
+  /* OpenMP clause: peek (variable_list).  */
+  OMP_CLAUSE_PEEK,
+
   /* OpenMP clause: reduction (operator:variable_list).
      OMP_CLAUSE_REDUCTION_CODE: The tree_code of the operator.
      Operand 1: OMP_CLAUSE_REDUCTION_INIT: Stmt-list to initialize the var.
@@ -1829,6 +1838,8 @@ extern void protected_set_expr_location (tree, location_t);
 #define OMP_TASK_BODY(NODE)	   TREE_OPERAND (OMP_TASK_CHECK (NODE), 0)
 #define OMP_TASK_CLAUSES(NODE)	   TREE_OPERAND (OMP_TASK_CHECK (NODE), 1)
 
+#define OMP_TICK_CLAUSES(NODE)	   TREE_OPERAND (NODE, 1)
+
 #define OMP_TASKREG_CHECK(NODE)	  TREE_RANGE_CHECK (NODE, OMP_PARALLEL, OMP_TASK)
 #define OMP_TASKREG_BODY(NODE)    TREE_OPERAND (OMP_TASKREG_CHECK (NODE), 0)
 #define OMP_TASKREG_CLAUSES(NODE) TREE_OPERAND (OMP_TASKREG_CHECK (NODE), 1)
@@ -1860,6 +1871,35 @@ extern void protected_set_expr_location (tree, location_t);
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
 					      OMP_CLAUSE_PRIVATE,	\
 	                                      OMP_CLAUSE_COPYPRIVATE), 0)
+
+#define OMP_CLAUSE_STREAM_ID(NODE)     					\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 0)
+#define OMP_CLAUSE_STREAM_SUB(NODE)					\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 1)
+#define OMP_CLAUSE_VIEW_ID(NODE)					\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 2)
+#define OMP_CLAUSE_BURST_SIZE(NODE)					\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 3)
+#define OMP_CLAUSE_VIEW_SIZE(NODE)					\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 4)
+#define OMP_CLAUSE_VIEW_ARRAY_SIZE(NODE)				\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 5)
+#define OMP_CLAUSE_FIRSTPRIVATE_INPUT(NODE)				\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE,			\
+						OMP_CLAUSE_INPUT), 6)
+
 #define OMP_CLAUSE_HAS_LOCATION(NODE) \
   ((OMP_CLAUSE_CHECK (NODE))->omp_clause.locus != UNKNOWN_LOCATION)
 #define OMP_CLAUSE_LOCATION(NODE)  (OMP_CLAUSE_CHECK (NODE))->omp_clause.locus
@@ -2849,6 +2889,19 @@ struct GTY(()) tree_decl_minimal {
 #define DECL_LANG_FLAG_8(NODE) \
   (DECL_COMMON_CHECK (NODE)->decl_common.lang_flag_8)
 
+/* Additional flags for streaming uses.  */
+#define DECL_STREAMING_FLAG_0(NODE) \
+  (DECL_COMMON_CHECK (NODE)->decl_common.streaming_flag_0)
+#define DECL_STREAMING_FLAG_1(NODE) \
+  (DECL_COMMON_CHECK (NODE)->decl_common.streaming_flag_1)
+#define DECL_STREAMING_FLAG_2(NODE) \
+  (DECL_COMMON_CHECK (NODE)->decl_common.streaming_flag_2)
+#define DECL_STREAMING_FLAG_3(NODE) \
+  (DECL_COMMON_CHECK (NODE)->decl_common.streaming_flag_3)
+
+#define DECL_INITIAL_TYPE(NODE) \
+  (DECL_COMMON_CHECK (NODE)->decl_common.initial_type)
+
 /* Nonzero for a scope which is equal to file scope.  */
 #define SCOPE_FILE_SCOPE_P(EXP)	\
   (! (EXP) || TREE_CODE (EXP) == TRANSLATION_UNIT_DECL)
@@ -2925,7 +2978,12 @@ struct GTY(()) tree_decl_common {
   /* DECL_OFFSET_ALIGN, used only for FIELD_DECLs.  */
   unsigned int off_align : 8;
 
-  /* 24-bits unused.  */
+  unsigned streaming_flag_0 : 1;
+  unsigned streaming_flag_1 : 1;
+  unsigned streaming_flag_2 : 1;
+  unsigned streaming_flag_3 : 1;
+
+  /* 20-bits unused.  */
 
   /* DECL_ALIGN.  It should have the same size as TYPE_ALIGN.  */
   unsigned int align;
@@ -2937,6 +2995,7 @@ struct GTY(()) tree_decl_common {
   tree initial;
   tree attributes;
   tree abstract_origin;
+  tree initial_type;
 
   /* Points to a structure whose details depend on the language in use.  */
   struct lang_decl *lang_specific;

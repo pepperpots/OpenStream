@@ -1198,7 +1198,8 @@ static const struct omp_pragma_def omp_pragmas[] = {
   { "task", PRAGMA_OMP_TASK },
   { "taskwait", PRAGMA_OMP_TASKWAIT },
   { "taskyield", PRAGMA_OMP_TASKYIELD },
-  { "threadprivate", PRAGMA_OMP_THREADPRIVATE }
+  { "threadprivate", PRAGMA_OMP_THREADPRIVATE },
+  { "tick", PRAGMA_OMP_TICK }
 };
 
 void

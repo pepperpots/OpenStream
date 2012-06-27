@@ -377,6 +377,8 @@ static tree handle_optimize_attribute (tree *, tree, tree, int, bool *);
 static tree ignore_attribute (tree *, tree, tree, int, bool *);
 static tree handle_no_split_stack_attribute (tree *, tree, tree, int, bool *);
 static tree handle_fnspec_attribute (tree *, tree, tree, int, bool *);
+static tree handle_stream_attribute (tree *, tree, tree, int, bool *);
+static tree handle_stream_ref_attribute (tree *, tree, tree, int, bool *);
 
 static void check_function_nonnull (tree, int, tree *);
 static void check_nonnull_arg (void *, tree, unsigned HOST_WIDE_INT);
@@ -738,6 +740,10 @@ const struct attribute_spec c_common_attribute_table[] =
      The name contains space to prevent its usage in source code.  */
   { "fn spec",	 	      1, 1, false, true, true,
 			      handle_fnspec_attribute, false },
+  { "stream",                 0, 0, true, false, false,
+			      handle_stream_attribute },
+  { "stream_ref",             0, 0, true, false, false,
+			      handle_stream_ref_attribute },
   { NULL,                     0, 0, false, false, false, NULL, false }
 };
 
@@ -8312,6 +8318,87 @@ handle_no_split_stack_attribute (tree *node, tree name,
   return NULL_TREE;
 }
 
+
+void
+set_stream_type (tree decl, bool is_reference)
+{
+  tree type = TREE_TYPE (decl);
+  tree new_type = ptr_type_node;
+
+  /* We don't support explicit address spaces on stream declarations. */
+  gcc_assert (!TYPE_ADDR_SPACE (type));
+
+  /* If the current decl was annotated with a "stream" attribute,
+     set its flag.  */
+  DECL_STREAMING_FLAG_0 (decl) = 1;
+  /* Save the initial type of this decl.  */
+  DECL_INITIAL_TYPE (decl) = type;
+
+  /* If this is an array of streams, then we replace the element type
+     with void *, otherwise, we replace the type of the decl with a
+     void *.  */
+  if (TREE_CODE (type) == ARRAY_TYPE || TREE_CODE (type) == POINTER_TYPE)
+    {
+      //if (is_reference)
+      //{
+      //new_type = build_array_type (new_type, TYPE_DOMAIN (type));
+      //}
+      //else
+      //{
+      new_type = build_pointer_type (new_type);
+      //}
+    }
+
+  /* Make the type of the variable writable.  */
+  if (TYPE_ATTRIBUTES (type))
+    {
+      new_type = build_distinct_type_copy (new_type);
+      TYPE_ATTRIBUTES (new_type) = merge_type_attributes (type, new_type);
+    }
+  TREE_TYPE (decl) = new_type;
+  DECL_MODE (decl) = TYPE_MODE (new_type);
+  DECL_SIZE (decl) = TYPE_SIZE (new_type);
+  DECL_SIZE_UNIT (decl) = TYPE_SIZE_UNIT (new_type);
+  DECL_ALIGN (decl) = TYPE_ALIGN (new_type);
+}
+
+static tree
+handle_stream_attribute (tree *node, tree ARG_UNUSED (name),
+			 tree ARG_UNUSED (args),
+			 int ARG_UNUSED (flags),
+			 bool *ARG_UNUSED (no_add_attrs))
+{
+  tree decl = *node;
+
+  set_stream_type (decl, false);
+
+  /* We consider that a stream is always implicitely passed by
+     reference as we do not copy them.  */
+  /* FIXME-apop: we may want to push this in set_stream_type to allow
+     implicitely typed stream parameters, but this makes it too big a
+     mess for function parameter typing.  */
+  if (TREE_CODE (decl) == PARM_DECL)
+    DECL_STREAMING_FLAG_3 (decl) = 1;
+
+  return NULL_TREE;
+}
+
+static tree
+handle_stream_ref_attribute (tree *node, tree ARG_UNUSED (name),
+			     tree ARG_UNUSED (args),
+			     int ARG_UNUSED (flags),
+			     bool *ARG_UNUSED (no_add_attrs))
+{
+  tree decl = *node;
+
+  set_stream_type (decl, true);
+
+  DECL_STREAMING_FLAG_3 (decl) = 1;
+
+  return NULL_TREE;
+}
+
+
 /* Check for valid arguments being passed to a function with FNTYPE.
    There are NARGS arguments in the array ARGARRAY.  */
 void
