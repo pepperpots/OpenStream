@@ -1244,7 +1244,7 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 	    }
 
 	  /* Add DTOR call.  */
-	  gimplify_assign (n_streams, num_streams, &new_body);
+	  gimplify_assign (n_streams, num_streams, &cleanup);
 	  fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_DTOR);
 	  call = gimple_build_call (fn, 2, t, n_streams);
 	  gimplify_seq_add_stmt (&cleanup, call);
