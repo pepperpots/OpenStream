@@ -1,4 +1,4 @@
-TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo cilk_fibo 
+TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo
 
 INST_DIR = ../../install/
 
@@ -25,19 +25,6 @@ stream_recursive_fibo: stream_recursive_fibo.c
 
 stream_fibo_single_stream: stream_fibo_single_stream.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) stream_fibo_single_stream.c -o stream_fibo_single_stream -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
-
-## Statically linked versions used for profiling.  Renew wstream_df.o when its version is lagging behind.
-_stat_stream_fibo_single_stream: stream_fibo_single_stream.c wstream_df.o
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_fibo_single_stream.c -o _stat_stream_fibo_single_stream -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} wstream_df.o
-
-_stat_stream_fibo: stream_fibo.c wstream_df.o
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_fibo.c -o _stat_stream_fibo -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} wstream_df.o
-
-_stat_stream_recursive_fibo: stream_recursive_fibo.c wstream_df.o
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_recursive_fibo.c -o _stat_stream_recursive_fibo -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} wstream_df.o
-
-_stat_hand_DF_fibo: hand_DF_fibo.c wstream_df.o
-	$(GCC) $(CFLAGS) $(LDFLAGS) hand_DF_fibo.c -o _stat_hand_DF_fibo wstream_df.o -lpthread # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt
