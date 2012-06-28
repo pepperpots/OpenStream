@@ -1,4 +1,4 @@
-all: libwstream_df.so wstream_df.o
+all: libwstream_df.so
 
 #PAPI_DIR = /media/disk/dev/wstream_df/install/
 
