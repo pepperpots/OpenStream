@@ -135,7 +135,7 @@ cdeque_take (cdeque_p cdeque)
       return task;
     }
   /* One compare and swap when the deque has one single element.  */
-  if (!__sync_bool_compare_and_swap (&cdeque->top, top, top+1))
+  if (!atomic_cas (&cdeque->top, top, top+1))
     task = NULL;
 
   cdeque->bottom = top + 1;
@@ -178,7 +178,7 @@ cdeque_steal (cdeque_p remote_cdeque)
   load_store_fence ((uintptr_t) elem);
 #endif
 
-  if (!__sync_bool_compare_and_swap (&remote_cdeque->top, top, top+1))
+  if (!atomic_weak_cas (&remote_cdeque->top, top, top+1))
     elem = NULL;
 
   _PAPI_P2E;

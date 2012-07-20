@@ -1,6 +1,7 @@
 #ifndef _WSTREAM_DF_H_
 #define _WSTREAM_DF_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
@@ -82,6 +83,47 @@ store_store_fence ()
 #endif
 }
 
+static inline bool
+atomic_cas (volatile size_t *ptr, size_t oldval, size_t newval)
+{
+#if defined(__arm__)
+  int status = 1;
+  __asm__ __volatile__ ("0: ldrex r0, [%1]\n\t"
+			"teq r0, %2\n\t"
+			"beq 1f\n\t"
+			"clrex\n\t"
+			"b 2f\n\t"
+			"1: strex %0, %3, [%1]\n\t"
+			"teq %0, #0\n\t"
+			"bne 0b\n\t"
+			"2:\n\t"
+			: "+r" (status)
+			: "r" (ptr), "r" (oldval), "r" (newval)
+			: "r0");
+  return !status;
+#else
+  return __sync_bool_compare_and_swap (ptr, oldval, newval);
+#endif
+}
+
+static inline bool
+atomic_weak_cas (volatile size_t *ptr, size_t oldval, size_t newval)
+{
+#if defined(__arm__)
+  int status = 1;
+  __asm__ __volatile__ ("ldrex r0, [%1]\n\t"
+			"teq r0, %2\n\t"
+			"beq 0f\n\t"
+			"clrex\n\t"
+			"0: strexeq %0, %3, [%1]"
+			: "+r" (status)
+			: "r" (ptr), "r" (oldval), "r" (newval)
+			: "r0");
+  return !status;
+#else
+  return __sync_bool_compare_and_swap (ptr, oldval, newval);
+#endif
+}
 
 
 void dump_papi_counters (int);
