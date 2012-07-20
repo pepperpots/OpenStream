@@ -1,6 +1,8 @@
 #ifndef _WSTREAM_DF_H_
 #define _WSTREAM_DF_H_
 
+#include <stdint.h>
+
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
 #define MAX_NUM_CORES 1024
 
@@ -35,27 +37,49 @@ extern void wstream_df_stream_reference (void *, size_t);
 
 /* Memory fences.  */
 static inline void
-load_load_fence ()
+load_load_fence (uintptr_t dep)
 {
+#if !NO_FENCES && defined(__arm__)
+  /* Fences the load that produced DEP. */
+  __asm__ __volatile__ ("teq %0, %0; beq 0f; 0: isb" :: "r" (dep) : "memory");
+#else
+  (void) dep;
   __compiler_fence;
+#endif
 }
 
 static inline void
-load_store_fence ()
+load_store_fence (uintptr_t dep)
 {
+#if !NO_FENCES && defined(__arm__)
+  /* Fences the load that produced DEP. */
+  __asm__ __volatile__ ("teq %0, %0; beq 0f; 0:" :: "r" (dep) : "memory");
+#else
+  (void) dep;
   __compiler_fence;
+#endif
 }
 
 static inline void
 store_load_fence ()
 {
+#if !NO_FENCES && defined(__arm__)
+  __asm__ __volatile__ ("dmb" ::: "memory");
+#elif !NO_FENCES
   __sync_synchronize ();
+#else
+  __compiler_fence;
+#endif
 }
 
 static inline void
 store_store_fence ()
 {
+#if !NO_FENCES && defined(__arm__)
+  __asm__ __volatile__ ("dmb" ::: "memory");
+#else
   __compiler_fence;
+#endif
 }
 
 

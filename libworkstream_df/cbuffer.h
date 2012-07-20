@@ -108,6 +108,7 @@ cbuffer_grow (cbuffer_p volatile *cbuffer, size_t bottom, size_t top)
 
   store_store_fence ();
 
+  /* XXX(nhatle): Race condition with steal() on freed buffer? */
   cbuffer_free (old_cbuffer);
 }
 

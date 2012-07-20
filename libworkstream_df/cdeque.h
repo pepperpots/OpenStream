@@ -95,7 +95,7 @@ cdeque_push_bottom (cdeque_p cdeque, wstream_df_type elem)
 
   cdeque_set (cdeque, bottom, elem);
 
-  store_load_fence ();
+  store_store_fence ();
 
   cdeque->bottom = bottom + 1;
   _PAPI_P0E;
@@ -152,9 +152,15 @@ cdeque_steal (cdeque_p remote_cdeque)
   wstream_df_type elem;
 
   top = remote_cdeque->top;
-  load_load_fence ();
+#if defined(__arm__)
+  /* Block until the value read from top has been propagated to all
+     other threads. */
+  store_load_fence ();
+#else
+  load_load_fence (top);
+#endif
   bottom = remote_cdeque->bottom;
-  load_load_fence ();
+  load_load_fence (bottom);
 
   XLOG ("cdeque_steal with bottom %d, top %d\n", bottom, top);
 
@@ -165,7 +171,12 @@ cdeque_steal (cdeque_p remote_cdeque)
     }
 
   elem = cdeque_get (remote_cdeque, top);
-  load_store_fence ();
+#if defined(__arm__)
+  /* Do not reorder the previous load with the load from the CAS. */
+  load_load_fence ((uintptr_t) elem);
+#else
+  load_store_fence ((uintptr_t) elem);
+#endif
 
   if (!__sync_bool_compare_and_swap (&remote_cdeque->top, top, top+1))
     elem = NULL;
