@@ -27,6 +27,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "tree.h"
 #include "c-common.h"
+#include "c-tree.h"
 #include "gimple.h"		/* For create_tmp_var_raw.  */
 #include "langhooks.h"
 
@@ -89,11 +90,28 @@ c_finish_omp_barrier (location_t loc)
 void
 c_finish_omp_taskwait (location_t loc)
 {
+  static int label_num = 0;
+  char label_name[20];
+  //tree name, label, label_ptr;
   tree x;
 
-  x = builtin_decl_explicit (BUILT_IN_GOMP_TASKWAIT);
-  x = build_call_expr_loc (loc, x, 0);
+  /* Make a label for the continuation.  */
+  //sprintf (label_name, "continuation_%d_", label_num++);
+  //name = get_identifier (label_name);
+  //label = declare_label (name);
+  //label = define_label (loc, name);
+  //label_ptr = finish_label_address_expr (name, loc);
+
+  /* Call the scheduler (also push the task back on the queue).  */
+  x = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TASKWAIT);
+  x = build_call_expr_loc (loc, x, 1, size_zero_node);
   add_stmt (x);
+
+  //c_finish_return (loc, NULL_TREE, NULL_TREE);
+
+  /* Add the label of the continuation subsequently.  */
+  //x = build_stmt (loc, LABEL_EXPR, label);
+  //add_stmt (x);
 }
 
 

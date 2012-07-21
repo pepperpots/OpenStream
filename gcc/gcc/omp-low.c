@@ -50,7 +50,7 @@ along with GCC; see the file COPYING3.  If not see
 typedef struct wstream_df_frame
 {
   tree wstream_df_frame_type;
-  tree wstream_df_frame_field_next;
+  tree wstream_df_frame_field_continuation_label;
   tree wstream_df_frame_field_work_fn;
   tree wstream_df_frame_field_sc;
   tree wstream_df_frame_field_own_barrier;
@@ -2422,8 +2422,12 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 			}
 
 		      /* Add DTOR call.  */
+		      decl = build_receiver_ref (decl, false, ctx);
+		      //decl = maybe_lookup_decl (decl, ctx);
+		      //if (DECL_HAS_VALUE_EXPR_P (decl))
+		      //decl = DECL_VALUE_EXPR (decl);
 		      call = gimple_build_call (stream_dtor, 2,
-						maybe_lookup_decl (decl, ctx),
+						decl,
 						num_streams);
 		      gimple_seq_add_stmt_without_update (&tseq, call);
 		      gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
@@ -2702,10 +2706,14 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		      goto do_dtor;
 		    }
 		}
-	      x = build_outer_var_ref (var, ctx);
-	      x = lang_hooks.decls.omp_clause_copy_ctor (c, new_var, x);
-	      gimplify_and_add (x, ilist);
+	      x = build_receiver_ref (var, false, ctx);
+	      SET_DECL_VALUE_EXPR (new_var, x);
+	      DECL_HAS_VALUE_EXPR_P (new_var) = 1;
 	      goto do_dtor;
+	      //x = build_outer_var_ref (var, ctx);
+	      //x = lang_hooks.decls.omp_clause_copy_ctor (c, new_var, x);
+	      //gimplify_and_add (x, ilist);
+	      //goto do_dtor;
 	      break;
 
 	    case OMP_CLAUSE_COPYIN:
@@ -3889,6 +3897,131 @@ remove_exit_barriers (struct omp_region *region)
     }
 }
 
+static void
+handle_continuations (gimple entry_stmt)
+{
+  basic_block bb;
+  gimple_stmt_iterator gsi;
+  tree get_cont_id_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_GET_CONTINUATION_ID);
+  tree create_bar_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_CREATE_BARRIER);
+  tree placeholder_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_COMPUTED_GOTO_PLACEHOLDER);
+  tree placeholder_name = DECL_NAME (placeholder_fn);
+  tree cont_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_SCHEDULE_CONTINUATION);
+  tree taskwait_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TASKWAIT);
+  tree taskwait_name = DECL_NAME (taskwait_fn);
+  VEC(tree, heap) *labels = VEC_alloc (tree, heap, 3);
+  VEC(gimple, heap) *label_stmts = VEC_alloc (gimple, heap, 3);
+  int label_num = 1;
+
+  //xxxxxxxxx
+  /* Find all continuation splitting points, label and identify each
+     point and split blocks for switch branching.  */
+  FOR_EACH_BB (bb)
+    for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+      {
+	gimple call = gsi_stmt (gsi);
+	tree decl;
+
+	if (is_gimple_call (call)
+	    && (decl = gimple_call_fndecl (call))
+	    && DECL_NAME (decl) == taskwait_name)
+	  {
+	    tree arg = build_int_cst (size_type_node, label_num);
+	    tree label = create_artificial_label (gimple_location (call));
+	    tree case_label;
+	    edge e;
+	    gimple ret, stmt;
+	    basic_block a, b;
+
+	    /* Build a case matching this label.  */
+	    gimple_call_set_arg (call, 0, arg);
+	    gimple_call_set_fndecl (call, cont_fn);
+
+	    /* Add a return call.  */
+	    ret = gimple_build_return (NULL_TREE);
+	    gsi_insert_after (&gsi, ret, GSI_NEW_STMT);
+
+	    /* Add the new label made to fit the saved case label. */
+	    e = split_block (bb, gsi_stmt (gsi));
+	    stmt = gimple_build_label (label);
+	    gsi_insert_on_edge_immediate (e, stmt);
+
+	    /* Wire the return call (end of block after splitting) to
+	       the EXIT BB.  */
+	    a = e->src;
+	    b = e->dest;
+	    remove_edge (e);
+	    make_edge (a, EXIT_BLOCK_PTR_FOR_FUNCTION (cfun), 0);
+
+	    case_label = build_case_label (arg, NULL_TREE, label);
+	    VEC_safe_push(tree, heap, labels, case_label);
+	    VEC_safe_push(gimple, heap, label_stmts, stmt);
+	    label_num++;
+	  }
+      }
+
+  /* Add a switch after initialization (using the placeholder) to
+     branch to appropriate continuation.  */
+  FOR_EACH_BB (bb)
+    for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+      {
+	gimple call = gsi_stmt (gsi);
+	tree decl;
+
+	if (is_gimple_call (call)
+	    && (decl = gimple_call_fndecl (call))
+	    && DECL_NAME (decl) == placeholder_name)
+	  {
+	    gsi_remove (&gsi, false);
+
+	    if (!VEC_empty(tree, labels))
+	      {
+		tree x = create_tmp_var (size_type_node, "cont_switch_val");
+		tree def_label = create_artificial_label (gimple_location (call));
+		tree case_label;
+		gimple swit, stmt;
+		edge e;
+		int i;
+
+		/* Issue call to create a barrier in this task as it
+		   has taskwaits.  */
+		stmt = gimple_build_call (create_bar_fn, 0);
+		gsi_insert_before (&gsi, stmt, GSI_SAME_STMT);
+
+		/* Querry the continuation's label.  */
+		stmt = gimple_build_call (get_cont_id_fn, 0);
+		gimple_call_set_lhs (stmt, x);
+		gsi_insert_before (&gsi, stmt, GSI_SAME_STMT);
+
+		/* Build and add the switch.  */
+		case_label = build_case_label (NULL_TREE, NULL_TREE, def_label);
+		swit = gimple_build_switch_vec (x, case_label, labels);
+		gsi_insert_before (&gsi, swit, GSI_NEW_STMT);
+
+		/* Split the out edge and add the default label.  */
+		e = split_block (bb, gsi_stmt (gsi));
+		gsi_insert_on_edge_immediate (e, gimple_build_label (def_label));
+
+		/* For each label in the switch (i.e., for each
+		   taskwait directive), add an edge from the switch,
+		   and add barrier release and creation calls as
+		   needed.  */
+		FOR_EACH_VEC_ELT(gimple, label_stmts, i, stmt)
+		  {
+		    basic_block lbl_bb = gimple_bb (stmt);
+		    gimple_stmt_iterator g_after_labels = gsi_after_labels (lbl_bb);
+
+		    make_edge (bb, lbl_bb, 0);
+
+		    stmt = gimple_build_call (create_bar_fn, 0);
+		    gsi_insert_before (&g_after_labels, stmt, GSI_SAME_STMT);
+		  }
+	      }
+	    //break;  // May not be necessary to continue
+	  }
+      }
+}
+
 /* Optimize omp_get_thread_num () and omp_get_num_threads ()
    calls.  These can't be declared as const functions, but
    within one parallel body they are constant, so they can be
@@ -4010,81 +4143,6 @@ expand_omp_taskreg (struct omp_region *region)
     {
       unsigned srcidx, dstidx, num;
 
-      /* If the parallel region needs data sent from the parent
-	 function, then the very first statement (except possible
-	 tree profile counter updates) of the parallel body
-	 is a copy assignment .OMP_DATA_I = &.OMP_DATA_O.  Since
-	 &.OMP_DATA_O is passed as an argument to the child function,
-	 we need to replace it with the argument as seen by the child
-	 function.
-
-	 In most cases, this will end up being the identity assignment
-	 .OMP_DATA_I = .OMP_DATA_I.  However, if the parallel body had
-	 a function call that has been inlined, the original PARM_DECL
-	 .OMP_DATA_I may have been converted into a different local
-	 variable.  In which case, we need to keep the assignment.  */
-      if (gimple_omp_taskreg_data_arg (entry_stmt))
-	{
-	  basic_block entry_succ_bb = single_succ (entry_bb);
-	  gimple_stmt_iterator gsi;
-	  tree arg, narg;
-	  gimple parcopy_stmt = NULL;
-
-	  for (gsi = gsi_start_bb (entry_succ_bb); ; gsi_next (&gsi))
-	    {
-	      gimple stmt;
-
-	      gcc_assert (!gsi_end_p (gsi));
-	      stmt = gsi_stmt (gsi);
-	      if (gimple_code (stmt) != GIMPLE_ASSIGN)
-		continue;
-
-	      if (gimple_num_ops (stmt) == 2)
-		{
-		  tree arg = gimple_assign_rhs1 (stmt);
-
-		  /* We're ignore the subcode because we're
-		     effectively doing a STRIP_NOPS.  */
-
-		  if (TREE_CODE (arg) == ADDR_EXPR
-		      && TREE_OPERAND (arg, 0)
-		        == gimple_omp_taskreg_data_arg (entry_stmt))
-		    {
-		      parcopy_stmt = stmt;
-		      break;
-		    }
-		}
-	    }
-
-	  gcc_assert (parcopy_stmt != NULL);
-	  arg = DECL_ARGUMENTS (child_fn);
-
-	  if (!gimple_in_ssa_p (cfun))
-	    {
-	      if (gimple_assign_lhs (parcopy_stmt) == arg)
-		gsi_remove (&gsi, true);
-	      else
-		{
-	          /* ?? Is setting the subcode really necessary ??  */
-		  gimple_omp_set_subcode (parcopy_stmt, TREE_CODE (arg));
-		  gimple_assign_set_rhs1 (parcopy_stmt, arg);
-		}
-	    }
-	  else
-	    {
-	      /* If we are in ssa form, we must load the value from the default
-		 definition of the argument.  That should not be defined now,
-		 since the argument is not used uninitialized.  */
-	      gcc_assert (gimple_default_def (cfun, arg) == NULL);
-	      narg = make_ssa_name (arg, gimple_build_nop ());
-	      set_default_def (arg, narg);
-	      /* ?? Is setting the subcode really necessary ??  */
-	      gimple_omp_set_subcode (parcopy_stmt, TREE_CODE (narg));
-	      gimple_assign_set_rhs1 (parcopy_stmt, narg);
-	      update_stmt (parcopy_stmt);
-	    }
-	}
-
       /* Declare local variables needed in CHILD_CFUN.  */
       block = DECL_INITIAL (child_fn);
       BLOCK_VARS (block) = vec2chain (child_cfun->local_decls);
@@ -4100,9 +4158,6 @@ expand_omp_taskreg (struct omp_region *region)
       gimple_set_body (child_fn, bb_seq (single_succ (entry_bb)));
       TREE_USED (block) = 1;
 
-      /* Reset DECL_CONTEXT on function arguments.  */
-      for (t = DECL_ARGUMENTS (child_fn); t; t = DECL_CHAIN (t))
-	DECL_CONTEXT (t) = child_fn;
 
       /* Split ENTRY_BB at GIMPLE_OMP_PARALLEL or GIMPLE_OMP_TASK,
 	 so that it can be moved to the child function.  */
@@ -4170,6 +4225,7 @@ expand_omp_taskreg (struct omp_region *region)
       current_function_decl = child_fn;
       if (optimize)
 	optimize_omp_library_calls (entry_stmt);
+      handle_continuations (entry_stmt);
       rebuild_cgraph_edges ();
 
       /* Some EH regions might become dead, see PR34608.  If
@@ -7324,7 +7380,8 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
       tree tend_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TEND);
       tree get_cfp_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_GET_CFP);
       gimple_seq iseq = NULL;
-      tree x;
+      tree x, cont_label;
+      gimple stmt;
 
       ctx->sender_decl
 	= create_tmp_var (build_pointer_type (ctx->record_type),
@@ -7333,12 +7390,25 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
       TREE_ADDRESSABLE (ctx->sender_decl) = 1;
       gimple_omp_taskreg_set_data_arg (stmt, ctx->sender_decl);
 
-      /* Issue get_cfp and tend calls.  */
+      /* Issue get_cfp call.  */
       x = build_call_expr (get_cfp_fn, 0);
       gimplify_assign (ctx->receiver_decl, x, &iseq);
       gimple_seq_add_seq (&iseq, par_ilist);
       par_ilist = iseq;
 
+      /* Issue a placeholder call to allow keeping track of the
+	 continuation label field.  */
+      //xxxxxxxxx
+      /*x = build_simple_mem_ref (ctx->receiver_decl);
+      cont_label = ctx->base_frame.wstream_df_frame_field_continuation_label;
+      cont_label = build3 (COMPONENT_REF, TREE_TYPE (cont_label), x, cont_label, NULL);
+      x = create_tmp_var (size_type_node, "cont_switch_val");
+      stmt = gimple_build_assign (x, cont_label);*/
+      stmt = gimple_build_call (builtin_decl_explicit (BUILT_IN_WSTREAM_DF_COMPUTED_GOTO_PLACEHOLDER),
+				1, size_zero_node);
+      gimple_seq_add_stmt (&par_ilist, stmt);
+
+      /* Issue tend call.  */
       x = build_call_expr (tend_fn, 0);
       gimplify_stmt (&x, &par_olist);
     }
@@ -7362,6 +7432,7 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
 
   new_body = NULL;
 
+#if 0
   if (ctx->record_type)
     {
       t = build_fold_addr_expr_loc (loc, ctx->sender_decl);
@@ -7370,6 +7441,7 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
       gimple_seq_add_stmt (&new_body,
 	  		   gimple_build_assign (ctx->receiver_decl, t));
     }
+#endif
 
   gimple_seq_add_seq (&new_body, par_ilist);
   gimple_seq_add_seq (&new_body, par_body);
@@ -7388,6 +7460,11 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
     }
 
   gsi_replace (gsi_p, bind, true);
+
+  //free_dominance_info (CDI_DOMINATORS);
+  //free_dominance_info (CDI_POST_DOMINATORS);
+  //calculate_dominance_info (CDI_DOMINATORS);
+  //calculate_dominance_info (CDI_POST_DOMINATORS);
 
   pop_gimplify_context (NULL);
 }
@@ -7595,7 +7672,7 @@ create_wstream_df_work_function (omp_context *ctx)
   tree decl, type, name, t;
 
   name = clone_function_name (current_function_decl, "_wstream_df_workfn");
-  type = build_function_type_list (void_type_node, ptr_type_node, NULL_TREE);
+  type = build_function_type_list (void_type_node, NULL_TREE);
   decl = build_decl (gimple_location (ctx->stmt), FUNCTION_DECL, name, type);
   ctx->cb.dst_fn = decl;
 
@@ -7617,22 +7694,26 @@ create_wstream_df_work_function (omp_context *ctx)
   DECL_CONTEXT (t) = decl;
   DECL_RESULT (decl) = t;
 
+#if 0
   t = build_decl (DECL_SOURCE_LOCATION (decl),
-		  PARM_DECL, get_identifier (".wstream_df_frame_i"),
+		  VAR_DECL, get_identifier (".wstream_df_frame_i"),
 		  build_pointer_type (ctx->record_type));
   DECL_ARTIFICIAL (t) = 1;
   DECL_NAMELESS (t) = 1;
-  DECL_ARG_TYPE (t) = ptr_type_node;
-  DECL_CONTEXT (t) = current_function_decl;
+  //DECL_ARG_TYPE (t) = ptr_type_node;
+  DECL_CONTEXT (t) = decl;
   TREE_USED (t) = 1;
-  DECL_ARGUMENTS (decl) = t;
+  //DECL_ARGUMENTS (decl) = t;
 
+#endif
+  t = create_tmp_var (build_pointer_type (ctx->record_type), ".wstream_df_frame_i");
   ctx->receiver_decl = t;
 
   /* Allocate memory for the function structure.  The call to
      allocate_struct_function clobbers CFUN, so we need to restore
      it afterward.  */
   push_struct_function (decl);
+
   cfun->function_end_locus = gimple_location (ctx->stmt);
   pop_cfun ();
 }
@@ -7758,8 +7839,8 @@ build_wstream_df_frame_base_type (omp_context *ctx)
     TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
   ctx->base_frame.wstream_df_frame_field_work_fn = field;
 
-  name = create_tmp_var_name ("next");
-  type = ptr_type_node;
+  name = create_tmp_var_name ("cont_label");
+  type = size_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
   /*  insert_field_into_struct (ctx->record_type, field); */
   DECL_CONTEXT (field) = ctx->record_type;
@@ -7767,7 +7848,7 @@ build_wstream_df_frame_base_type (omp_context *ctx)
   TYPE_FIELDS (ctx->record_type) = field;
   if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
     TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
-  ctx->base_frame.wstream_df_frame_field_next = field;
+  ctx->base_frame.wstream_df_frame_field_continuation_label = field;
 
   ctx->base_frame.wstream_df_frame_type = ctx->record_type;
 }
