@@ -11,4 +11,5 @@ clean:
 	rm -f *~ *.o libwstream_df.so
 
 install: all
+	mkdir -p ../install/lib64
 	cp libwstream_df.so ../install/lib64
