@@ -30,4 +30,5 @@ clean:
 	rm -f $(TEST_PROGS)
 
 install: all
+	mkdir -p ../install/lib64
 	cp libwstream_df.so ../install/lib64
