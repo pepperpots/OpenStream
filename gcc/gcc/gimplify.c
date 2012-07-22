@@ -6390,6 +6390,11 @@ gimplify_adjust_omp_clauses_1 (splay_tree_node n, void *data)
   tree clause;
   bool private_debug;
 
+  /* Force all local variables as private (and not local) in tasks to get them in the
+     DF frame. */
+  if (flags & GOVD_LOCAL)
+    flags = (flags ^ GOVD_LOCAL) | GOVD_PRIVATE;
+
   if (flags & (GOVD_EXPLICIT | GOVD_LOCAL))
     return 0;
   if ((flags & GOVD_SEEN) == 0)
