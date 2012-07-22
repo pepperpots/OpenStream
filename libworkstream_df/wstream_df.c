@@ -215,21 +215,15 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 } wstream_df_thread_t, *wstream_df_thread_p;
 
 
-typedef union barrier_counter
-{
-  unsigned long long __attribute__((aligned (64))) counter;
-  char fake[8]; // Just make sure that we can align on 64 bytes in arrays.
-
-} barrier_counter;
-
 typedef struct barrier
 {
   bool cp_barrier;
   bool barrier_ready;
+  bool barrier_unused;
   int continuation_is_scheduled;
   wstream_df_frame_p continuation_frame;
-  barrier_counter created;
-  barrier_counter executed[];
+  int barrier_counter_created;
+  int barrier_counter_executed;
 
 } barrier_t, *barrier_p;
 
@@ -255,19 +249,15 @@ wstream_df_get_continuation_id ()
 void
 wstream_df_create_barrier ()
 {
-  unsigned int barrier_size = (sizeof (barrier_t)
-			       + sizeof (barrier_counter) * (num_workers));
-  barrier_p barrier = (barrier_p) calloc (1, barrier_size);
-  int i;
+  barrier_p barrier = (barrier_p) calloc (1, sizeof (barrier_t));
 
   barrier->cp_barrier = false;
   barrier->barrier_ready = false;
+  barrier->barrier_unused = false;
   barrier->continuation_frame = NULL;
   barrier->continuation_is_scheduled = 0;
-
-  barrier->created.counter = 0;
-  for (i = 0; i < num_workers; ++i)
-    barrier->executed[i].counter = 0;
+  barrier->barrier_counter_created = 0;
+  barrier->barrier_counter_executed = 0;
 
   current_barrier = barrier;
 }
@@ -285,7 +275,7 @@ wstream_df_schedule_continuation (size_t cont_id)
 
   /* Make barrier passable or free barrier and schedule the
      continuation if the barrier synchronizes no tasks.  */
-  if (current_barrier->created.counter == 0)
+  if (current_barrier->barrier_counter_created == 0)
     {
       free (current_barrier);
       if (current_thread->own_next_cached_thread == NULL)
@@ -306,15 +296,10 @@ wstream_df_schedule_continuation (size_t cont_id)
 static inline bool
 try_pass_barrier (barrier_p bar)
 {
-  unsigned long long executed = 0;
-  int i;
-
   if (bar->barrier_ready == false)
-    return false;
+    return bar->barrier_unused;
 
-  for (i = 0; i < num_workers; ++i)
-    executed += bar->executed[i].counter;
-  if (bar->created.counter == executed)
+  if (bar->barrier_counter_created == bar->barrier_counter_executed)
     {
       /* If this is not a CP barrier, and we make sure a single thread
 	 is allowed to schedule the continuation on its queue, using
@@ -324,11 +309,15 @@ try_pass_barrier (barrier_p bar)
       if (bar->cp_barrier == false)
 	if (__sync_bool_compare_and_swap (&bar->continuation_is_scheduled, 0, 1))
 	  {
-	    if (current_thread->own_next_cached_thread == NULL)
-	      current_thread->own_next_cached_thread = bar->continuation_frame;
-	    else
-	      cdeque_push_bottom (&current_thread->work_deque,
-				  (wstream_df_type) bar->continuation_frame);
+	    if (bar->continuation_frame != NULL)
+	      {
+		if (current_thread->own_next_cached_thread == NULL)
+		  current_thread->own_next_cached_thread = bar->continuation_frame;
+		else
+		  cdeque_push_bottom (&current_thread->work_deque,
+				      (wstream_df_type) bar->continuation_frame);
+	      }
+	    free (bar);
 	  }
       return true;
     }
@@ -501,7 +490,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn)
 
   if (current_barrier)
     {
-      current_barrier->created.counter++;
+      current_barrier->barrier_counter_created++;
       frame_pointer->own_barrier = current_barrier;
     }
 
@@ -555,10 +544,17 @@ __builtin_ia32_tend ()
      try to pass the barrier. */
   if (current_fp->own_barrier != NULL)
     {
-      current_fp->own_barrier->executed[current_thread->worker_id].counter++;
+      __sync_add_and_fetch (&current_fp->own_barrier->barrier_counter_executed, 1);
       try_pass_barrier (current_fp->own_barrier);
     }
 
+  /* If a current_barrier is active, then it was created without being
+     needed.  */
+  if (current_barrier != NULL)
+    {
+      current_barrier->barrier_unused = true;
+      current_barrier->barrier_ready = true;
+    }
   free (current_fp);
   current_fp = NULL;
 }
