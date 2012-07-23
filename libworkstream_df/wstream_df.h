@@ -86,7 +86,7 @@ store_store_fence ()
 static inline bool
 compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
-#if defined(__arm__)
+#if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
   int status = 1;
   __asm__ __volatile__ ("0: ldrex r0, [%1]\n\t"
 			"teq r0, %2\n\t"
@@ -109,7 +109,7 @@ compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 static inline bool
 weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
-#if defined(__arm__)
+#if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
   int status = 1;
   __asm__ __volatile__ ("ldrex r0, [%1]\n\t"
 			"teq r0, %2\n\t"
