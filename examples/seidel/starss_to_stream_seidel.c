@@ -239,7 +239,7 @@ main (int argc, char **argv)
 
     /* Output the results to a file when requested.  */
     int output;
-#pragma omp task input (streams[(num_blocks * num_blocks - 1) * 5] >> output) firstprivate (res_file, data, N) private (i, j) firstprivate (start, end)
+#pragma omp task input (streams[(num_blocks * num_blocks - 1) * 5] >> output) firstprivate (res_file, data, N) firstprivate (start, end)
     {
       gettimeofday (end, NULL);
 

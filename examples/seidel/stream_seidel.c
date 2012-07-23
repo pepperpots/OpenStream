@@ -81,8 +81,8 @@ resolve_dependences (int block_i, int block_j, int iter,
 	stream_out_deps[pos_out++] = streams[block_pos * 4 + 2];
 
       // for the final output, just send notice to the output task.
-      if (iter == numiters - 1)
-	stream_out_deps[pos_out++] = streams[block_pos * 4 + 3];
+      //if (iter == numiters - 1)
+      //stream_out_deps[pos_out++] = streams[block_pos * 4 + 3];
     }
 
 
@@ -217,28 +217,25 @@ main (int argc, char **argv)
 	  }
 
 
+#pragma omp taskwait
 
     /* Output the results to a file when requested.  */
-    int output;
-#pragma omp task input (streams[nstreams-1] >> output) firstprivate (res_file, data, N) private (i, j) firstprivate (start, end)
-    {
-      gettimeofday (end, NULL);
+    gettimeofday (end, NULL);
 
-      printf ("%.5f\n", tdiff (end, start));
+    printf ("%.5f\n", tdiff (end, start));
 
-      if (_WITH_OUTPUT)
-	{
-	  printf ("[Stream] Seidel (size %d, tile %d, iterations %d) executed in %.5f seconds\n",
-		  N - 2, block_size, numiters, tdiff (end, start));
+    if (_WITH_OUTPUT)
+      {
+	printf ("[Stream] Seidel (size %d, tile %d, iterations %d) executed in %.5f seconds\n",
+		N - 2, block_size, numiters, tdiff (end, start));
 
-	  for (i = 0; i < N; ++i)
-	    {
-	      for (j = 0; j < N; ++j)
-		fprintf (res_file, "%f \t", data[N * i + j]);
-	      fprintf (res_file, "\n");
-	    }
-	}
+	for (i = 0; i < N; ++i)
+	  {
+	    for (j = 0; j < N; ++j)
+	      fprintf (res_file, "%f \t", data[N * i + j]);
+	    fprintf (res_file, "\n");
+	  }
+      }
 
-    }
   }
 }
