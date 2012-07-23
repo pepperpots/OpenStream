@@ -84,7 +84,7 @@ store_store_fence ()
 }
 
 static inline bool
-atomic_cas (volatile size_t *ptr, size_t oldval, size_t newval)
+compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
 #if defined(__arm__)
   int status = 1;
@@ -107,7 +107,7 @@ atomic_cas (volatile size_t *ptr, size_t oldval, size_t newval)
 }
 
 static inline bool
-atomic_weak_cas (volatile size_t *ptr, size_t oldval, size_t newval)
+weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
 #if defined(__arm__)
   int status = 1;
