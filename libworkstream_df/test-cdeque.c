@@ -78,7 +78,6 @@ worker_main (void *data)
   for (i = 0; i < num_start_spin; ++i)
     continue;
   start = true;
-  fprintf (stderr, "Worker started\n");
 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start_tv);
 
@@ -123,7 +122,6 @@ thief_main (void *data)
 
   while (!start)
     continue;
-  fprintf (stderr, "Thief started\n");
 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start_tv);
 
