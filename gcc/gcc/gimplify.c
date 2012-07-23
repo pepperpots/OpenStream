@@ -1177,7 +1177,7 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 	      && (! DECL_SEEN_IN_BIND_EXPR_P (t)
 		  || splay_tree_lookup (ctx->variables,
 					(splay_tree_key) t) == NULL))
-	    omp_add_variable (gimplify_omp_ctxp, t, GOVD_LOCAL | GOVD_SEEN);
+	    omp_add_variable (gimplify_omp_ctxp, t, GOVD_PRIVATE | GOVD_SEEN);
 
 	  DECL_SEEN_IN_BIND_EXPR_P (t) = 1;
 
@@ -6225,6 +6225,11 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
       switch (OMP_CLAUSE_CODE (c))
 	{
 	case OMP_CLAUSE_PRIVATE:
+	  if (!DECL_STREAMING_FLAG_1 (OMP_CLAUSE_DECL (c)))
+	    error_at (OMP_CLAUSE_LOCATION (c),
+		      "Private clauses (on variable %qE) are not supported, use locally declared variables instead.",
+		      DECL_NAME (OMP_CLAUSE_DECL (c)));
+
 	  flags = GOVD_PRIVATE | GOVD_EXPLICIT;
 	  if (lang_hooks.decls.omp_private_outer_ref (OMP_CLAUSE_DECL (c)))
 	    {
@@ -6256,7 +6261,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 
 	case OMP_CLAUSE_PEEK:
 	  error ("[internal] Peek clause %qE should not be seen in gimple",
-		 DECL_NAME (decl));
+		 DECL_NAME (OMP_CLAUSE_DECL (c)));
 	  gcc_unreachable ();
 	  break;
 
@@ -6389,11 +6394,6 @@ gimplify_adjust_omp_clauses_1 (splay_tree_node n, void *data)
   enum omp_clause_code code;
   tree clause;
   bool private_debug;
-
-  /* Force all local variables as private (and not local) in tasks to get them in the
-     DF frame. */
-  if (flags & GOVD_LOCAL)
-    flags = (flags ^ GOVD_LOCAL) | GOVD_PRIVATE;
 
   if (flags & (GOVD_EXPLICIT | GOVD_LOCAL))
     return 0;

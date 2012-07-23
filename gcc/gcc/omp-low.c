@@ -1455,9 +1455,8 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	{
 	case OMP_CLAUSE_PRIVATE:
 	  decl = OMP_CLAUSE_DECL (c);
-	  goto do_private;
-
-	  if (OMP_CLAUSE_PRIVATE_OUTER_REF (c))
+	  if (!DECL_STREAMING_FLAG_1 (decl)
+	      || OMP_CLAUSE_PRIVATE_OUTER_REF (c))
 	    goto do_private;
 	  else if (!is_variable_sized (decl))
 	    install_var_local (decl, ctx);
@@ -2665,11 +2664,13 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 	      /* FALLTHRU */
 
 	    case OMP_CLAUSE_PRIVATE:
-	      x = build_receiver_ref (var, false, ctx);
-	      SET_DECL_VALUE_EXPR (new_var, x);
-	      DECL_HAS_VALUE_EXPR_P (new_var) = 1;
-	      goto do_dtor;
-
+	      if (is_task_ctx (ctx))
+		{
+		  x = build_receiver_ref (var, false, ctx);
+		  SET_DECL_VALUE_EXPR (new_var, x);
+		  DECL_HAS_VALUE_EXPR_P (new_var) = 1;
+		  goto do_dtor;
+		}
 	      if (OMP_CLAUSE_CODE (c) != OMP_CLAUSE_PRIVATE)
 		x = build_outer_var_ref (var, ctx);
 	      else if (OMP_CLAUSE_PRIVATE_OUTER_REF (c))
@@ -4027,8 +4028,6 @@ handle_continuations (gimple entry_stmt)
 	    //break;  // May not be necessary to continue
 	  }
       }
-
-  /* Force private/local variables in the frame.  */
 }
 
 /* Optimize omp_get_thread_num () and omp_get_num_threads ()
