@@ -17,14 +17,14 @@
 #include "error.h"
 #include "cdeque.h"
 
-static pthread_t worker_thread, thief_thread;
+static pthread_t worker_thread, *thief_threads;
+static struct timespec worker_time, *thief_times;
 static cdeque_t *worker_deque;
 
-static unsigned int worker_seed, thief_seed;
-static FILE *worker_log, *thief_log;
+static unsigned int worker_seed, *thief_seeds;
 
 static unsigned long take_empty_count, steal_empty_count;
-static unsigned long num_job, num_steal;
+static unsigned long num_thread, num_job, num_steal;
 static unsigned long breadth, depth;
 
 static volatile unsigned long num_start_spin = 1000000000UL;
@@ -36,8 +36,6 @@ static int timespec_diff (struct timespec *,
 static void *worker_main (void *);
 static void worker (unsigned long);
 static void *thief_main (void *);
-
-#define LOG(log, ...) ((void) ((log) != NULL && fprintf ((log), __VA_ARGS__)))
 
 static int
 timespec_diff (struct timespec *result,
@@ -72,7 +70,7 @@ timespec_diff (struct timespec *result,
 static void *
 worker_main (void *data)
 {
-  struct timespec end_tv, start_tv, t;
+  struct timespec end_tv, start_tv;
   unsigned long i;
 
   for (i = 0; i < num_start_spin; ++i)
@@ -84,8 +82,7 @@ worker_main (void *data)
   worker (depth);
 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end_tv);
-  assert (timespec_diff (&t, &end_tv, &start_tv) == 0);
-  fprintf (stderr, "worker_time = %ld.%09ld\n", t.tv_sec, t.tv_nsec);
+  assert (timespec_diff (&worker_time, &end_tv, &start_tv) == 0);
 
   return data;
 }
@@ -115,21 +112,22 @@ worker (unsigned long d)
 static void *
 thief_main (void *data)
 {
-  struct timespec end_tv, start_tv, t;
+  struct timespec end_tv, start_tv;
   void *val;
   double stealprob;
-  unsigned long i;
+  unsigned long cpu_id, i;
 
   while (!start)
     continue;
 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start_tv);
 
+  cpu_id = (unsigned long) data;
   stealprob = (double) num_steal / num_job;
   for (i = 0; i < num_steal; ++i)
     {
       /* Minimal probability is actually 1/RAND_MAX. */
-      while ((double) rand_r (&thief_seed) / RAND_MAX > stealprob)
+      while ((double) rand_r (&thief_seeds[cpu_id]) / RAND_MAX > stealprob)
 	continue;
       val = cdeque_steal (worker_deque);
       if (val == NULL)
@@ -137,8 +135,7 @@ thief_main (void *data)
     }
 
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end_tv);
-  assert (timespec_diff (&t, &end_tv, &start_tv) == 0);
-  fprintf (stderr, "thief_time = %ld.%09ld\n", t.tv_sec, t.tv_nsec);
+  assert (timespec_diff (&thief_times[cpu_id], &end_tv, &start_tv) == 0);
 
   return data;
 }
@@ -149,14 +146,15 @@ main (int argc, char *argv[])
   pthread_attr_t thrattr;
   cpu_set_t cpuset;
   size_t dqlogsize;
-  unsigned long d;
+  unsigned long d, t;
   int opt;
 
+  num_thread = 2;
   num_steal = 10000000;
   breadth = 6;
   depth = 10;
   dqlogsize = 6;
-  while ((opt = getopt (argc, argv, "b:d:i:ln:r:")) != -1)
+  while ((opt = getopt (argc, argv, "b:d:i:n:r:s:")) != -1)
     {
       switch (opt)
 	{
@@ -172,27 +170,32 @@ main (int argc, char *argv[])
 	  dqlogsize = strtoul (optarg, NULL, 0);
 	  break;
 
-	case 'l':
-	  if (worker_log == NULL)
+	case 'n':
+	  num_thread = strtoul (optarg, NULL, 0);
+	  if (num_thread < 2)
 	    {
-	      worker_log = fopen ("worker.log", "w");
-	      thief_log = fopen ("thief.log", "w");
-	      assert (worker_log != NULL);
-	      assert (thief_log != NULL);
+	      fprintf (stderr, "-n NUM_THREAD must be greater or equal to 2");
 	    }
 	  break;
 
-	case 'n':
+	case 'r':
+	  srand (strtoul (optarg, NULL, 0));
+	  break;
+
+	case 's':
 	  num_steal = strtoul (optarg, NULL, 0);
 	  break;
 
-	case 'r':
-	  worker_seed = strtoul (optarg, NULL, 0);
-	  thief_seed = worker_seed;
-	  break;
-
 	default:
-	  fprintf (stderr, "Usage: %s [-d] [-i LOGSIZE] [-n NITER] [-r SEED]\n",
+	  fprintf (stderr,
+		   "Usage: %s [OPTIONS]\n"
+		   "Options:\n"
+		   "  -b BREADTH\n"
+		   "  -d DEPTH\n"
+		   "  -i INI_DEQUE_LOG_SIZE\n"
+		   "  -n NUM_THREAD\n"
+		   "  -r RAND_SEED\n"
+		   "  -s NUM_STEAL_PER_THREAD\n",
 		   argv[0]);
 	  return EXIT_FAILURE;
 	}
@@ -205,33 +208,55 @@ main (int argc, char *argv[])
   worker_deque = cdeque_alloc (dqlogsize);
   assert (worker_deque != NULL);
 
+  thief_times = malloc (num_thread * sizeof *thief_times);
+  assert (thief_times != NULL);
+  thief_threads = malloc (num_thread * sizeof *thief_threads);
+  assert (thief_threads != NULL);
+  thief_seeds = malloc (num_thread * sizeof *thief_seeds);
+  assert (thief_seeds != NULL);
+
+  worker_seed = rand ();
+  for (t = 1; t < num_thread; ++t)
+    {
+      thief_seeds[t] = rand ();
+
+      pthread_attr_init (&thrattr);
+      CPU_ZERO (&cpuset);
+      CPU_SET (t, &cpuset);
+      assert (pthread_attr_setaffinity_np (&thrattr,
+					   sizeof cpuset, &cpuset) == 0);
+      assert (pthread_create (&thief_threads[t],
+			      &thrattr, thief_main, (void *) t) == 0);
+    }
+
   pthread_attr_init (&thrattr);
   CPU_ZERO (&cpuset);
   CPU_SET (0, &cpuset);
   assert (pthread_attr_setaffinity_np (&thrattr, sizeof cpuset, &cpuset) == 0);
   assert (pthread_create (&worker_thread, &thrattr, worker_main, NULL) == 0);
 
-  pthread_attr_init (&thrattr);
-  CPU_ZERO (&cpuset);
-  CPU_SET (1, &cpuset);
-  assert (pthread_attr_setaffinity_np (&thrattr, sizeof cpuset, &cpuset) == 0);
-  assert (pthread_create (&thief_thread, &thrattr, thief_main, NULL) == 0);
-
   assert (pthread_join (worker_thread, NULL) == 0);
-  assert (pthread_join (thief_thread, NULL) == 0);
+  for (t = 1; t < num_thread; ++t)
+    assert (pthread_join (thief_threads[t], NULL) == 0);
+
+  fprintf (stderr, "worker_time = %ld.%09ld\n",
+	   worker_time.tv_sec, worker_time.tv_nsec);
+  for (t = 1; t < num_thread; ++t)
+    {
+      fprintf (stderr, "thief_time #%lu = %ld.%09ld\n",
+	       t, thief_times[t].tv_sec, thief_times[t].tv_nsec);
+    }
 
   fprintf (stderr, "take_empty_count = %lu\n", take_empty_count);
   fprintf (stderr, "steal_empty_count = %lu\n", steal_empty_count);
   fprintf (stderr, "num_job = %lu\n", num_job);
   fprintf (stderr, "num_steal = %lu\n", num_steal);
 
-  cdeque_free (worker_deque);
+  free (thief_seeds);
+  free (thief_threads);
+  free (thief_times);
 
-  if (worker_log != NULL)
-    {
-      fclose (worker_log);
-      fclose (thief_log);
-    }
+  cdeque_free (worker_deque);
 
   return 0;
 }
