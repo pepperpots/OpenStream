@@ -5,8 +5,9 @@ WSTREAM_LDFLAGS=	$(LDFLAGS) -lpthread
 # WSTREAM_CFLAGS+=	-I$(PAPI_DIR)/include
 # WSTREAM_LDFLAGS+=	-L$(PAPI_DIR)/lib -lpapi
 
-TEST_PROGS=		test-cdeque test-cdeque-nolwcas test-cdeque-nofences
-TEST_PROGS+=		test-cdeque-cas test-cdeque-cas-nolwcas test-cdeque-cas-nofences
+TEST_PROGS=		test-cdeque test-cdeque-nollscopt test-cdeque-nolwcas test-cdeque-nofences
+TEST_PROGS+=		test-cdeque-cas test-cdeque-cas-nollscopt
+TEST_PROGS+=		test-cdeque-cas-nolwcas test-cdeque-cas-nofences
 TEST_LDFLAGS=		-lm -lrt
 
 all: libwstream_df.so
@@ -17,13 +18,17 @@ libwstream_df.so: wstream_df.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
 
 test-cdeque: test-cdeque.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
 	$(CC) $(WSTREAM_CFLAGS) $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
+test-cdeque-nollscopt: test-cdeque.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
+	$(CC) $(WSTREAM_CFLAGS) -DNO_LLSC_OPTIMIZATION=1 $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
 test-cdeque-nolwcas: test-cdeque.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
-	$(CC) $(WSTREAM_CFLAGS) -DNO_LIGHTWEIGHT_CAS=1 $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
+	$(CC) $(WSTREAM_CFLAGS) -DNO_LLSC_OPTIMIZATION=1 -DNO_LIGHTWEIGHT_CAS=1 $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
 test-cdeque-nofences: test-cdeque.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
 	$(CC) $(WSTREAM_CFLAGS) -DNO_FENCES=1 $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
 
 test-cdeque-cas: test-cdeque-cas.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
 	$(CC) $(WSTREAM_CFLAGS) $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
+test-cdeque-cas-nollscopt: test-cdeque-cas.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
+	$(CC) $(WSTREAM_CFLAGS) -DNO_LLSC_OPTIMIZATION=1 -DNO_LIGHTWEIGHT_CAS=1 $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
 test-cdeque-cas-nolwcas: test-cdeque-cas.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
 	$(CC) $(WSTREAM_CFLAGS) -DNO_LIGHTWEIGHT_CAS=1 $< -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
 test-cdeque-cas-nofences: test-cdeque-cas.c wstream_df.h cdeque.h cbuffer.h papi-defs.h

@@ -83,6 +83,26 @@ store_store_fence ()
 #endif
 }
 
+#if defined(__arm__)
+static inline size_t
+load_linked (volatile size_t *ptr)
+{
+  size_t value;
+  __asm__ __volatile__ ("ldrex %0, [%1]" : "=r" (value) : "r" (ptr));
+  return value;
+}
+
+static inline bool
+store_conditional (volatile size_t *ptr, size_t value)
+{
+  size_t status = 1;
+  __asm__ __volatile__ ("strex %0, %2, [%1]"
+			: "+r" (status)
+			: "r" (ptr), "r" (value));
+  return status == 0;
+}
+#endif
+
 static inline bool
 compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
