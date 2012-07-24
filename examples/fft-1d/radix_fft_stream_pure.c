@@ -140,7 +140,7 @@ main (int argc, char *argv[])
     fftw_complex fake_plan_in, fake_plan_out;
     fftw_plan plan =
       fftw_plan_dft_1d (N2, &fake_plan_in, &fake_plan_out,
-			FFTW_FORWARD, FFTW_ESTIMATE);
+			FFTW_FORWARD, FFTW_ESTIMATE | FFTW_UNALIGNED);
 
     gettimeofday (start, NULL);
     for (it = 0; it < numiters; ++it)
