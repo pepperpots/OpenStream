@@ -194,8 +194,9 @@ main (int argc, char **argv)
 
 
     int output;
-#pragma omp task input (streams[nstreams-1] >> output) firstprivate (res_file, data, N) private (i, j) firstprivate (start, end)
+#pragma omp task input (streams[nstreams-1] >> output) firstprivate (res_file, data, N) firstprivate (start, end)
     {
+      int i, j;
       gettimeofday (end, NULL);
 
       printf ("%.5f\n", tdiff (end, start));
