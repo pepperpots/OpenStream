@@ -89,18 +89,16 @@ compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 #if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
   int status = 1;
   __asm__ __volatile__ ("0: ldrex r0, [%1]\n\t"
-			"teq r0, %2\n\t"
-			"beq 1f\n\t"
-			"clrex\n\t"
-			"b 2f\n\t"
-			"1: strex %0, %3, [%1]\n\t"
-			"teq %0, #0\n\t"
-			"bne 0b\n\t"
-			"2:\n\t"
-			: "+r" (status)
-			: "r" (ptr), "r" (oldval), "r" (newval)
-			: "r0");
-  return !status;
+                        "teq r0, %2\n\t"
+			"bne 1f\n\t"
+                        "strex %0, %3, [%1]\n\t"
+                        "teq %0, #1\n\t"
+                        "beq 0b\n\t"
+                        "1:"
+                        : "+r" (status)
+                        : "r" (ptr), "r" (oldval), "r" (newval)
+                        : "r0");
+  return status == 0;
 #else
   return __sync_bool_compare_and_swap (ptr, oldval, newval);
 #endif
@@ -113,9 +111,7 @@ weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
   int status = 1;
   __asm__ __volatile__ ("ldrex r0, [%1]\n\t"
 			"teq r0, %2\n\t"
-			"beq 0f\n\t"
-			"clrex\n\t"
-			"0: strexeq %0, %3, [%1]"
+			"strexeq %0, %3, [%1]"
 			: "+r" (status)
 			: "r" (ptr), "r" (oldval), "r" (newval)
 			: "r0");
