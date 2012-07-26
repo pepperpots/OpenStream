@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "atomic-defs-c11.h"
+
 /* #define _DEBUG_THIS_ */
 
 #ifdef _DEBUG_THIS_
@@ -45,8 +47,7 @@ cbuffer_alloc (size_t log_size)
   cbuffer->log_size = log_size;
   cbuffer->size = (1 << log_size);
   cbuffer->modulo_mask = cbuffer->size - 1;
-  if (posix_memalign (&p, 64,
-		       sizeof *cbuffer->array * cbuffer->size))
+  if (posix_memalign (&p, 64, sizeof *cbuffer->array * cbuffer->size))
     wstream_df_fatal ("Out of memory ...");
   cbuffer->array = p;
 
@@ -84,7 +85,7 @@ cbuffer_copy_relaxed (wstream_df_atomic_type *p,
 {
   size_t i;
   for (i = 0; i < n; ++i)
-    atomic_store_explicit (p + i, q + i, memory_order_relaxed);
+    atomic_store_explicit (p + i, q + i, relaxed);
 }
 
 static inline cbuffer_p
@@ -124,8 +125,8 @@ cbuffer_grow (cbuffer_p old_cbuffer, size_t bottom, size_t top,
 			    old_bot_pos);
     }
 
-  atomic_store_explicit (pnew, new_cbuffer, memory_order_release);
-  atomic_thread_fence (memory_order_release);
+  atomic_store_explicit (pnew, new_cbuffer, release);
+  thread_fence (release);
 
   /* XXX(nhatle): Race condition with steal() on freed buffer? */
   cbuffer_free (old_cbuffer);
@@ -138,7 +139,7 @@ print_cbuffer (cbuffer_p cbuffer)
 {
   size_t i;
   for (i = 0; i < cbuffer->size; i++)
-    printf ("%p,", cbuffer_get (cbuffer, i, memory_order_relaxed));
+    printf ("%p,", cbuffer_get (cbuffer, i, relaxed));
   printf ("\n");
 }
 

@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "atomic-defs-c11.h"
 #include "wstream_df.h"
 #include "cbuffer-c11.h"
 
@@ -49,7 +50,7 @@ cdeque_alloc (size_t log_size)
 static inline void
 cdeque_free (cdeque_p cdeque)
 {
-  cbuffer_free (atomic_load_explicit (&cdeque->cbuffer, memory_order_relaxed));
+  cbuffer_free (atomic_load_explicit (&cdeque->cbuffer, relaxed));
   free (cdeque);
 }
 
@@ -60,19 +61,18 @@ cdeque_push_bottom (cdeque_p cdeque, wstream_df_type elem)
 {
   _PAPI_P0B;
 
-  size_t bottom = atomic_load_explicit (&cdeque->bottom, memory_order_relaxed);
-  size_t top = atomic_load_explicit (&cdeque->top, memory_order_acquire);
+  size_t bottom = atomic_load_explicit (&cdeque->bottom, relaxed);
+  size_t top = atomic_load_explicit (&cdeque->top, acquire);
 
-  cbuffer_p buffer = atomic_load_explicit (&cdeque->cbuffer,
-					   memory_order_relaxed);
+  cbuffer_p buffer = atomic_load_explicit (&cdeque->cbuffer, relaxed);
 
   XLOG ("cdeque_push_bottom with elem: %d\n", elem);
   if (bottom >= top + buffer->size)
     buffer = cbuffer_grow (buffer, bottom, top, &cdeque->cbuffer);
 
-  cbuffer_set (buffer, bottom, elem, memory_order_relaxed);
-  atomic_thread_fence (memory_order_release);
-  atomic_store_explicit (&cdeque->bottom, bottom + 1, memory_order_relaxed);
+  cbuffer_set (buffer, bottom, elem, relaxed);
+  thread_fence (release);
+  atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
 
   _PAPI_P0E;
 }
@@ -86,22 +86,22 @@ cdeque_take (cdeque_p cdeque)
   cbuffer_p buffer;
   wstream_df_type task;
 
-  bottom = atomic_load_explicit (&cdeque->bottom, memory_order_relaxed) - 1;
-  buffer = atomic_load_explicit (&cdeque->cbuffer, memory_order_relaxed);
+  bottom = atomic_load_explicit (&cdeque->bottom, relaxed) - 1;
+  buffer = atomic_load_explicit (&cdeque->cbuffer, relaxed);
 
-  atomic_store_explicit (&cdeque->bottom, bottom, memory_order_relaxed);
-  atomic_thread_fence (memory_order_seq_cst);
+  atomic_store_explicit (&cdeque->bottom, bottom, relaxed);
+  thread_fence (seq_cst);
 
-  top = atomic_load_explicit (&cdeque->top, memory_order_relaxed);
+  top = atomic_load_explicit (&cdeque->top, relaxed);
 
   if (bottom == (size_t) -1 || bottom < top)
     {
-      atomic_store_explicit (&cdeque->bottom, bottom + 1, memory_order_relaxed);
+      atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
       _PAPI_P1E;
       return NULL;
     }
 
-  task = cbuffer_get (buffer, bottom, memory_order_relaxed);
+  task = cbuffer_get (buffer, bottom, relaxed);
 
   if (bottom > top)
     {
@@ -111,10 +111,9 @@ cdeque_take (cdeque_p cdeque)
 
   /* One compare and swap when the deque has one single element.  */
   if (!atomic_compare_exchange_strong_explicit (&cdeque->top, &top, top + 1,
-						memory_order_seq_cst,
-						memory_order_relaxed))
+						seq_cst, relaxed))
     task = NULL;
-  atomic_store_explicit (&cdeque->bottom, bottom + 1, memory_order_relaxed);
+  atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
 
   _PAPI_P1E;
   return task;
@@ -129,9 +128,9 @@ cdeque_steal (cdeque_p remote_cdeque)
   wstream_df_type elem;
   cbuffer_p buffer;
 
-  top = atomic_load_explicit (&remote_cdeque->top, memory_order_acquire);
-  atomic_thread_fence (memory_order_seq_cst);
-  bottom = atomic_load_explicit (&remote_cdeque->bottom, memory_order_acquire);
+  top = atomic_load_explicit (&remote_cdeque->top, acquire);
+  thread_fence (seq_cst);
+  bottom = atomic_load_explicit (&remote_cdeque->bottom, acquire);
 
   XLOG ("cdeque_steal with bottom %d, top %d\n", bottom, top);
 
@@ -141,13 +140,11 @@ cdeque_steal (cdeque_p remote_cdeque)
       return NULL;
     }
 
-  buffer = atomic_load_explicit (&remote_cdeque->cbuffer, memory_order_relaxed);
-  elem = cbuffer_get (buffer, top, memory_order_relaxed);
+  buffer = atomic_load_explicit (&remote_cdeque->cbuffer, relaxed);
+  elem = cbuffer_get (buffer, top, relaxed);
 
-  if (!atomic_compare_exchange_strong_explicit (&remote_cdeque->top,
-						&top, top + 1,
-						memory_order_seq_cst,
-						memory_order_relaxed))
+  if (!atomic_compare_exchange_strong_explicit (&remote_cdeque->top, &top,
+						top + 1, seq_cst, relaxed))
     elem = NULL;
 
   _PAPI_P2E;
@@ -159,12 +156,11 @@ static inline void
 print_cdeque (cdeque_p cdeque)
 {
   size_t i;
-  size_t bottom = atomic_load_explicit (&cdeque->bottom, memory_order_relaxed);
-  size_t top = atomic_load_explicit (&cdeque->top, memory_order_acquire);
-  cbuffer_p buffer = atomic_load_explicit (&cdeque->cbuffer,
-					   memory_order_relaxed);
+  size_t bottom = atomic_load_explicit (&cdeque->bottom, relaxed);
+  size_t top = atomic_load_explicit (&cdeque->top, acquire);
+  cbuffer_p buffer = atomic_load_explicit (&cdeque->cbuffer, relaxed);
   for (i = top; i < bottom; i++)
-    printf ("%p,", cbuffer_get (buffer, i, memory_order_relaxed));
+    printf ("%p,", cbuffer_get (buffer, i, relaxed));
   printf ("\n");
 }
 
