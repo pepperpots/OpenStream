@@ -36,6 +36,9 @@
 #if !defined(__has_feature)
 #define __has_feature(x) 0
 #endif
+#if !defined(__has_builtin)
+#define __has_builtin(x) 0
+#endif
 #if !defined(__GNUC_PREREQ__)
 #if defined(__GNUC__) && defined(__GNUC_MINOR__)
 #define __GNUC_PREREQ__(maj, min)					\
