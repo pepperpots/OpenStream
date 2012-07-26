@@ -110,7 +110,7 @@ cdeque_take (cdeque_p cdeque)
     }
 
   /* One compare and swap when the deque has one single element.  */
-  if (!atomic_compare_exchange_strong_explicit (&cdeque->top, top, top + 1,
+  if (!atomic_compare_exchange_strong_explicit (&cdeque->top, &top, top + 1,
 						memory_order_seq_cst,
 						memory_order_relaxed))
     task = NULL;
@@ -145,7 +145,7 @@ cdeque_steal (cdeque_p remote_cdeque)
   elem = cbuffer_get (buffer, top, memory_order_relaxed);
 
   if (!atomic_compare_exchange_strong_explicit (&remote_cdeque->top,
-						top, top + 1,
+						&top, top + 1,
 						memory_order_seq_cst,
 						memory_order_relaxed))
     elem = NULL;

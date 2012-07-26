@@ -224,13 +224,11 @@ typedef _Atomic(uintmax_t)		atomic_uintmax_t;
 #elif defined(__GNUC_ATOMICS)
 #define	atomic_compare_exchange_strong_explicit(object, expected,	\
     desired, success, failure)						\
-	__atomic_compare_exchange_n(&(object)->__val,			\
-	    (void *)(__typeof__((object)->__val)[1]) { expected },	\
+	__atomic_compare_exchange_n(&(object)->__val, expected,		\
 	    desired, 0, success, failure)
 #define	atomic_compare_exchange_weak_explicit(object, expected,		\
     desired, success, failure)						\
-	__atomic_compare_exchange_n(&(object)->__val,			\
-	    (void *)(__typeof__((object)->__val)[1]) { expected },	\
+	__atomic_compare_exchange_n(&(object)->__val, expected,		\
 	    desired, 1, success, failure)
 #define	atomic_exchange_explicit(object, desired, order)		\
 	__atomic_exchange_n(&(object)->__val, desired, order)
