@@ -68,7 +68,7 @@ cdeque_push_bottom (cdeque_p cdeque, wstream_df_type elem)
 
   XLOG ("cdeque_push_bottom with elem: %d\n", elem);
   if (bottom >= top + buffer->size)
-    cbuffer_grow (buffer, bottom, top, &cdeque->cbuffer);
+    buffer = cbuffer_grow (buffer, bottom, top, &cdeque->cbuffer);
 
   cbuffer_set (buffer, bottom, elem, memory_order_relaxed);
   atomic_thread_fence (memory_order_release);

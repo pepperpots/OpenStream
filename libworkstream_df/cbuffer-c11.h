@@ -87,7 +87,7 @@ cbuffer_copy_relaxed (wstream_df_atomic_type *p,
     atomic_store_explicit (p + i, q + i, memory_order_relaxed);
 }
 
-static inline void
+static inline cbuffer_p
 cbuffer_grow (cbuffer_p old_cbuffer, size_t bottom, size_t top,
 	      cbuffer_atomic_p *pnew)
 {
@@ -129,6 +129,8 @@ cbuffer_grow (cbuffer_p old_cbuffer, size_t bottom, size_t top,
 
   /* XXX(nhatle): Race condition with steal() on freed buffer? */
   cbuffer_free (old_cbuffer);
+
+  return new_cbuffer;
 }
 
 static inline void
