@@ -1,4 +1,4 @@
-TESTS = seidel stream_seidel topsort-deps_stream_seidel starss_seidel starss_to_stream_seidel
+TESTS = seidel stream_seidel topsort-deps_stream_seidel starss_seidel starss_to_stream_seidel barrier_seidel openmp_task_seidel openmp_loop_seidel
 
 INST_DIR = ../../install/
 
@@ -7,6 +7,8 @@ LIB_DIR = ${INSTALL_DIR}/lib64
 BIN_DIR = ${INSTALL_DIR}/bin
 GCC = ${BIN_DIR}/gcc
 LIBWSTREAM_DF_DIR = $(LIB_DIR)
+
+PLAIN_GCC = /usr/bin/gcc
 
 STARSS_INSTALL = ../../../../ompss_regions/install
 MCC = $(STARSS_INSTALL)/bin/mcc
@@ -31,6 +33,12 @@ starss_to_stream_seidel: starss_to_stream_seidel.c
 
 starss_seidel: starss_seidel.c
 	$(MCC) --ompss starss_seidel.c -o starss_seidel  -O3 -g
+
+openmp_task_seidel: openmp_task_seidel.c
+	$(PLAIN_GCC) $< -o $@ -fopenmp -O3 -ffast-math -std=c99
+
+openmp_loop_seidel: openmp_loop_seidel.c
+	$(PLAIN_GCC) $< -o $@ -fopenmp -O3 -ffast-math -std=c99
 
 #.c:
 #	$(GCC) $(CFLAGS) $(LDFLAGS) -fopenmp $< -o $* -fdump-tree-all-all
