@@ -39,7 +39,7 @@ cdeque_take (cdeque_p cdeque)
       return NULL;
     }
 
-#if !NO_LLSC_OPTIMIZATION && defined(__arm__)
+#if LLSC_OPTIMIZATION && defined(__arm__)
   do
     bottom = load_linked (&cdeque->bottom) - 1;
   while (!store_conditional (&cdeque->bottom, bottom));
@@ -90,7 +90,7 @@ cdeque_steal (cdeque_p remote_cdeque)
 #else
   load_load_fence (top);
 #endif
-#if !NO_LLSC_OPTIMIZATION && defined(__arm__)
+#if LLSC_OPTIMIZATION && defined(__arm__)
   bottom = load_linked (&remote_cdeque->bottom);
   if (!store_conditional (&remote_cdeque->bottom, bottom))
     return NULL;
