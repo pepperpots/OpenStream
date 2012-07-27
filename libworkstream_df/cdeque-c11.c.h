@@ -74,7 +74,7 @@ cdeque_take (cdeque_p cdeque)
   if (!atomic_compare_exchange_strong_explicit (&cdeque->top, &top, top + 1,
 						seq_cst, relaxed))
     task = NULL;
-  atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
+  atomic_store_explicit (&cdeque->bottom, top + 1, relaxed);
 
   _PAPI_P1E;
   return task;
