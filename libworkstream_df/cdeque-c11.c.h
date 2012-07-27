@@ -1,3 +1,6 @@
+#include <stdatomic.h>
+#include <stddef.h>
+
 #include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
@@ -32,8 +35,8 @@ cdeque_take (cdeque_p cdeque)
 {
   _PAPI_P1B;
   size_t bottom, top;
-  cbuffer_p buffer;
   wstream_df_type task;
+  cbuffer_p buffer;
 
   bottom = atomic_load_explicit (&cdeque->bottom, relaxed) - 1;
   buffer = atomic_load_explicit (&cdeque->cbuffer, relaxed);

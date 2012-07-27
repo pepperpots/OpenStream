@@ -13,15 +13,16 @@ cdeque_push_bottom (cdeque_p cdeque, wstream_df_type elem)
   size_t bottom = cdeque->bottom;
   size_t top = cdeque->top;
 
+  cbuffer_p buffer = cdeque->cbuffer;
+
   XLOG ("cdeque_push_bottom with elem: %d\n", elem);
-  if (bottom >= top + cdeque_size (cdeque))
-    cdeque_grow (cdeque, bottom, top);
+  if (bottom >= top + buffer->size)
+    buffer = cbuffer_grow (buffer, bottom, top, &cdeque->cbuffer);
 
-  cdeque_set (cdeque, bottom, elem);
-
+  cbuffer_set (buffer, bottom, elem);
   store_store_fence ();
-
   cdeque->bottom = bottom + 1;
+
   _PAPI_P0E;
 }
 
@@ -32,13 +33,9 @@ cdeque_take (cdeque_p cdeque)
   _PAPI_P1B;
   size_t bottom, top;
   wstream_df_type task;
+  cbuffer_p buffer;
 
-  if (cdeque->bottom == 0)
-    {
-      _PAPI_P1E;
-      return NULL;
-    }
-
+  buffer = cdeque->cbuffer;
 #if LLSC_OPTIMIZATION && defined(__arm__)
   do
     bottom = load_linked (&cdeque->bottom) - 1;
@@ -49,27 +46,29 @@ cdeque_take (cdeque_p cdeque)
   cdeque->bottom = bottom;
   store_load_fence ();
 #endif
+
   top = cdeque->top;
 
-  if (bottom < top)
+  if (bottom == (size_t) -1 || bottom < top)
     {
-      cdeque->bottom = top;
+      cdeque->bottom = bottom + 1;
       _PAPI_P1E;
       return NULL;
     }
 
-  task = cdeque_get (cdeque, bottom);
+  task = cbuffer_get (buffer, bottom);
 
   if (bottom > top)
     {
       _PAPI_P1E;
       return task;
     }
+
   /* One compare and swap when the deque has one single element.  */
   if (!compare_and_swap (&cdeque->top, top, top+1))
     task = NULL;
-
   cdeque->bottom = top + 1;
+
   _PAPI_P1E;
   return task;
 }
@@ -81,8 +80,10 @@ cdeque_steal (cdeque_p remote_cdeque)
   _PAPI_P2B;
   size_t bottom, top;
   wstream_df_type elem;
+  cbuffer_p buffer;
 
   top = remote_cdeque->top;
+
 #if defined(__arm__)
   /* Block until the value read from top has been propagated to all
      other threads. */
@@ -90,6 +91,7 @@ cdeque_steal (cdeque_p remote_cdeque)
 #else
   load_load_fence (top);
 #endif
+
 #if LLSC_OPTIMIZATION && defined(__arm__)
   bottom = load_linked (&remote_cdeque->bottom);
   if (!store_conditional (&remote_cdeque->bottom, bottom))
@@ -98,6 +100,7 @@ cdeque_steal (cdeque_p remote_cdeque)
 #else
   bottom = remote_cdeque->bottom;
 #endif
+
   load_load_fence (bottom);
 
   XLOG ("cdeque_steal with bottom %d, top %d\n", bottom, top);
@@ -108,7 +111,8 @@ cdeque_steal (cdeque_p remote_cdeque)
       return NULL;
     }
 
-  elem = cdeque_get (remote_cdeque, top);
+  buffer = remote_cdeque->cbuffer;
+  elem = cbuffer_get (buffer, top);
 #if defined(__arm__)
   /* Do not reorder the previous load with the load from the CAS. */
   load_load_fence ((uintptr_t) elem);

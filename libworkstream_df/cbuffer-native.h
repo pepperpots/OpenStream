@@ -27,16 +27,19 @@ typedef struct cbuffer{
 static inline cbuffer_p
 cbuffer_alloc (size_t log_size)
 {
+  void *p;
   cbuffer_p cbuffer;
-  if (posix_memalign ((void **)&cbuffer, 64, sizeof (cbuffer_t)))
+
+  if (posix_memalign (&p, 64, sizeof *cbuffer))
     wstream_df_fatal ("Out of memory ...");
 
+  cbuffer = p;
   cbuffer->log_size = log_size;
   cbuffer->size = (1 << log_size);
   cbuffer->modulo_mask = cbuffer->size - 1;
-  if (posix_memalign ((void **)&cbuffer->array, 64,
-		       sizeof (wstream_df_type) * cbuffer->size))
+  if (posix_memalign (&p, 64, sizeof *cbuffer->array * cbuffer->size))
     wstream_df_fatal ("Out of memory ...");
+  cbuffer->array = p;
 
   return cbuffer;
 }
@@ -48,12 +51,6 @@ cbuffer_free (cbuffer_p cbuffer)
     free (cbuffer->array);
   if (cbuffer)
     free (cbuffer);
-}
-
-static inline size_t
-cbuffer_size (cbuffer_p cbuffer)
-{
-  return cbuffer->size;
 }
 
 static inline wstream_df_type
@@ -68,11 +65,11 @@ cbuffer_set (cbuffer_p cbuffer, size_t i, wstream_df_type elem)
   cbuffer->array[i & cbuffer->modulo_mask] = elem;
 }
 
-static inline void
-cbuffer_grow (cbuffer_p volatile *cbuffer, size_t bottom, size_t top)
+static inline cbuffer_p
+cbuffer_grow (cbuffer_p old_cbuffer, size_t bottom, size_t top,
+	      cbuffer_p volatile *pnew)
 {
-  cbuffer_p new_cbuffer = cbuffer_alloc ((*cbuffer)->log_size + 1);
-  cbuffer_p old_cbuffer = *cbuffer;
+  cbuffer_p new_cbuffer = cbuffer_alloc (old_cbuffer->log_size + 1);
 
   size_t old_buffer_size = old_cbuffer->size;
   size_t old_top_pos = top & old_cbuffer->modulo_mask;
@@ -81,43 +78,45 @@ cbuffer_grow (cbuffer_p volatile *cbuffer, size_t bottom, size_t top)
   size_t new_top_pos = top & new_cbuffer->modulo_mask;
   size_t new_bot_pos = bottom & new_cbuffer->modulo_mask;
 
-  /* If no wrap-around for old buffer, new one can't have one if size
-     is doubled.  */
   if (old_top_pos < old_bot_pos)
-    memcpy (&new_cbuffer->array[new_top_pos],
-	    &(*cbuffer)->array[old_top_pos],
-	    (old_bot_pos - old_top_pos) * sizeof (wstream_df_type));
-
-  /* If old buffer wraps around, then either new one wraps around at
-     same place or it just doesn't.  */
+    {
+      /* If no wrap-around for old buffer, new one can't have one if
+	 size is doubled.  */
+      memcpy (&new_cbuffer->array[new_top_pos],
+	      &old_cbuffer->array[old_top_pos],
+	      (old_bot_pos - old_top_pos) * sizeof (wstream_df_type));
+    }
   else
     {
+      /* If old buffer wraps around, then either new one wraps around
+	 at same place or it just doesn't.  */
+
       /* No wrap around in new buffer?  */
-      int no_wrap_around = (new_top_pos < new_bot_pos) ? 1 : 0;
+      int no_wrap_around = new_top_pos < new_bot_pos;
 
       memcpy (&new_cbuffer->array[new_top_pos],
-	      &(*cbuffer)->array[old_top_pos],
+	      &old_cbuffer->array[old_top_pos],
 	      (old_buffer_size - old_top_pos) * sizeof (wstream_df_type));
       memcpy (&new_cbuffer->array[no_wrap_around * old_buffer_size],
-	      (*cbuffer)->array,
+	      old_cbuffer->array,
 	      (old_bot_pos) * sizeof (wstream_df_type));
     }
 
   store_store_fence ();
-
-  *cbuffer = new_cbuffer;
-
+  *pnew = new_cbuffer;
   store_store_fence ();
 
   /* XXX(nhatle): Race condition with steal() on freed buffer? */
   cbuffer_free (old_cbuffer);
+
+  return new_cbuffer;
 }
 
 static inline void
 print_cbuffer (cbuffer_p cbuffer)
 {
   size_t i;
-  for (i = 0; i < cbuffer_size (cbuffer); i++)
+  for (i = 0; i < cbuffer->size; i++)
     printf ("%p,", cbuffer_get (cbuffer, i));
   printf ("\n");
 }

@@ -23,34 +23,6 @@ typedef struct cdeque {
   cbuffer_p volatile cbuffer __attribute__ ((aligned (64)));
 } cdeque_t, *cdeque_p;
 
-/* Get the size/capacity of the deque CDEQUE.  */
-static inline size_t
-cdeque_size (cdeque_p cdeque)
-{
-  return cbuffer_size (cdeque->cbuffer);
-}
-
-/* Extend the size of the deque CDEQUE, with bottom BOTTOM and top TOP.  */
-static inline void
-cdeque_grow (cdeque_p cdeque, size_t bottom, size_t top)
-{
-  cbuffer_grow (&cdeque->cbuffer, bottom, top);
-}
-
-/* Set the deque at position POS with element ELEM.  */
-static inline void
-cdeque_set (cdeque_p cdeque, size_t pos, wstream_df_type elem)
-{
-  cbuffer_set (cdeque->cbuffer, pos, elem);
-}
-
-/* Get the element from the deque CDEQUE at position POS.  */
-static inline wstream_df_type
-cdeque_get (cdeque_p cdeque, size_t pos)
-{
-  return cbuffer_get (cdeque->cbuffer, pos);
-}
-
 static inline void
 cdeque_init (cdeque_p cdeque, size_t log_size)
 {
@@ -64,10 +36,9 @@ static inline cdeque_p
 cdeque_alloc (size_t log_size)
 {
   cdeque_p cdeque = (cdeque_p) malloc (sizeof (cdeque_t));
-  cdeque->bottom = 0;
-  cdeque->top = 0;
-  cdeque->cbuffer = cbuffer_alloc (log_size);
-
+  if (cdeque == NULL)
+    wstream_df_fatal ("Out of memory ...");
+  cdeque_init (cdeque, log_size);
   return cdeque;
 }
 
@@ -84,8 +55,9 @@ static inline void
 print_cdeque (cdeque_p cdeque)
 {
   size_t i;
+  cbuffer_p buffer = cdeque->cbuffer;
   for (i = cdeque->top; i < cdeque->bottom; i++)
-    printf ("%p,", cdeque_get (cdeque, i));
+    printf ("%p,", cbuffer_get (buffer, i));
   printf ("\n");
 }
 
