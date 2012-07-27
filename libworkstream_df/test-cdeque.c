@@ -108,7 +108,7 @@ main (int argc, char *argv[])
   pthread_attr_t thrattr;
   cpu_set_t cpuset;
   size_t dqlogsize;
-  unsigned long d, t;
+  unsigned long d, t, nrowjob;
   int opt;
 
   num_thread = 2;
@@ -163,9 +163,12 @@ main (int argc, char *argv[])
 	}
     }
 
-  num_job = 1;
+  nrowjob = 1;
   for (d = 0; d < depth; ++d)
-    num_job *= breadth;
+    {
+      nrowjob *= breadth;
+      num_job += nrowjob;
+    }
 
   worker_deque = cdeque_alloc (dqlogsize);
   assert (worker_deque != NULL);
