@@ -38,16 +38,17 @@ cdeque_take (cdeque_p cdeque)
   wstream_df_type task;
   cbuffer_p buffer;
 
-  bottom = atomic_load_explicit (&cdeque->bottom, relaxed) - 1;
-  if (bottom == 0)
+  if (atomic_load_explicit (&cdeque->bottom, relaxed) == 0)
     {
       /* bottom == 0 needs to be treated specially as writing
 	 bottom - 1 would wrap around and allow steals to succeed
-	 even though they should not. */
+	 even though they should not. Double-loading bottom is OK
+	 as we are the only thread that alters its value. */
       _PAPI_P1E;
       return NULL;
     }
 
+  bottom = atomic_load_explicit (&cdeque->bottom, relaxed) - 1;
   buffer = atomic_load_explicit (&cdeque->cbuffer, relaxed);
 
   atomic_store_explicit (&cdeque->bottom, bottom, relaxed);
