@@ -15,6 +15,7 @@
 #include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
+#include "time-util.h"
 
 #if !USE_STDATOMIC
 #include "cdeque.h"
@@ -35,59 +36,22 @@ static unsigned long breadth, depth;
 static volatile unsigned long num_start_spin = 1000000000UL;
 static volatile bool start;
 
-static int timespec_diff (struct timespec *,
-			  const struct timespec *, const struct timespec *);
-
 static void *worker_main (void *);
 static void worker (unsigned long);
 static void *thief_main (void *);
 
-static int
-timespec_diff (struct timespec *result,
-	       const struct timespec *px, const struct timespec *py)
-{
-  struct timespec x, y;
-
-  x = *px;
-  y = *py;
-
-  /* Perform the carry for the later subtraction by updating y. */
-  if (x.tv_nsec < y.tv_nsec) {
-    long ns = (y.tv_nsec - x.tv_nsec) / 1000000000L + 1;
-    y.tv_nsec -= 1000000000L * ns;
-    y.tv_sec += ns;
-  }
-  if (x.tv_nsec - y.tv_nsec > 1000000000L) {
-    long ns = (x.tv_nsec - y.tv_nsec) / 1000000000L;
-    y.tv_nsec += 1000000000L * ns;
-    y.tv_sec -= ns;
-  }
-
-  /* Compute the time remaining to wait. tv_nsec is certainly
-     positive. */
-  result->tv_sec = x.tv_sec - y.tv_sec;
-  result->tv_nsec = x.tv_nsec - y.tv_nsec;
-
-  /* Return 1 if result is negative. */
-  return x.tv_sec < y.tv_sec;
-}
-
 static void *
 worker_main (void *data)
 {
-  struct timespec end_tv, start_tv;
   unsigned long i;
 
   for (i = 0; i < num_start_spin; ++i)
     continue;
   start = true;
 
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start_tv);
-
+  BEGIN_TIME (&worker_time);
   worker (depth);
-
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end_tv);
-  assert (timespec_diff (&worker_time, &end_tv, &start_tv) == 0);
+  END_TIME (&worker_time);
 
   return data;
 }
@@ -117,7 +81,6 @@ worker (unsigned long d)
 static void *
 thief_main (void *data)
 {
-  struct timespec end_tv, start_tv;
   void *val;
   double stealprob;
   unsigned long cpu_id, i;
@@ -125,9 +88,9 @@ thief_main (void *data)
   while (!start)
     continue;
 
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start_tv);
-
   cpu_id = (unsigned long) data;
+  BEGIN_TIME (&thief_times[cpu_id]);
+
   stealprob = (double) num_steal / num_job;
   for (i = 0; i < num_steal; ++i)
     {
@@ -139,8 +102,7 @@ thief_main (void *data)
 	++steal_empty_count;
     }
 
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end_tv);
-  assert (timespec_diff (&thief_times[cpu_id], &end_tv, &start_tv) == 0);
+  END_TIME (&thief_times[cpu_id]);
 
   return data;
 }

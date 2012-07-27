@@ -34,7 +34,7 @@ $(TEST_DESTDIR)/test-%-llscopt: WSTREAM_CFLAGS+=-DLLSC_OPTIMIZATION=1
 $(TEST_DESTDIR)/test-%-nolwcas: WSTREAM_CFLAGS+=-DNO_LIGHTWEIGHT_CAS=1
 $(TEST_DESTDIR)/test-%-nofences: WSTREAM_CFLAGS+=-DNO_FENCES=1
 
-$(TEST_DESTDIR)/test-%: error.c wstream_df.h cdeque.h cbuffer.h papi-defs.h
+$(TEST_DESTDIR)/test-%: error.c wstream_df.h cdeque.h cbuffer.h papi-defs.h time-util.h
 	mkdir -p $(TEST_DESTDIR)
 	$(CC) $(WSTREAM_CFLAGS) $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS) $(TEST_LDFLAGS)
 
