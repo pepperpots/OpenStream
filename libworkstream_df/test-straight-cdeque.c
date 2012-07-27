@@ -15,6 +15,7 @@
 #include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
+#include "time-util.h"
 
 #if !USE_STDATOMIC
 #include "cdeque.h"
@@ -28,6 +29,7 @@ static unsigned long num_iter;
 int
 main (int argc, char *argv[])
 {
+  struct timespec tv;
   unsigned long i;
   int opt;
 
@@ -49,10 +51,13 @@ main (int argc, char *argv[])
   deque = cdeque_alloc (6);
   assert (deque != NULL);
 
+  BEGIN_TIME (&tv);
   for (i = 0; i < num_iter; ++i)
     cdeque_push_bottom (deque, NULL);
   for (i = 0; i < num_iter; ++i)
     (void) cdeque_take (deque);
+  END_TIME (&tv);
+  fprintf (stderr, "time = %ld.%09ld\n", tv.tv_sec, tv.tv_nsec);
 
   cdeque_free (deque);
 
