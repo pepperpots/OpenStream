@@ -2,6 +2,7 @@
 #define _WSTREAM_DF_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8

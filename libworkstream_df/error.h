@@ -1,30 +1,7 @@
-static void
-wstream_df_verror (const char *fmt, va_list list)
-{
-  fputs ("\nlibwstream_df: ", stderr);
-  vfprintf (stderr, fmt, list);
-  fputc ('\n', stderr);
-}
+#ifndef ERROR_H
+#define ERROR_H
 
-void
-wstream_df_error (const char *fmt, ...)
-{
-  va_list list;
+void wstream_df_error (const char *, ...);
+void wstream_df_fatal (const char *, ...);
 
-  va_start (list, fmt);
-  wstream_df_verror (fmt, list);
-  va_end (list);
-}
-
-void
-wstream_df_fatal (const char *fmt, ...)
-{
-  va_list list;
-
-  va_start (list, fmt);
-  wstream_df_verror (fmt, list);
-  va_end (list);
-
-  exit (EXIT_FAILURE);
-}
-
+#endif
