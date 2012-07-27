@@ -43,7 +43,7 @@ main (int argc, char *argv[])
 	}
     }
 
-  deque = cdeque_alloc (6);
+  deque = cdeque_alloc (26);
   assert (deque != NULL);
 
   BEGIN_TIME (&tv);
