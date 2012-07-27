@@ -35,6 +35,16 @@ cdeque_take (cdeque_p cdeque)
   wstream_df_type task;
   cbuffer_p buffer;
 
+  if (cdeque->bottom == 0)
+    {
+      /* bottom == 0 needs to be treated specially as writing
+	 bottom - 1 would wrap around and allow steals to succeed
+	 even though they should not. Double-loading bottom is OK
+	 as we are the only thread that alters its value. */
+      _PAPI_P1E;
+      return NULL;
+    }
+
   buffer = cdeque->cbuffer;
 #if LLSC_OPTIMIZATION && defined(__arm__)
   do
@@ -49,7 +59,7 @@ cdeque_take (cdeque_p cdeque)
 
   top = cdeque->top;
 
-  if (bottom == (size_t) -1 || bottom < top)
+  if (bottom < top)
     {
       cdeque->bottom = bottom + 1;
       _PAPI_P1E;
