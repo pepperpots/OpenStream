@@ -15,13 +15,8 @@
 #include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
-#include "time-util.h"
-
-#if !USE_STDATOMIC
 #include "cdeque.h"
-#else
-#include "cdeque-c11.h"
-#endif
+#include "time-util.h"
 
 static pthread_t worker_thread, *thief_threads;
 static struct timespec worker_time, *thief_times;

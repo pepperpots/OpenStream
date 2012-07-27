@@ -12,12 +12,7 @@
 #include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
-
-#if !USE_STDATOMIC
 #include "cdeque.h"
-#else
-#include "cdeque-c11.h"
-#endif
 
 static pthread_t worker_thread, thief_thread;
 static cdeque_t *worker_deque;

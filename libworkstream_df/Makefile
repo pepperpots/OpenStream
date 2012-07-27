@@ -26,6 +26,7 @@ libwstream_df.so: wstream_df.c error.c wstream_df.h cdeque.h cbuffer.h papi-defs
 $(TEST_PROGS.cdeque): test-cdeque.c
 $(TEST_PROGS.cas): test-cas-cdeque.c
 $(TEST_PROGS.straight): test-straight-cdeque.c cdeque.c
+$(TEST_PROGS.straight): cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 $(TEST_PROGS.straight): WSTREAM_CFLAGS+=-DNO_INLINE_CDEQUE=1
 
 $(TEST_DESTDIR)/test-%c11: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1
