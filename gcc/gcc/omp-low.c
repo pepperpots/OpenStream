@@ -7389,7 +7389,7 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
       tree get_cfp_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_GET_CFP);
       gimple_seq iseq = NULL;
       tree x, cont_label;
-      gimple stmt;
+      gimple gstmt;
 
       ctx->sender_decl
 	= create_tmp_var (build_pointer_type (ctx->record_type),
@@ -7412,9 +7412,9 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
       cont_label = build3 (COMPONENT_REF, TREE_TYPE (cont_label), x, cont_label, NULL);
       x = create_tmp_var (size_type_node, "cont_switch_val");
       stmt = gimple_build_assign (x, cont_label);*/
-      stmt = gimple_build_call (builtin_decl_explicit (BUILT_IN_WSTREAM_DF_COMPUTED_GOTO_PLACEHOLDER),
+      gstmt = gimple_build_call (builtin_decl_explicit (BUILT_IN_WSTREAM_DF_COMPUTED_GOTO_PLACEHOLDER),
 				1, size_zero_node);
-      gimple_seq_add_stmt (&par_ilist, stmt);
+      gimple_seq_add_stmt (&par_ilist, gstmt);
 
       /* Issue tend call.  */
       x = build_call_expr (tend_fn, 0);
