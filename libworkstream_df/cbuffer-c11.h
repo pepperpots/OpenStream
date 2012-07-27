@@ -83,9 +83,13 @@ cbuffer_copy_relaxed (wstream_df_atomic_type *p,
 		      wstream_df_atomic_type *q,
 		      size_t n)
 {
+  wstream_df_type x;
   size_t i;
   for (i = 0; i < n; ++i)
-    atomic_store_explicit (p + i, q + i, relaxed);
+    {
+      x = atomic_load_explicit (q + i, relaxed);
+      atomic_store_explicit (p + i, x, relaxed);
+    }
 }
 
 static inline cbuffer_p
