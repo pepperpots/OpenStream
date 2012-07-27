@@ -1,5 +1,5 @@
-WSTREAM_CFLAGS=		$(CFLAGS) -g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra
-WSTREAM_LDFLAGS=	$(LDFLAGS) -lpthread
+WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS)
+WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h papi-defs.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 
