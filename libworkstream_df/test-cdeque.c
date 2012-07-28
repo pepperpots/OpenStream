@@ -188,8 +188,10 @@ main (int argc, char *argv[])
       pthread_attr_init (&thrattr);
       CPU_ZERO (&cpuset);
       CPU_SET (t, &cpuset);
+#if !NO_TEST_SETAFFINITY
       assert (pthread_attr_setaffinity_np (&thrattr,
 					   sizeof cpuset, &cpuset) == 0);
+#endif
       assert (pthread_create (&thief_threads[t],
 			      &thrattr, thief_main, (void *) t) == 0);
     }
@@ -197,7 +199,9 @@ main (int argc, char *argv[])
   pthread_attr_init (&thrattr);
   CPU_ZERO (&cpuset);
   CPU_SET (0, &cpuset);
+#if !NO_TEST_SETAFFINITY
   assert (pthread_attr_setaffinity_np (&thrattr, sizeof cpuset, &cpuset) == 0);
+#endif
   assert (pthread_create (&worker_thread, &thrattr, worker_main, NULL) == 0);
 
   assert (pthread_join (worker_thread, NULL) == 0);
