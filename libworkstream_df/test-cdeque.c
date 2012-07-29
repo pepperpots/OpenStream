@@ -25,7 +25,7 @@ static cdeque_t *worker_deque;
 static unsigned int worker_seed, *thief_seeds;
 
 static unsigned long take_empty_count, steal_empty_count;
-static unsigned long num_thread, num_job, num_steal;
+static unsigned long num_thread, num_job, num_steal, num_steal_per_thread;
 static unsigned long breadth, depth;
 
 static volatile unsigned long num_start_spin = 1000000000UL;
@@ -88,8 +88,8 @@ thief_main (void *data)
   cpu_id = (unsigned long) data;
   BEGIN_TIME (&thief_times[cpu_id]);
 
-  stealprob = (double) num_steal / num_job;
-  for (i = 0; i < num_steal; ++i)
+  stealprob = (double) num_steal_per_thread / num_job;
+  for (i = 0; i < num_steal_per_thread; ++i)
     {
       /* Minimal probability is actually 1/RAND_MAX. */
       while ((double) rand_r (&thief_seeds[cpu_id]) / RAND_MAX > stealprob)
@@ -112,12 +112,14 @@ main (int argc, char *argv[])
 {
   pthread_attr_t thrattr;
   cpu_set_t cpuset;
+  double stealratio;
   size_t dqlogsize;
   unsigned long d, t, nrowjob;
   int opt;
 
   num_thread = 2;
-  num_steal = 10000000;
+  num_steal = -1;
+  stealratio = 0.01;
   breadth = 6;
   depth = 10;
   dqlogsize = 6;
@@ -150,7 +152,16 @@ main (int argc, char *argv[])
 	  break;
 
 	case 's':
-	  num_steal = strtoul (optarg, NULL, 0);
+	  if (strchr (optarg, '.') == NULL)
+	    {
+	      num_steal = strtoul (optarg, NULL, 0);
+	      stealratio = -1.0;
+	    }
+	  else
+	    {
+	      num_steal = -1;
+	      stealratio = strtod (optarg, NULL);
+	    }
 	  break;
 
 	default:
@@ -162,7 +173,7 @@ main (int argc, char *argv[])
 		   "  -i INI_DEQUE_LOG_SIZE\n"
 		   "  -n NUM_THREAD\n"
 		   "  -r RAND_SEED\n"
-		   "  -s NUM_STEAL_PER_THREAD\n",
+		   "  -s NUM_STEAL_OR_RATIO\n",
 		   argv[0]);
 	  return EXIT_FAILURE;
 	}
@@ -174,6 +185,11 @@ main (int argc, char *argv[])
       nrowjob *= breadth;
       num_job += nrowjob;
     }
+
+  if (stealratio >= 0.0)
+    num_steal = (unsigned long) (stealratio * num_job);
+  num_steal_per_thread = num_steal / num_thread;
+  num_steal = num_steal_per_thread * num_thread;
 
   worker_deque = cdeque_alloc (dqlogsize);
   assert (worker_deque != NULL);
