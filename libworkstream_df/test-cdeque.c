@@ -179,7 +179,7 @@ main (int argc, char *argv[])
 	}
     }
 
-  nrowjob = 1;
+  nrowjob = breadth;
   for (d = 0; d < depth; ++d)
     {
       nrowjob *= breadth;
