@@ -129,10 +129,20 @@ main (int argc, char *argv[])
 	{
 	case 'b':
 	  breadth = strtoul (optarg, NULL, 0);
+	  if (breadth < 1)
+	    {
+	      fprintf (stderr, "-b BREADTH must be greater or equal to 1");
+	      return EXIT_FAILURE;
+	    }
 	  break;
 
 	case 'd':
 	  depth = strtoul (optarg, NULL, 0);
+	  if (depth < 1)
+	    {
+	      fprintf (stderr, "-d DEPTH must be greater or equal to 1");
+	      return EXIT_FAILURE;
+	    }
 	  break;
 
 	case 'i':
@@ -144,6 +154,7 @@ main (int argc, char *argv[])
 	  if (num_thread < 2)
 	    {
 	      fprintf (stderr, "-n NUM_THREAD must be greater or equal to 2");
+	      return EXIT_FAILURE;
 	    }
 	  break;
 
