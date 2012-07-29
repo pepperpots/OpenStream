@@ -43,13 +43,15 @@ worker_main (void *data)
 
   for (i = 0; i < num_start_spin; ++i)
     continue;
-  start = true;
 
   BEGIN_TIME (&worker_time);
   if (breadth == 1)
     straight_worker (depth);
   else
-    worker (depth);
+    {
+      start = true;
+      worker (depth);
+    }
   END_TIME (&worker_time);
 
   end = true;
@@ -82,12 +84,20 @@ worker (unsigned long d)
 static void
 straight_worker (unsigned long d)
 {
+  void *val;
   unsigned long i;
 
   for (i = 0; i < d; ++i)
     cdeque_push_bottom (worker_deque, (void *) i);
+  start = true;
   while (i-- > 0)
-    assert ((unsigned long) cdeque_take (worker_deque) == i);
+    {
+      val = cdeque_take (worker_deque);
+      if (val == NULL)
+	++take_empty_count;
+      else
+	assert ((unsigned long) val == i);
+    }
 }
 
 static void *
