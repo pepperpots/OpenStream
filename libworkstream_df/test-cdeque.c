@@ -29,7 +29,7 @@ static unsigned long num_thread, num_job, num_steal;
 static unsigned long breadth, depth;
 
 static volatile unsigned long num_start_spin = 1000000000UL;
-static volatile bool start;
+static volatile bool start, end;
 
 static void *worker_main (void *);
 static void worker (unsigned long);
@@ -47,6 +47,8 @@ worker_main (void *data)
   BEGIN_TIME (&worker_time);
   worker (depth);
   END_TIME (&worker_time);
+
+  end = true;
 
   return data;
 }
@@ -98,6 +100,9 @@ thief_main (void *data)
     }
 
   END_TIME (&thief_times[cpu_id]);
+
+  while (!end)
+    continue;
 
   return data;
 }
