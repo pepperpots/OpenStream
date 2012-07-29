@@ -33,6 +33,7 @@ static volatile bool start, end;
 
 static void *worker_main (void *);
 static void worker (unsigned long);
+static void straight_worker (unsigned long);
 static void *thief_main (void *);
 
 static void *
@@ -45,7 +46,10 @@ worker_main (void *data)
   start = true;
 
   BEGIN_TIME (&worker_time);
-  worker (depth);
+  if (breadth == 1)
+    straight_worker (depth);
+  else
+    worker (depth);
   END_TIME (&worker_time);
 
   end = true;
@@ -73,6 +77,17 @@ worker (unsigned long d)
       else
 	assert (*(double *) val == dummy);
     }
+}
+
+static void
+straight_worker (unsigned long d)
+{
+  unsigned long i;
+
+  for (i = 0; i < d; ++i)
+    cdeque_push_bottom (worker_deque, (void *) i);
+  while (i-- > 0)
+    assert ((unsigned long) cdeque_take (worker_deque) == i);
 }
 
 static void *
