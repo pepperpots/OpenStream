@@ -214,8 +214,8 @@ main (int argc, char *argv[])
 
   if (stealratio >= 0.0)
     num_steal = (unsigned long) (stealratio * num_job);
-  num_steal_per_thread = num_steal / num_thread;
-  num_steal = num_steal_per_thread * num_thread;
+  num_steal_per_thread = num_steal / (num_thread - 1);
+  num_steal = num_steal_per_thread * (num_thread - 1);
 
   worker_deque = cdeque_alloc (dqlogsize);
   assert (worker_deque != NULL);
