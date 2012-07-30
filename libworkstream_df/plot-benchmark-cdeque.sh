@@ -1,5 +1,5 @@
 b=3
-d=16
+d=15
 n=2
 type=png
 while getopts b:d:n:T: opt; do

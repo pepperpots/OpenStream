@@ -1,5 +1,5 @@
 breadth=3
-depth=16
+depth=15
 nthread=2
 niter=40
 while getopts b:d:n:ps:t: opt; do
