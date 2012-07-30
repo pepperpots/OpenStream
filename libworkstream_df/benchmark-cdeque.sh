@@ -25,7 +25,7 @@ shift $((OPTIND - 1))
 iter()
 {
 	for i in `seq 1 $1`; do
-		$t $workload -n $nthread -s $2 2>&1 | head -n 1
+		$t $workload -n $nthread -s $2 | tail -n 1
 	done
 }
 
@@ -75,7 +75,7 @@ do_tree()
 		[ $dry ] || for log in $t.$nthread.$b.$d.*.log; do
 			s=${log%.log}
 			s=${s##*.}
-			awk "{x+=\$3;++n} END{print $s, x/n}" $log
+			awk "{x+=\$1;++n} END{print $s, x/n}" $log
 		done | sort -n >$t.$nthread.$b.$d.data
 	done
 }

@@ -274,26 +274,31 @@ main (int argc, char *argv[])
   for (t = 1; t < num_thread; ++t)
     assert (pthread_join (states[t].tid, NULL) == 0);
 
-  fprintf (stderr, "worker_time = %ld.%09ld\n",
-	   states[0].time.tv_sec, states[0].time.tv_nsec);
+  printf ("worker_time\t");
   for (t = 1; t < num_thread; ++t)
-    {
-      fprintf (stderr, "thief_time #%lu = %ld.%09ld\n",
-	       t, states[t].time.tv_sec, states[t].time.tv_nsec);
-    }
+    printf ("thief_time_%lu\t", t);
+  printf ("take_empty_count\t"
+	  "steal_empty_count\t"
+	  "num_job\t"
+	  "num_expected_steal\t"
+	  "num_effective_steal\n");
 
-  fprintf (stderr, "take_empty_count = %lu\n", states[0].num_failed_attempt);
+  printf ("%ld.%09ld\t", states[0].time.tv_sec, states[0].time.tv_nsec);
+  for (t = 1; t < num_thread; ++t)
+    printf ("%ld.%09ld\t", states[t].time.tv_sec, states[t].time.tv_nsec);
+
+  printf ("%lu\t", states[0].num_failed_attempt);
   n = 0;
   for (t = 1; t < num_thread; ++t)
     n += states[t].num_failed_attempt;
-  fprintf (stderr, "steal_empty_count = %lu\n", n);
+  printf ("%lu\t", n);
 
-  fprintf (stderr, "num_job = %lu\n", num_job);
-  fprintf (stderr, "num_expected_steal = %lu\n", num_steal);
+  printf ("%lu\t", num_job);
+  printf ("%lu\t", num_steal);
   n = 0;
   for (t = 1; t < num_thread; ++t)
     n += states[t].num_attempt;
-  fprintf (stderr, "num_effective_steal = %lu\n", n);
+  printf ("%lu\n", n);
 
   free (states);
 
