@@ -76,7 +76,7 @@ do_tree()
 			s=${log%.log}
 			s=${s##*.}
 			awk "{x+=\$3;++n} END{print $s, x/n}" $log
-		done >$t.$nthread.$b.$d.data
+		done | sort -n >$t.$nthread.$b.$d.data
 	done
 }
 
