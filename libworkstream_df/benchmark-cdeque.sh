@@ -72,11 +72,6 @@ do_tree()
 			echo $t -b $b -d $d -s 0.$sratio10 \> $log >&2
 			[ $dry ] || iter $niter 0.$sratio10 >$log
 		done
-		[ $dry ] || for log in $t.$nthread.$b.$d.*.log; do
-			s=${log%.log}
-			s=${s##*.}
-			awk "{x+=\$1;++n} END{print $s, x/n}" $log
-		done | sort -n >$t.$nthread.$b.$d.data
 	done
 }
 
