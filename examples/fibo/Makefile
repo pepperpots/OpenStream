@@ -1,4 +1,4 @@
-TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo
+TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo hand_task_fibo raw_fibo
 
 INST_DIR = ../../install/
 
@@ -9,25 +9,28 @@ GCC = ${BIN_DIR}/gcc
 LIBWSTREAM_DF_DIR = $(LIB_DIR)
 ###########################################################################
 
-CFLAGS =  -Wall -std=c99 -O2 -Wl,-rpath,$(INST_DIR)/lib64 -g #-fdump-tree-all-all #-Werror
-LDFLAGS = -L${INST_DIR}/lib -Wl,-rpath,$(INST_DIR)/lib -L${LIB_DIR} -lm -rdynamic -Wl,-rpath,$(LIB_DIR) # Do not link all test cases with Wstream_Df as it launches worker threads even in seq. comp. for now.
+CFLAGS += -Wall -std=c99 -O3 -ffast-math
+LDFLAGS += -L${LIB_DIR} -lm -rdynamic -Wl,-rpath,$(LIB_DIR)
 
 all: $(TESTS)
 
 fibo: fibo.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) fibo.c -o fibo -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
+	$(GCC) $(CFLAGS) $^ -o $@ -fno-inline $(LDFLAGS) # Need -fno-inline to prevent GCC from deadcoding when no output.
 
-stream_fibo: stream_fibo.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_fibo.c -o stream_fibo -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
+stream_%: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
+stream_%: CFLAGS += -fopenmp
+stream_%: stream_%.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
 
-stream_recursive_fibo: stream_recursive_fibo.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_recursive_fibo.c -o stream_recursive_fibo -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
-
-stream_fibo_single_stream: stream_fibo_single_stream.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_fibo_single_stream.c -o stream_fibo_single_stream -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
+raw_%: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df -lpthread
+raw_%: raw_%.c
+	$(GCC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+hand_%: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df -lpthread
+hand_%: hand_%.c
+	$(GCC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
-	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt
+	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS)
 
 run:
 	./run.sh 40 25
@@ -39,3 +42,18 @@ CILKC = /media/disk/dev/install/bin/cilkc
 
 cilk_fibo: cilk_fibo.cilk
 	$(CILKC) -O2 -g cilk_fibo.cilk -o cilk_fibo #-fdump-tree-all
+
+####################################################
+
+MEM_CST_TESTS = barrier_fibo barrier_fibo_c11 barrier_fibo_dumbc11 barrier_fibo_nofences
+
+mem_cst_test: $(MEM_CST_TESTS)
+
+barrier_%: CFLAGS += -fopenmp
+barrier_fibo: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df
+barrier_fibo_c11: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df_c11
+barrier_fibo_dumbc11: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df_dumbc11
+barrier_fibo_nofences: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L${LIBWSTREAM_DF_DIR} -lwstream_df_nofences
+barrier_%: barrier_fibo.c
+	$(GCC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
