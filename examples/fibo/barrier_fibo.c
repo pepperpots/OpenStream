@@ -5,7 +5,7 @@
 
 #include <getopt.h>
 
-#define _WITH_OUTPUT 1
+#define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>
@@ -38,9 +38,11 @@ bar_fibo (int n, int cutoff, int *result)
 #pragma omp task firstprivate (result, n, cutoff)
       {
 	int a, b;
+	int *pa = &a;
+	int *pb = &b;
 	//printf ("L0-%d:  %d %d\n", n, a, b);
-	bar_fibo (n - 1, cutoff, &a);
-	bar_fibo (n - 2, cutoff, &b);
+	bar_fibo (n - 1, cutoff, pa);
+	bar_fibo (n - 2, cutoff, pb);
 	//printf ("L0-%d:  %d %d\n", n, a, b);
 #pragma omp taskwait
 	//printf ("L1-%d:  %d %d\n", n, a, b);

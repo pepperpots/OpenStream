@@ -1,6 +1,6 @@
 WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS)
 WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
-WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h papi-defs.h
+WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h papi-defs.h alloc.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 
 # PAPI_DIR=		/media/disk/dev/wstream_df/install/
@@ -43,7 +43,7 @@ $(TEST_DESTDIR)/test-%: error.c $(WSTREAM_DEPS) $(TEST_DEPS)
 
 clean:
 	rm -f *~ *.o
-	rm -f libwstream_df.so
+	rm -f libwstream_df*.so
 	rm -f $(TEST_PROGS)
 
 install: all
@@ -51,3 +51,14 @@ install: all
 	cp libwstream_df.so ../install/lib64
 
 .PHONY: all all-test clean install
+
+
+alternative: libwstream_df_c11.so libwstream_df_dumbc11.so libwstream_df_nofences.so
+libwstream_df_c11.so: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1
+libwstream_df_dumbc11.so: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1 -DUSE_SEQ_CST_STDATOMIC=1
+libwstream_df_nofences.so: WSTREAM_CFLAGS+=-DNO_FENCES=1
+libwstream_df_%.so: wstream_df.c error.c $(WSTREAM_DEPS)
+	$(CC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+install-alternative: alternative
+	mkdir -p ../install/lib64
+	cp libwstream_df_*.so ../install/lib64
