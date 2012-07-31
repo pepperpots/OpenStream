@@ -5,6 +5,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <assert.h>
 
 #define _WSTREAM_DF_DEBUG 1
 
@@ -14,6 +15,7 @@
 #include "wstream_df.h"
 #include "error.h"
 #include "cdeque.h"
+#include "alloc.h"
 
 //#define _PRINT_STATS
 
@@ -110,6 +112,7 @@ typedef struct wstream_df_frame
   size_t continuation_label_id;
   void (*work_fn) (void);
   int synchronization_counter;
+  int size;
 
   struct barrier *own_barrier;
   /* Variable size struct */
@@ -207,7 +210,9 @@ wstream_df_get_continuation_id ()
 void
 wstream_df_create_barrier ()
 {
-  barrier_p barrier = (barrier_p) calloc (1, sizeof (barrier_t));
+  barrier_p barrier;
+
+  wstream_alloc(&barrier, 64, sizeof (barrier_t));
 
   barrier->cp_barrier = false;
   barrier->barrier_ready = false;
@@ -235,7 +240,7 @@ wstream_df_schedule_continuation (size_t cont_id)
      continuation if the barrier synchronizes no tasks.  */
   if (current_barrier->barrier_counter_created == 0)
     {
-      free (current_barrier);
+      wstream_free(current_barrier, sizeof (barrier_t));
       if (current_thread->own_next_cached_thread == NULL)
 	current_thread->own_next_cached_thread = current_fp;
       else
@@ -275,7 +280,7 @@ try_pass_barrier (barrier_p bar)
 		  cdeque_push_bottom (&current_thread->work_deque,
 				      (wstream_df_type) bar->continuation_frame);
 	      }
-	    free (bar);
+	    wstream_free(bar, sizeof (barrier_t));
 	  }
       return true;
     }
@@ -336,7 +341,7 @@ wstream_df_taskwait (size_t s)
 
   /* Executing tasks may clobber current_barrier.  Use saved
      version.  */
-  free (bar);
+  wstream_free(bar, sizeof (barrier_t));
   current_barrier = NULL;
 
   /* Create the next barrier (which may not be used/useful if no
@@ -437,13 +442,12 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn)
 
   __compiler_fence;
 
-  if (posix_memalign ((void **)&frame_pointer, 64, size))
-    wstream_df_fatal ("Out of memory ...");
-
-  memset (frame_pointer, 0, size);
+  wstream_alloc(&frame_pointer, 64, size);
+  //memset (frame_pointer, 0, size);
 
   frame_pointer->continuation_label_id = 0;
   frame_pointer->synchronization_counter = sc;
+  frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void)) wfn;
 
   if (current_barrier)
@@ -510,10 +514,17 @@ __builtin_ia32_tend ()
      needed.  */
   if (current_barrier != NULL)
     {
-      current_barrier->barrier_unused = true;
-      current_barrier->barrier_ready = true;
+      if (current_barrier->barrier_counter_created == 0)
+	wstream_free(current_barrier, sizeof (barrier_t));
+      else
+	{
+	  current_barrier->barrier_unused = true;
+	  current_barrier->barrier_ready = true;
+	  try_pass_barrier (current_barrier);
+	}
     }
-  free (current_fp);
+  current_barrier = NULL;
+  wstream_free(current_fp, current_fp->size);
   current_fp = NULL;
 }
 
@@ -655,6 +666,8 @@ wstream_df_worker_thread_fn (void *data)
 
   sched_deque = &cthread->work_deque;
 
+  wstream_init_alloc();
+
   if (wid != 0)
     {
       _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
@@ -752,6 +765,8 @@ void pre_main() {
 
   int i;
 
+  wstream_init_alloc();
+
 #ifdef _PAPI_PROFILE
   int retval = PAPI_library_init(PAPI_VER_CURRENT);
   if (retval != PAPI_VER_CURRENT)
@@ -766,7 +781,7 @@ void pre_main() {
 #endif
 
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
-		       num_workers * sizeof (wstream_df_thread_t)))
+		      num_workers * sizeof (wstream_df_thread_t)))
     wstream_df_fatal ("Out of memory ...");
 
   int ncores = wstream_df_num_cores ();
@@ -807,10 +822,6 @@ void post_main() {
   /* Current barrier is the last one, so it allows terminating the
      scheduler functions once it clears.  */
   wstream_df_taskwait (77);
-  //current_barrier->cp_barrier = true;
-  //wstream_df_release_barrier ();
-  free (current_fp);
-  current_fp = NULL;
 
   for (i = 0; i < num_workers; ++i)
     {
@@ -860,8 +871,7 @@ init_stream (void *s, size_t element_size)
 void
 wstream_df_stream_ctor (void **s, size_t element_size)
 {
-  if (posix_memalign (s, 64, sizeof (wstream_df_stream_t)))
-    wstream_df_fatal ("Out of memory ...");
+  wstream_alloc(s, 64, sizeof (wstream_df_stream_t));
   init_stream (*s, element_size);
 }
 
@@ -872,8 +882,7 @@ wstream_df_stream_array_ctor (void **s, size_t num_streams, size_t element_size)
 
   for (i = 0; i < num_streams; ++i)
     {
-      if (posix_memalign (&s[i], 64, sizeof (wstream_df_stream_t)))
-	wstream_df_fatal ("Out of memory ...");
+      wstream_alloc(&s[i], 64, sizeof (wstream_df_stream_t));
       init_stream (s[i], element_size);
     }
 }
@@ -923,7 +932,7 @@ dec_stream_ref (void *s)
   if (refcount == 0)
     {
       force_empty_queues (s);
-      free (s);
+      wstream_free(s, sizeof (wstream_df_stream_t));
     }
 #if 0
   int refcount = stream->refcount;
@@ -951,7 +960,7 @@ dec_stream_ref (void *s)
   if (refcount == 0)
     {
       force_empty_queues (s);
-      free (s);
+      wstream_free(s, sizeof (wstream_df_stream_t));
     }
 #endif
 }
@@ -1083,8 +1092,7 @@ __builtin_ia32_tick (void *s, size_t burst)
       /* Allocate a fake view, with a fake data block, that allows to
 	 keep the same dependence resolution algorithm.  */
       size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size;
-      if (posix_memalign ((void **)&cons_view, 64, size))
-	wstream_df_fatal ("Out of memory ...");
+      wstream_alloc(&cons_view, 64, size);
       memset (cons_view, 0, size);
 
       cons_view->horizon = burst * stream->elem_size;

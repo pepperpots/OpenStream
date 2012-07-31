@@ -53,6 +53,7 @@ typedef struct wstream_df_frame
   tree wstream_df_frame_field_continuation_label;
   tree wstream_df_frame_field_work_fn;
   tree wstream_df_frame_field_sc;
+  tree wstream_df_frame_field_size;
   tree wstream_df_frame_field_own_barrier;
 } wstream_df_frame;
 
@@ -3990,11 +3991,7 @@ handle_continuations (gimple entry_stmt)
 		gimple swit, stmt;
 		edge e;
 		int i;
-
-		/* Issue call to create a barrier in this task as it
-		   has taskwaits.  */
-		stmt = gimple_build_call (create_bar_fn, 0);
-		gsi_insert_before (&gsi, stmt, GSI_SAME_STMT);
+		gimple_stmt_iterator g_after_labels;
 
 		/* Querry the continuation's label.  */
 		stmt = gimple_build_call (get_cont_id_fn, 0);
@@ -4006,8 +4003,13 @@ handle_continuations (gimple entry_stmt)
 		swit = gimple_build_switch_vec (x, case_label, labels);
 		gsi_insert_before (&gsi, swit, GSI_NEW_STMT);
 
-		/* Split the out edge and add the default label.  */
+		/* Split the out edge and add the barrier creation
+		   call and the 'default' label.  */
 		e = split_block (bb, gsi_stmt (gsi));
+		g_after_labels = gsi_after_labels (e->dest);
+		stmt = gimple_build_call (create_bar_fn, 0);
+		gsi_insert_before (&g_after_labels, stmt, GSI_SAME_STMT);
+
 		gsi_insert_on_edge_immediate (e, gimple_build_label (def_label));
 
 		/* For each label in the switch (i.e., for each
@@ -4017,10 +4019,10 @@ handle_continuations (gimple entry_stmt)
 		FOR_EACH_VEC_ELT(gimple, label_stmts, i, stmt)
 		  {
 		    basic_block lbl_bb = gimple_bb (stmt);
-		    gimple_stmt_iterator g_after_labels = gsi_after_labels (lbl_bb);
 
 		    make_edge (bb, lbl_bb, 0);
 
+		    g_after_labels = gsi_after_labels (lbl_bb);
 		    stmt = gimple_build_call (create_bar_fn, 0);
 		    gsi_insert_before (&g_after_labels, stmt, GSI_SAME_STMT);
 		  }
@@ -7824,6 +7826,17 @@ build_wstream_df_frame_base_type (omp_context *ctx)
   if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
     TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
   ctx->base_frame.wstream_df_frame_field_own_barrier = field;
+
+  name = create_tmp_var_name ("size");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_size = field;
 
   name = create_tmp_var_name ("synchronization_counter");
   type = integer_type_node;
