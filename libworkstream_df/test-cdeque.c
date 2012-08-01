@@ -36,7 +36,6 @@ static unsigned long breadth, depth;
 
 static volatile unsigned long num_start_spin = 1000000000UL;
 static volatile bool start __attribute__ ((aligned (64)));
-static volatile bool end __attribute__ ((aligned (64)));
 
 static void *worker_main (void *);
 static void worker (struct state *, unsigned long);
@@ -61,8 +60,6 @@ worker_main (void *data)
       worker (state, depth);
     }
   END_TIME (&state->time);
-
-  end = true;
 
   return NULL;
 }
@@ -124,7 +121,7 @@ thief_main (void *data)
   BEGIN_TIME (&state->time);
 
   stealprob = (double) num_steal_per_thread / num_job;
-  for (i = 0; !end && i < num_steal_per_thread; ++i)
+  for (i = 0; i < num_steal_per_thread; ++i)
     {
       /* Minimal probability is actually 1/RAND_MAX. */
       while ((double) rand_r (&state->seed) / RAND_MAX > stealprob)
@@ -136,9 +133,6 @@ thief_main (void *data)
     }
 
   END_TIME (&state->time);
-
-  while (!end)
-    continue;
 
   return NULL;
 }
