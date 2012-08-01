@@ -32,6 +32,7 @@ struct state *states;
 static cdeque_t *worker_deque;
 
 static unsigned long num_thread, num_job, num_steal, num_steal_per_thread;
+static double steal_freq;
 static unsigned long breadth, depth;
 
 static volatile unsigned long num_start_spin = 1000000000UL;
@@ -120,7 +121,10 @@ thief_main (void *data)
 
   BEGIN_TIME (&state->time);
 
-  stealprob = (double) num_steal_per_thread / num_job;
+  if (steal_freq > 0.0)
+	  stealprob = steal_freq;
+  else
+	  stealprob = (double) num_steal_per_thread / num_job;
   for (i = 0; i < num_steal_per_thread; ++i)
     {
       /* Minimal probability is actually 1/RAND_MAX. */
@@ -153,7 +157,7 @@ main (int argc, char *argv[])
   breadth = 6;
   depth = 10;
   dqlogsize = 6;
-  while ((opt = getopt (argc, argv, "b:d:i:n:p:r:s:")) != -1)
+  while ((opt = getopt (argc, argv, "b:d:f:i:n:p:r:s:")) != -1)
     {
       switch (opt)
 	{
@@ -171,6 +175,15 @@ main (int argc, char *argv[])
 	  if (depth < 1)
 	    {
 	      fprintf (stderr, "-d DEPTH must be greater or equal to 1");
+	      return EXIT_FAILURE;
+	    }
+	  break;
+
+	case 'f':
+	  steal_freq = strtod (optarg, NULL);
+	  if (steal_freq < 0.0)
+	    {
+	      fprintf (stderr, "-f STEAL_FREQ must be greater or equal to 0.0");
 	      return EXIT_FAILURE;
 	    }
 	  break;
@@ -211,6 +224,7 @@ main (int argc, char *argv[])
 		   "Options:\n"
 		   "  -b BREADTH\n"
 		   "  -d DEPTH\n"
+		   "  -f STEAL_FREQ\n"
 		   "  -i INI_DEQUE_LOG_SIZE\n"
 		   "  -n NUM_THREAD\n"
 		   "  -r RAND_SEED\n"
