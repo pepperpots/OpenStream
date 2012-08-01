@@ -34,13 +34,17 @@ do_tree()
 	b=$1
 	d=$2
 	workload="-b $b -d $d"
-	nsteal=$(awk -v b=$b -v d=$d -v n=$nthread '
+	nsteal=$(awk -v b=$b -v d=$d '
 	BEGIN {
 		total = 0
-		row = b
-		for (i = 0; i < d; ++i) {
-			row *= b
-			total += row
+		if (b == 1)
+			total = d
+		else {
+			row = b
+			for (i = 0; i < d; ++i) {
+				row *= b
+				total += row
+			}
 		}
 		print total
 	}
