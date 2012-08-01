@@ -57,7 +57,12 @@ tune()
 iter()
 {
 	for i in `seq 1 $1`; do
-		$t -b $b -d $d -n $nthread -s $2 -f $3 | tail -n 1
+		if [ $3 ]; then
+			farg="-f $3"
+		else
+			farg=
+		fi
+		$t -b $b -d $d -n $nthread -s $2 $farg | tail -n 1
 	done
 }
 
