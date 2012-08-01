@@ -5,7 +5,7 @@
 
 #include <getopt.h>
 
-#define _WITH_OUTPUT 1
+#define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>

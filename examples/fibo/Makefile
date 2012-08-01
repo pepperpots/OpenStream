@@ -1,6 +1,7 @@
 TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo hand_task_fibo raw_fibo
 
-INST_DIR = ../../install/
+#INST_DIR = ../../install/
+INST_DIR = /media/disk/dev/tstar/open-stream-code/install/
 
 INSTALL_DIR = ${INST_DIR}
 LIB_DIR = ${INSTALL_DIR}/lib64
