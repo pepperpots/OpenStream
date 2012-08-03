@@ -165,7 +165,7 @@ main (int argc, char *argv[])
 	  breadth = strtoul (optarg, NULL, 0);
 	  if (breadth < 1)
 	    {
-	      fprintf (stderr, "-b BREADTH must be greater or equal to 1");
+	      fprintf (stderr, "-b BREADTH must be greater or equal to 1\n");
 	      return EXIT_FAILURE;
 	    }
 	  break;
@@ -174,7 +174,7 @@ main (int argc, char *argv[])
 	  depth = strtoul (optarg, NULL, 0);
 	  if (depth < 1)
 	    {
-	      fprintf (stderr, "-d DEPTH must be greater or equal to 1");
+	      fprintf (stderr, "-d DEPTH must be greater or equal to 1\n");
 	      return EXIT_FAILURE;
 	    }
 	  break;
@@ -183,7 +183,8 @@ main (int argc, char *argv[])
 	  steal_freq = strtod (optarg, NULL);
 	  if (steal_freq < 0.0)
 	    {
-	      fprintf (stderr, "-f STEAL_FREQ must be greater or equal to 0.0");
+	      fprintf (stderr,
+		       "-f STEAL_FREQ must be greater or equal to 0.0\n");
 	      return EXIT_FAILURE;
 	    }
 	  break;
@@ -196,7 +197,7 @@ main (int argc, char *argv[])
 	  num_thread = strtoul (optarg, NULL, 0);
 	  if (num_thread < 2)
 	    {
-	      fprintf (stderr, "-n NUM_THREAD must be greater or equal to 2");
+	      fprintf (stderr, "-n NUM_THREAD must be greater or equal to 2\n");
 	      return EXIT_FAILURE;
 	    }
 	  break;
