@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,8 @@ static double steal_freq;
 static unsigned long breadth, depth;
 
 static volatile unsigned long num_start_spin = 1000000000UL;
-static volatile bool start __attribute__ ((aligned (64)));
+static atomic_bool start __attribute__ ((aligned (64)));
+static atomic_bool end __attribute__ ((aligned (64)));
 
 static void *worker_main (void *);
 static void worker (struct state *, unsigned long);
@@ -57,10 +59,11 @@ worker_main (void *data)
     straight_worker (state, depth);
   else
     {
-      start = true;
+      atomic_store_explicit (&start, true, memory_order_release);
       worker (state, depth);
     }
   END_TIME (&state->time);
+  atomic_store_explicit (&end, true, memory_order_release);
 
   return NULL;
 }
@@ -96,7 +99,7 @@ straight_worker (struct state *state, unsigned long d)
 
   for (i = 0; i < d; ++i)
     cdeque_push_bottom (worker_deque, (void *) i);
-  start = true;
+  atomic_store_explicit (&start, true, memory_order_release);
   while (i-- > 0)
     {
       val = cdeque_take (worker_deque);
@@ -116,15 +119,15 @@ thief_main (void *data)
   double stealprob;
   unsigned long i;
 
-  while (!start)
+  while (!atomic_load_explicit (&start, memory_order_acquire))
     continue;
 
   BEGIN_TIME (&state->time);
 
   if (steal_freq > 0.0)
-	  stealprob = steal_freq;
+    stealprob = steal_freq;
   else
-	  stealprob = (double) num_steal_per_thread / num_job;
+    stealprob = (double) num_steal_per_thread / num_job;
   for (i = 0; i < num_steal_per_thread; ++i)
     {
       /* Minimal probability is actually 1/RAND_MAX. */
@@ -133,7 +136,8 @@ thief_main (void *data)
       val = cdeque_steal (worker_deque);
       if (val == NULL)
 	++state->num_failed_attempt;
-      ++state->num_attempt;
+      if (!atomic_load_explicit (&end, memory_order_acquire))
+	++state->num_attempt;
     }
 
   END_TIME (&state->time);
