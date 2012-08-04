@@ -305,28 +305,31 @@ main (int argc, char *argv[])
   printf ("worker_time\t");
   for (t = 1; t < num_thread; ++t)
     printf ("thief_time_%lu\t", t);
-  printf ("take_empty_count\t"
-	  "steal_empty_count\t"
-	  "num_job\t"
-	  "num_expected_steal\t"
-	  "num_effective_steal\n");
+  printf ("empty_takes\t"
+	  "empty_steals\t"
+	  "total_jobs\t"
+	  "expected_steals\t"
+	  "effective_steals\n");
 
   printf ("%ld.%09ld\t", states[0].time.tv_sec, states[0].time.tv_nsec);
   for (t = 1; t < num_thread; ++t)
     printf ("%ld.%09ld\t", states[t].time.tv_sec, states[t].time.tv_nsec);
 
-  printf ("%lu\t", states[0].num_failed_attempt);
+  printf ("%-8lu\t", states[0].num_failed_attempt);
   n = 0;
   for (t = 1; t < num_thread; ++t)
     n += states[t].num_failed_attempt;
-  printf ("%lu\t", n);
+  printf ("%-8lu\t", n);
 
-  printf ("%lu\t", num_job);
-  printf ("%lu\t", num_steal);
+  printf ("%-8lu\t", num_job);
+  if (num_steal == (unsigned long) -1)
+    printf ("unspecified\t");
+  else
+    printf ("%-8lu\t", num_steal);
   n = 0;
   for (t = 1; t < num_thread; ++t)
     n += states[t].num_attempt;
-  printf ("%lu\n", n);
+  printf ("%-8lu\n", n);
 
   free (states);
 
