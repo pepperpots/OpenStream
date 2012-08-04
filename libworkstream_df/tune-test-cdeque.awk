@@ -4,12 +4,14 @@ BEGIN {
 	expected = ARGV[3]
 	total = ARGV[4]
 	n = ARGV[5]
+	safe_adj = 0.9
 
 	f = expected / total / (n - 1)
 	if (expected == 0) {
 		print 0
 		exit
 	}
+	f = f / safe_adj
 
 	bisect = 0
 	lb = 0
@@ -26,9 +28,10 @@ BEGIN {
 			thief_time += $j
 		thief_time /= n - 1
 
-		err = thief_time / $1
-		printf "%g [%g;%g] => %f / %f (%f)\n",
-		    f, lb, ub, thief_time, $1, err | "cat >&2"
+		adj_worker_time = safe_adj * $1
+		err = thief_time / adj_worker_time
+		printf "%g [%g;%g] => %f / (%g * %f) = %f\n",
+		    f, lb, ub, thief_time, safe_adj, $1, err | "cat >&2"
 		diff = err < 1 ? 1 - err : err - 1
 
 		nhit = diff < 0.05 ? nhit + 1 : 0
@@ -46,9 +49,13 @@ BEGIN {
 				ub = f
 			if (err > 1 && f > lb)
 				lb = f
-			if (lb > 0 && ub < 1)
+			if (lb >= ub)
+				break
+			else if (lb > 0 && ub < 1 || i >= ni / 2)
 				bisect = 1
 			f *= err
+			if (f >= 1)
+				f = 1
 		}
 	}
 
