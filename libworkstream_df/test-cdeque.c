@@ -32,6 +32,7 @@ struct state
 struct state *states;
 static cdeque_t *worker_deque;
 
+static bool has_num_steal, has_steal_freq;
 static unsigned long num_thread, num_job, num_steal, num_steal_per_thread;
 static double steal_freq;
 static unsigned long breadth, depth;
@@ -139,7 +140,12 @@ thief_main (void *data)
       val = cdeque_steal (worker_deque);
       if (val == NULL)
 	++state->num_failed_attempt;
-      if (!atomic_load_explicit (&end, memory_order_acquire))
+      if (atomic_load_explicit (&end, memory_order_acquire))
+	{
+	  if (num_steal_per_thread == (unsigned long) -1)
+	    break;
+	}
+      else
 	++state->num_attempt;
     }
 
@@ -160,7 +166,7 @@ main (int argc, char *argv[])
 
   num_thread = 2;
   num_steal = -1;
-  stealratio = 0.01;
+  stealratio = -1.0;
   breadth = 6;
   depth = 10;
   dqlogsize = 6;
@@ -187,6 +193,7 @@ main (int argc, char *argv[])
 	  break;
 
 	case 'f':
+	  has_steal_freq = true;
 	  steal_freq = strtod (optarg, NULL);
 	  if (steal_freq < 0.0)
 	    {
@@ -214,11 +221,9 @@ main (int argc, char *argv[])
 	  break;
 
 	case 's':
+	  has_num_steal = true;
 	  if (strchr (optarg, '.') == NULL)
-	    {
-	      num_steal = strtoul (optarg, NULL, 0);
-	      stealratio = -1.0;
-	    }
+	    num_steal = strtoul (optarg, NULL, 0);
 	  else
 	    {
 	      num_steal = -1;
@@ -249,10 +254,17 @@ main (int argc, char *argv[])
       num_job += nrowjob;
     }
 
+  if (!has_num_steal && !has_steal_freq)
+    stealratio = -1.0;
   if (stealratio >= 0.0)
     num_steal = (unsigned long) (stealratio * num_job);
-  num_steal_per_thread = num_steal / (num_thread - 1);
-  num_steal = num_steal_per_thread * (num_thread - 1);
+  if (num_steal == (unsigned long) -1)
+    num_steal_per_thread = -1;
+  else
+    {
+      num_steal_per_thread = num_steal / (num_thread - 1);
+      num_steal = num_steal_per_thread * (num_thread - 1);
+    }
 
   worker_deque = cdeque_alloc (dqlogsize);
   assert (worker_deque != NULL);
