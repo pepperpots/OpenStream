@@ -54,11 +54,11 @@ worker_main (void *data)
   for (i = 0; i < num_start_spin; ++i)
     continue;
 
-  BEGIN_TIME (&state->time);
   if (breadth == 1)
     straight_worker (state, depth);
   else
     {
+      BEGIN_TIME (&state->time);
       atomic_store_explicit (&start, true, memory_order_release);
       worker (state, depth);
     }
@@ -99,7 +99,10 @@ straight_worker (struct state *state, unsigned long d)
 
   for (i = 0; i < d; ++i)
     cdeque_push_bottom (worker_deque, (void *) i);
+
+  BEGIN_TIME (&state->time);
   atomic_store_explicit (&start, true, memory_order_release);
+
   while (i-- > 0)
     {
       val = cdeque_take (worker_deque);
