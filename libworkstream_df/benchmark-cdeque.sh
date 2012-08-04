@@ -30,7 +30,6 @@ tune()
 
 iter()
 {
-	echo $t $testargs -s $1 -f $f \> $log >&2
 	for i in `seq 1 $1`; do
 		if [ $3 ]; then
 			farg="-f $3"
@@ -49,6 +48,7 @@ run()
 		echo $t $testargs -s $1 -f $f
 		$t $testargs -s $1 -f $f
 	else
+		echo $t $testargs -s $1 -f $f \> $log >&2
 		iter $niter $1 $f >$log
 	fi
 }
