@@ -1,19 +1,31 @@
 #ifndef TIME_UTIL_H
 #define TIME_UTIL_H
 
+#include <stdatomic.h>
 #include <time.h>
+
+#define TIME_UTIL_CLOCK CLOCK_THREAD_CPUTIME_ID
 
 static inline int timespec_diff (struct timespec *,
 				 const struct timespec *,
 				 const struct timespec *);
 
-#define BEGIN_TIME(p) clock_gettime (CLOCK_THREAD_CPUTIME_ID, (p))
+#define BEGIN_TIME(p)				\
+do						\
+  {						\
+    atomic_thread_fence (memory_order_seq_cst);	\
+    clock_gettime (TIME_UTIL_CLOCK, (p));	\
+    atomic_thread_fence (memory_order_seq_cst);	\
+  }						\
+while (0)
 #define END_TIME(p)						\
 do								\
   {								\
     struct timespec _end_time_tv;				\
-    clock_gettime (CLOCK_THREAD_CPUTIME_ID, &_end_time_tv);	\
+    atomic_thread_fence (memory_order_seq_cst);			\
+    clock_gettime (TIME_UTIL_CLOCK, &_end_time_tv);		\
     assert (timespec_diff ((p), &_end_time_tv, (p)) == 0);	\
+    atomic_thread_fence (memory_order_seq_cst);			\
   }								\
 while (0)
 
