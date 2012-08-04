@@ -272,6 +272,13 @@ main (int argc, char *argv[])
   states = calloc (num_thread, sizeof *states);
   assert (states != NULL);
 
+  CPU_ZERO (&cpuset);
+  CPU_SET (0, &cpuset);
+  states[0].tid = pthread_self ();
+#if !NO_TEST_SETAFFINITY
+  assert (pthread_setaffinity_np (states[0].tid, sizeof cpuset, &cpuset) == 0);
+#endif
+
   states[0].seed = rand ();
   for (t = 1; t < num_thread; ++t)
     {
@@ -289,16 +296,8 @@ main (int argc, char *argv[])
 			      thief_main, &states[t]) == 0);
     }
 
-  pthread_attr_init (&thrattr);
-  CPU_ZERO (&cpuset);
-  CPU_SET (0, &cpuset);
-#if !NO_TEST_SETAFFINITY
-  assert (pthread_attr_setaffinity_np (&thrattr, sizeof cpuset, &cpuset) == 0);
-#endif
-  assert (pthread_create (&states[0].tid, &thrattr,
-			  worker_main, &states[0]) == 0);
+  worker_main (&states[0]);
 
-  assert (pthread_join (states[0].tid, NULL) == 0);
   for (t = 1; t < num_thread; ++t)
     assert (pthread_join (states[t].tid, NULL) == 0);
 
