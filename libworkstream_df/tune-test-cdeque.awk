@@ -51,7 +51,7 @@ BEGIN {
 				lb = f
 			if (lb >= ub)
 				break
-			else if (lb > 0 && ub < 1 || i >= ni / 2)
+			if (lb > 0 && ub < 1 || i >= ni / 2)
 				bisect = 1
 			f *= err
 			if (f >= 1)
