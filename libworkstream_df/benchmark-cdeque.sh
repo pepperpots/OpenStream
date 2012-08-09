@@ -41,7 +41,7 @@ for t in $tests; do
 	for i in $(seq 1 10); do
 		[ $dry ] || ./$t $testargs -f 0 | tail -n 1 >/dev/null
 	done
-	log=freq.$t.$nthread.$b.$d.log
+	log=$t.$nthread.$b.$d.log
 	while read x; do
 		f=$(awk "BEGIN{print $x / ($nthread-1)}")
 		echo $t $testargs -f $f >&2 \>\> $log
