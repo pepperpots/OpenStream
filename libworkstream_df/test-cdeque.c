@@ -45,6 +45,7 @@ static void *worker_main (void *);
 static void worker (struct state *, unsigned long);
 static void straight_worker (struct state *, unsigned long);
 static void *thief_main (void *);
+static bool do_steal (struct state *, double *);
 
 static void *
 worker_main (void *data)
@@ -119,39 +120,51 @@ static void *
 thief_main (void *data)
 {
   struct state *state = data;
-  void *val;
-  double stealprob;
-  unsigned long i;
+  double lasttime;
 
   while (!atomic_load_explicit (&start, memory_order_acquire))
     continue;
 
   BEGIN_TIME (&state->time);
 
-  if (steal_freq > 0.0)
-    stealprob = steal_freq;
-  else
-    stealprob = (double) num_steal_per_thread / num_job;
-  for (i = 0; i < num_steal_per_thread; ++i)
+  lasttime = get_thread_cpu_time ();
+  while (state->num_attempt < num_steal_per_thread)
     {
-      /* Minimal probability is actually 1/RAND_MAX. */
-      while ((double) rand_r (&state->seed) / RAND_MAX > stealprob)
-	continue;
+      if (!do_steal (state, &lasttime))
+	break;
+    }
+
+  END_TIME (&state->time);
+
+  return NULL;
+}
+
+static bool
+do_steal (struct state *state, double *plasttime)
+{
+  double curtime;
+  unsigned long i, ndue;
+  void *val;
+
+  curtime = get_thread_cpu_time ();
+  ndue = (unsigned long) ((curtime - *plasttime) * steal_freq);
+  if (ndue == 0)
+    return !atomic_load_explicit (&end, memory_order_acquire);
+  *plasttime = curtime;
+  for (i = 0; i < ndue; ++i)
+    {
       val = cdeque_steal (worker_deque);
       if (val == NULL)
 	++state->num_failed_attempt;
       if (atomic_load_explicit (&end, memory_order_acquire))
 	{
 	  if (num_steal_per_thread == (unsigned long) -1)
-	    break;
+	    return false;
 	}
       else
 	++state->num_attempt;
     }
-
-  END_TIME (&state->time);
-
-  return NULL;
+  return true;
 }
 
 int
@@ -167,6 +180,7 @@ main (int argc, char *argv[])
   num_thread = 2;
   num_steal = -1;
   stealratio = -1.0;
+  steal_freq = 1000000.0;
   breadth = 6;
   depth = 10;
   dqlogsize = 6;
@@ -254,12 +268,10 @@ main (int argc, char *argv[])
       num_job += nrowjob;
     }
 
-  if (!has_num_steal && !has_steal_freq)
-    stealratio = -1.0;
   if (stealratio >= 0.0)
     num_steal = (unsigned long) (stealratio * num_job);
   if (num_steal == (unsigned long) -1)
-    num_steal_per_thread = -1;
+    num_steal_per_thread = (unsigned long) -1;
   else
     {
       num_steal_per_thread = num_steal / (num_thread - 1);
@@ -307,6 +319,7 @@ main (int argc, char *argv[])
   printf ("empty_takes\t"
 	  "empty_steals\t"
 	  "total_jobs\t"
+	  "steal_freq\t"
 	  "expected_steals\t"
 	  "effective_steals\n");
 
@@ -321,6 +334,7 @@ main (int argc, char *argv[])
   printf ("%-8lu\t", n);
 
   printf ("%-8lu\t", num_job);
+  printf ("%-8g\t", steal_freq);
   if (num_steal == (unsigned long) -1)
     printf ("unspecified\t");
   else

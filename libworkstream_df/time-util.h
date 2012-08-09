@@ -29,6 +29,18 @@ do								\
   }								\
 while (0)
 
+static inline double
+get_thread_cpu_time (void)
+{
+  struct timespec _tv;
+  double _t;
+
+  clock_gettime (CLOCK_THREAD_CPUTIME_ID, &_tv);
+  _t = _tv.tv_sec;
+  _t += _tv.tv_nsec * 1e-9;
+  return _t;
+}
+
 static inline int
 timespec_diff (struct timespec *_result,
 	       const struct timespec *_px, const struct timespec *_py)

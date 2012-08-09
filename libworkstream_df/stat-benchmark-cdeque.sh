@@ -11,12 +11,12 @@ for log in test-cdeque*.log; do
 	mean=$(awk '{x+=$1;++n} END{print x/n}' $log)
 	stddev=$(awk -v m=$mean '{x+=($1-m)^2;++n} END{print sqrt(x/n)}' $log)
 	maxdev=$(awk -v m=$mean '{x=($1-m)^2} x>u{u=x} END{print sqrt(u)}' $log)
-	thief_avg=$(awk '{for(i=1;i<=NF-5;++i){x+=$i;++n}} END{print x/n}' $log)
+	thief_avg=$(awk '{for(i=1;i<=NF-6;++i){x+=$i;++n}} END{print x/n}' $log)
 	thief_avgerr90=$(awk						\
-	    '{for(i=1;i<=NF-5;++i){x+=$i/(0.9*$1);++n}} END{print x/n}'	\
+	    '{for(i=1;i<=NF-6;++i){x+=$i/(0.9*$1);++n}} END{print x/n}'	\
 	    $log)
 	steal_avg=$(awk '{x+=$(NF-1)==0?0:$NF/$(NF-1);++n} END{print x/n}' $log)
-	steal_avgok=$(awk '{x+=$NF==0?0:$(NF-4)/$NF;++n} END{print x/n}' $log)
+	steal_avgok=$(awk '{x+=$NF==0?0:$(NF-5)/$NF;++n} END{print x/n}' $log)
 	printf '%-25s\t%-9g\t%-9g\t%-9g\t%-9g\t%-9g\t%-9g\t%g\n'	\
 	    $label							\
 	    $mean $stddev $maxdev					\
