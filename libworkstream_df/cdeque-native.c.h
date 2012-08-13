@@ -51,13 +51,6 @@ cdeque_take (cdeque_p cdeque)
     bottom = load_linked (&cdeque->bottom) - 1;
   while (!store_conditional (&cdeque->bottom, bottom));
   /* Force coherence point. */
-#elif defined(__i386__)
-  bottom = cdeque->bottom - 1;
-  size_t b = bottom;
-  __asm__ __volatile__ ("xchgl %1, %0"
-			: "+m" (cdeque->bottom)
-			: "r" (b)
-			: "memory");
 #else
   bottom = cdeque->bottom - 1;
   cdeque->bottom = bottom;
