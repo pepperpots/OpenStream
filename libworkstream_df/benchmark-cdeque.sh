@@ -33,20 +33,16 @@ if [ $# -eq 0 ]; then
 	tests='test-cdeque test-cdeque-nofences test-cdeque-c11 test-cdeque-dumbc11'
 else
 	for t; do
-		tests="$tests ${t#./}"
+		if [ ${t%-nosync} = $t ]; then
+			tests="$tests ${t#./}"
+		else
+			nosync=1
+		fi
 	done
 fi
 testargs="-b $b -d $d -n $nthread"
 
-if [ -z "$randfile" ]; then
-	randfile=rand.$$
-	awk -v ni=$niter -v mu=$mu '
-	BEGIN {
-		for (i = 1; i <= ni; ++i)
-			print -log(rand()) * mu
-	}
-	' >"$randfile"
-
+if [ "$nosync" ] || [ -z "$randfile" ]; then
 	t=test-cdeque-nosync
 	echo $t prerun >&2
 	for i in $(seq 1 10); do
@@ -57,6 +53,15 @@ if [ -z "$randfile" ]; then
 		echo $t $testargs -f 0 >&2 \>\> $log
 		[ $dry ] || ./$t $testargs -f 0 | tail -n 1 >$log
 	done
+fi
+if [ -z "$randfile" ]; then
+	randfile=rand.$$
+	awk -v ni=$niter -v mu=$mu '
+	BEGIN {
+		for (i = 1; i <= ni; ++i)
+			print -log(rand()) * mu
+	}
+	' >"$randfile"
 fi
 
 for t in $tests; do
