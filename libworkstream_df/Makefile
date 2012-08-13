@@ -9,7 +9,7 @@ WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 
 TEST_DESTDIR=		tests
 
-TEST_KINDS=		-c11 -dumbc11 -llscopt -nolwcas -nofences
+TEST_KINDS=		-c11 -dumbc11 -llscopt -nolwcas -nofences -nosync
 TEST_EXP=		$(TEST_DESTDIR)/__TEST__
 TEST_EXP+=		$(foreach K,$(TEST_KINDS),$(TEST_DESTDIR)/__TEST__$(K))
 TEST_PROGS.cdeque=		$(subst __TEST__,test-cdeque,$(TEST_EXP))
@@ -36,6 +36,7 @@ $(TEST_DESTDIR)/test-%-dumbc11: WSTREAM_CFLAGS+=-DUSE_SEQ_CST_STDATOMIC=1
 $(TEST_DESTDIR)/test-%-llscopt: WSTREAM_CFLAGS+=-DLLSC_OPTIMIZATION=1
 $(TEST_DESTDIR)/test-%-nolwcas: WSTREAM_CFLAGS+=-DNO_LIGHTWEIGHT_CAS=1
 $(TEST_DESTDIR)/test-%-nofences: WSTREAM_CFLAGS+=-DNO_FENCES=1
+$(TEST_DESTDIR)/test-%-nosync: WSTREAM_CFLAGS+=-DNO_FENCES=1 -DNO_SYNC=1
 
 $(TEST_DESTDIR)/test-%: error.c $(WSTREAM_DEPS) $(TEST_DEPS)
 	mkdir -p $(TEST_DESTDIR)

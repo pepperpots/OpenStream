@@ -36,6 +36,17 @@ BEGIN {
 }
 ' >rand.$$
 
+t=test-cdeque-nosync
+echo $t prerun >&2
+for i in $(seq 1 10); do
+	[ $dry ] || ./$t $testargs -f 0 | tail -n 1 >/dev/null
+done
+log=$t.$nthread.$b.$d.log
+for i in $(seq 1 30); do
+	echo $t $testargs -f 0 >&2 \>\> $log
+	[ $dry ] || ./$t $testargs -f 0 | tail -n 1 >$log
+done
+
 for t in $tests; do
 	echo $t prerun >&2
 	for i in $(seq 1 10); do

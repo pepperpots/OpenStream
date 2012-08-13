@@ -70,7 +70,18 @@ if [ -n "$(find . -maxdepth 1 -name "test-*.$n.$b.$d.log")" ]; then
 		sort -n >tput_eff_tput.$t.$n.$b.$d.data
 	done
 	plot tput_eff_tput.test-cdeque points	\
+	    'Critical path throughput'		\
+	    'effective steal throughput (s⁻¹)'	\
+	    'push/take throughput (s⁻¹)'
+	norm=$(awk '{x+=2*$(NF-3)/$1;++n} END{print x/n}'	\
+	    test-cdeque-nosync.$n.$b.$d.log)
+	for t in $tests; do
+		awk -v norm=$norm '{print $NF/$1, 2*$(NF-3)/$1/norm}'	\
+		    $t.$n.$b.$d.log |
+		sort -n >norm_tput_eff_tput.$t.$n.$b.$d.data
+	done
+	plot norm_tput_eff_tput.test-cdeque points	\
 	    'Critical path throughput'			\
 	    'effective steal throughput (s⁻¹)'		\
-	    'push/take throughput (s⁻¹)'
+	    'normalized push/take throughput'
 fi

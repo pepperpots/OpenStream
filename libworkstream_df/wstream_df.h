@@ -107,6 +107,7 @@ store_conditional (volatile size_t *ptr, size_t value)
 static inline bool
 compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
+#if !NO_FENCES || !NO_SYNC
 #if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
   int status = 1;
   __asm__ __volatile__ ("0: ldrex r0, [%1]\n\t"
@@ -123,11 +124,21 @@ compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 #else
   return __sync_bool_compare_and_swap (ptr, oldval, newval);
 #endif
+#else
+  if (*ptr == oldval)
+    {
+      *ptr = newval;
+      return true;
+    }
+  else
+    return false;
+#endif
 }
 
 static inline bool
 weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 {
+#if !NO_FENCES || !NO_SYNC
 #if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
   int status = 1;
   __asm__ __volatile__ ("ldrex r0, [%1]\n\t"
@@ -139,6 +150,9 @@ weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
   return !status;
 #else
   return __sync_bool_compare_and_swap (ptr, oldval, newval);
+#endif
+#else
+  return compare_and_swap (ptr, oldval, newval);
 #endif
 }
 
