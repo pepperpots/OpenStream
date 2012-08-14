@@ -1,4 +1,4 @@
-base_dir=$PWD
+base_dir=./
 logdir=$base_dir/logs
 makedir () {
     DIRNAME=$1
@@ -25,7 +25,7 @@ echo "-------------------------------------------------------------------------"
 cat /proc/meminfo >> $this_log/system_config
 
 
-niter=200
+niter=30
 while getopts t: opt; do
     case $opt in
 	t)
@@ -38,7 +38,7 @@ shift $((OPTIND - 1))
 iter()
 {
     for i in `seq 1 $1`; do
-	$t $options
+	$t $options | head -n 1
     done
 }
 
@@ -60,10 +60,13 @@ run()
     cat $this_log/"$dir"_$discrim.data
 }
 
+
+test_version=x86
+
 size=35
 cutoff=1
 dir='fibo'
-tests='barrier_fibo barrier_fibo_c11 barrier_fibo_dumbc11 barrier_fibo_nofences'
+tests="${test_version}_fibo ${test_version}_fibo_c11 ${test_version}_fibo_dumbc11" # ${test_version}_fibo_nofences'
 options=" -n $size -c $cutoff"
 discrim="$size.$cutoff"
 run
@@ -72,15 +75,38 @@ size=10
 block=1
 iter=20
 dir='seidel'
-tests='barrier_seidel barrier_seidel_c11 barrier_seidel_dumbc11' # barrier_seidel_nofences'
+tests="${test_version}_seidel ${test_version}_seidel_c11 ${test_version}_seidel_dumbc11" # ${test_version}_seidel_nofences'
 options=" -s $size -b $block -r $iter"
 discrim="$size.$block.$iter"
 run
 
 dir='fft-1d'
-tests='barrier_fft barrier_fft_c11 barrier_fft_dumbc11 barrier_fft_nofences'
+tests="${test_version}_fft ${test_version}_fft_c11 ${test_version}_fft_dumbc11" # ${test_version}_fft_nofences'
 options=" "
 discrim="fg"
 run
 
+dir='knapsack'
+tests="${test_version}_knapsack ${test_version}_knapsack_c11 ${test_version}_knapsack_dumbc11" # ${test_version}_knapsack_nofences'
+options=" -n2 "
+discrim="conf2"
+run
+
+dir='matmul'
+tests="${test_version}_matmul ${test_version}_matmul_c11 ${test_version}_matmul_dumbc11" # ${test_version}_matmul_nofences'
+options=" 256 "
+discrim="256x256"
+run
+
+dir='strassen'
+tests="${test_version}_strassen ${test_version}_strassen_c11 ${test_version}_strassen_dumbc11" # ${test_version}_strassen_nofences'
+options=" 512 "
+discrim="512x512"
+run
+
+dir='jacobi'
+tests="${test_version}_jacobi ${test_version}_jacobi_c11 ${test_version}_jacobi_dumbc11" # ${test_version}_jacobi_nofences'
+options=" 3 "
+discrim="conf3"
+run
 
