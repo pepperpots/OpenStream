@@ -46,6 +46,7 @@ static void worker (struct state *, unsigned long);
 static void straight_worker (struct state *, unsigned long);
 static void *thief_main (void *);
 static bool do_steal (struct state *, double *);
+static bool do_rand_steal (struct state *);
 
 static void *
 worker_main (void *data)
@@ -130,8 +131,16 @@ thief_main (void *data)
   lasttime = get_thread_cpu_time ();
   while (state->num_attempt < num_steal_per_thread)
     {
-      if (!do_steal (state, &lasttime))
-	break;
+      if (steal_freq <= 1.0)
+	{
+	  if (!do_rand_steal (state))
+	    break;
+	}
+      else
+	{
+	  if (!do_steal (state, &lasttime))
+	    break;
+	}
     }
 
   END_TIME (&state->time);
@@ -164,6 +173,26 @@ do_steal (struct state *state, double *plasttime)
       else
 	++state->num_attempt;
     }
+  return true;
+}
+
+static bool
+do_rand_steal (struct state *state)
+{
+  void *val;
+
+  if ((double) rand_r (&state->seed) / RAND_MAX >= steal_freq)
+    return !atomic_load_explicit (&end, memory_order_acquire);
+  val = cdeque_steal (worker_deque);
+  if (val == NULL)
+    ++state->num_failed_attempt;
+  if (atomic_load_explicit (&end, memory_order_acquire))
+    {
+      if (num_steal_per_thread == (unsigned long) -1)
+	return false;
+    }
+  else
+    ++state->num_attempt;
   return true;
 }
 

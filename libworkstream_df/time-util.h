@@ -1,6 +1,7 @@
 #ifndef TIME_UTIL_H
 #define TIME_UTIL_H
 
+#include <assert.h>
 #include <stdatomic.h>
 #include <time.h>
 
@@ -10,23 +11,23 @@ static inline int timespec_diff (struct timespec *,
 				 const struct timespec *,
 				 const struct timespec *);
 
-#define BEGIN_TIME(p)				\
-do						\
-  {						\
-    atomic_thread_fence (memory_order_seq_cst);	\
-    clock_gettime (TIME_UTIL_CLOCK, (p));	\
-    atomic_thread_fence (memory_order_seq_cst);	\
-  }						\
+#define BEGIN_TIME(p)							    \
+do									    \
+  {									    \
+    atomic_thread_fence (memory_order_seq_cst);				    \
+    assert (clock_gettime (TIME_UTIL_CLOCK, (p)) == 0);			    \
+    atomic_thread_fence (memory_order_seq_cst);				    \
+  }									    \
 while (0)
-#define END_TIME(p)						\
-do								\
-  {								\
-    struct timespec _end_time_tv;				\
-    atomic_thread_fence (memory_order_seq_cst);			\
-    clock_gettime (TIME_UTIL_CLOCK, &_end_time_tv);		\
-    assert (timespec_diff ((p), &_end_time_tv, (p)) == 0);	\
-    atomic_thread_fence (memory_order_seq_cst);			\
-  }								\
+#define END_TIME(p)							    \
+do									    \
+  {									    \
+    struct timespec _end_time_tv;					    \
+    atomic_thread_fence (memory_order_seq_cst);				    \
+    assert (clock_gettime (TIME_UTIL_CLOCK, &_end_time_tv) == 0);	    \
+    assert (timespec_diff ((p), &_end_time_tv, (p)) == 0);		    \
+    atomic_thread_fence (memory_order_seq_cst);				    \
+  }									    \
 while (0)
 
 static inline double
@@ -35,7 +36,7 @@ get_thread_cpu_time (void)
   struct timespec _tv;
   double _t;
 
-  clock_gettime (CLOCK_THREAD_CPUTIME_ID, &_tv);
+  assert (clock_gettime (CLOCK_THREAD_CPUTIME_ID, &_tv) == 0);
   _t = _tv.tv_sec;
   _t += _tv.tv_nsec * 1e-9;
   return _t;

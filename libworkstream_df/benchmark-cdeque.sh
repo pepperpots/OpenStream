@@ -58,8 +58,12 @@ if [ -z "$randfile" ]; then
 	randfile=rand.$$
 	awk -v ni=$niter -v mu=$mu '
 	BEGIN {
-		for (i = 1; i <= ni; ++i)
-			print -log(rand()) * mu
+		for (i = 1; i <= ni; ++i) {
+			do
+				x = -log(rand()) * mu
+			while (mu <= 1.0 && x > 1.0)
+			print x
+		}
 	}
 	' >"$randfile"
 fi
@@ -71,7 +75,7 @@ for t in $tests; do
 	done
 	log=$t.$nthread.$b.$d.log
 	while read x; do
-		f=$(awk "BEGIN{print $x / ($nthread-1)}")
+		f=$(awk "BEGIN{print $mu <= 1.0 ? $x : $x / ($nthread-1)}")
 		echo $t $testargs -f $f >&2 \>\> $log
 		[ $dry ] || ./$t $testargs -f $f | tail -n 1 >>$log
 	done <"$randfile"
