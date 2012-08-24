@@ -1,0 +1,35 @@
+MIRROR=ftp://gcc.gnu.org/pub/gcc/infrastructure/
+
+all: ./gcc/mpc/openstreamdep \
+	./gcc/mpfr/openstreamdep \
+	./gcc/gmp/openstreamdep
+
+gcc/mpc/openstreamdep: archives/mpc-0.8.1.tar.gz
+	 tar xf $<
+	 if [ -d gcc/mpc ] ; then rm -rf gcc/mpc ; fi
+	 mv mpc-0.8.1 gcc/mpc
+	 touch $@
+
+archives/mpc-0.8.1.tar.gz:
+	mkdir -p archives
+	wget '$(MIRROR)/mpc-0.8.1.tar.gz' -O $@
+
+gcc/mpfr/openstreamdep: archives/mpfr-2.4.2.tar.bz2
+	tar xf $<
+	if [ -d gcc/mpfr ] ; then rm -rf gcc/mpfr ; fi
+	mv mpfr-2.4.2 gcc/mpfr
+	touch $@
+
+archives/mpfr-2.4.2.tar.bz2:
+	mkdir -p archives
+	wget '$(MIRROR)/mpfr-2.4.2.tar.bz2' -O $@
+
+gcc/gmp/openstreamdep: archives/gmp-4.3.2.tar.bz2
+	tar xf $<
+	if [ -d gcc/gmp ] ; then rm -rf gcc/gmp ; fi
+	mv gmp-4.3.2 gcc/gmp
+	touch $@
+
+archives/gmp-4.3.2.tar.bz2:
+	mkdir -p archives
+	wget '$(MIRROR)/gmp-4.3.2.tar.bz2' -O $@
