@@ -1,11 +1,9 @@
 /* A simple approach to FMradio.
  *
- * The code was addapted from Marco Cornero Aug'06
- * for Acotes project. This version ensures to have
- * the same result that the stream one for plain C.
- *
- * Author: David Rodenas-Pico, BSC
- * Creation Date: March 2007
+ * Authors:
+ * Antoniu Pop, INRIA, 2008-2012
+ * David Rodenas-Pico, BSC, 2007
+ * Marco Cornero, 2006
  */
 
 

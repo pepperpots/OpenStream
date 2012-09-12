@@ -1,11 +1,9 @@
 /* A simple approach to FMradio.
  *
- * The code was addapted from Marco Cornero Aug'06
- * for Acotes project. This version ensures to have
- * the same result that the stream one for plain C.
- *
- * Author: David Rodenas-Pico, BSC
- * Creation Date: March 2007
+ * Authors:
+ * Antoniu Pop, INRIA, 2008-2012
+ * David Rodenas-Pico, BSC, 2007
+ * Marco Cornero, 2006
  */
 
 
@@ -509,7 +507,6 @@ main(int argc, char* argv[])
 		  fwrite (&b, sizeof(short), 1, output_file);
 		  fprintf (text_file, "%-10.5f %-10.5f\n", output1_v[i], output2_v[i]);
 		}
-
 	  }
       }
 
