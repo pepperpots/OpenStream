@@ -30,7 +30,8 @@ extern void __builtin_ia32_tend ();
 /* Allocate and return an array of streams.  */
 extern void wstream_df_stream_ctor (void **, size_t);
 extern void wstream_df_stream_array_ctor (void **, size_t, size_t);
-/* Deallocate an array of streams.  */
+/* Decrement reference counter on streams in the array and deallocate
+   streams upon reaching 0.  */
 extern void wstream_df_stream_dtor (void **, size_t);
 /* Add a reference to a stream when passing it as firstprivate to a
    task.  */
