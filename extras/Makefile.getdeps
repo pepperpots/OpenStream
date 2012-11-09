@@ -2,7 +2,7 @@ MIRROR=ftp://gcc.gnu.org/pub/gcc/infrastructure/
 CONTRIB_LIBDIR=install/lib/
 CONTRIB_INCDIR=install/include
 LAPACK_VERSION=3.3.1
-CONTRI_OPT=-O3
+CONTRIB_OPT=-O3
 
 all: openstreamdeps
 
