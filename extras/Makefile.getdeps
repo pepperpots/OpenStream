@@ -13,15 +13,19 @@ bootstrap-all: bootstrap exampledeps
 ################################################################################
 # The compiler and the run time themselves                                     #
 ################################################################################
-bootstrap: install/bin/gcc install/lib64/libworkstream_df.so
+bootstrap: install/bin/gcc install/lib64/libwstream_df.so
 
-install/lib64/libworkstream_df.so: install/bin/gcc
-	cd libworkstream_df && make && make install
+install/lib64/libwstream_df.so: install/bin/gcc
+	$(MAKE) -C libworkstream_df
+	$(MAKE) -C libworkstream_df install
 
 install/bin/gcc: gcc/build/configdep
-	cd gcc/build && make && make install
+	$(MAKE) -C gcc/build
+	$(MAKE) -C gcc/build install
 
-gcc/build/configdep: openstreamdeps
+gcc/build/configdep:./gcc/mpc/openstreamdep \
+	./gcc/mpfr/openstreamdep \
+	./gcc/gmp/openstreamdep
 	mkdir -p gcc/build
 	cd gcc/build; ../configure --enable-languages=c --disable-bootstrap CFLAGS=-g --prefix=$(PWD)/install
 	touch gcc/build/configdep
@@ -93,7 +97,7 @@ contrib/lapack-$(LAPACK_VERSION)/exdep: archives/lapack-$(LAPACK_VERSION).tgz
 	touch $@
 
 contrib/lapack-$(LAPACK_VERSION)/libblas.a: contrib/lapack-$(LAPACK_VERSION)/exdep
-	make OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
+	$(MAKE) OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
 		BLASLIB="../../libblas.a" \
 		-C contrib/lapack-$(LAPACK_VERSION)/BLAS/SRC
 
@@ -107,7 +111,7 @@ contrib/lapack-$(LAPACK_VERSION)/libblas.so: contrib/lapack-$(LAPACK_VERSION)/li
 	rm -rf contrib/tmp/libblas
 
 contrib/lapack-$(LAPACK_VERSION)/liblapack.a: contrib/lapack-$(LAPACK_VERSION)/libblas.a
-	make OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
+	$(MAKE) OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
 		BLASLIB="../../libblas.a" \
 		-C contrib/lapack-$(LAPACK_VERSION)
 	mv contrib/lapack-$(LAPACK_VERSION)/lapack_LINUX.a $@
@@ -143,7 +147,7 @@ contrib/CBLAS/exdep: archives/cblas.tgz
 	touch $@
 
 contrib/CBLAS/libcblas.a: contrib/CBLAS/exdep contrib/lapack-$(LAPACK_VERSION)/libblas.a
-	make CFLAGS="-fPIC $(CONTRIB_OPT) -DADD_" FFLAGS="-fPIC $(CONTRIB_OPT)" \
+	$(MAKE) CFLAGS="-fPIC $(CONTRIB_OPT) -DADD_" FFLAGS="-fPIC $(CONTRIB_OPT)" \
 		BLLIB="../../lapack-$(LAPACK_VERSION)/libblas.a" \
 		-C contrib/CBLAS
 	mv contrib/CBLAS/lib/cblas_LINUX.a $@
