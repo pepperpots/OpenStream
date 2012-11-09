@@ -2,6 +2,7 @@ MIRROR=ftp://gcc.gnu.org/pub/gcc/infrastructure/
 CONTRIB_LIBDIR=install/lib/
 CONTRIB_INCDIR=install/include
 LAPACK_VERSION=3.3.1
+FFTW_VERSION=3.3.2
 CONTRIB_OPT=-O3
 
 all: openstreamdeps
@@ -75,6 +76,7 @@ archives/gmp-4.3.2.tar.bz2:
 exampledeps: $(CONTRIB_LIBDIR)/libblas.so \
 	$(CONTRIB_LIBDIR)/liblapack.so \
 	$(CONTRIB_LIBDIR)/libcblas.so \
+	$(CONTRIB_LIBDIR)/libfftw3.la \
 	$(CONTRIB_INCDIR)/cblas.h
 
 #
@@ -164,3 +166,24 @@ contrib/CBLAS/libcblas.so: contrib/CBLAS/libcblas.a
 archives/cblas.tgz:
 	mkdir -p archives
 	wget 'http://www.netlib.org/blas/blast-forum/cblas.tgz' -O $@
+
+#
+# FFTW
+#
+$(CONTRIB_LIBDIR)/libfftw3.la: contrib/fftw-$(FFTW_VERSION)/confdep
+	$(MAKE) -C contrib/fftw-$(FFTW_VERSION) install
+
+contrib/fftw-$(FFTW_VERSION)/confdep: contrib/fftw-$(FFTW_VERSION)/exdep
+	cd contrib/fftw-$(FFTW_VERSION) ; ./configure --prefix=$(PWD)/install
+	touch $@
+
+contrib/fftw-$(FFTW_VERSION)/exdep: archives/fftw-$(FFTW_VERSION).tar.gz
+	mkdir -p contrib
+	if [ -d contrib/fftw-$(FFTW_VERSION) ] ; \
+		then rm -rf contrib/fftw-$(FFTW_VERSION) ; fi
+	cd contrib; tar xf ../$<
+	touch $@
+
+archives/fftw-$(FFTW_VERSION).tar.gz:
+	mkdir -p archives
+	wget 'http://www.fftw.org/fftw-$(FFTW_VERSION).tar.gz' -O $@
