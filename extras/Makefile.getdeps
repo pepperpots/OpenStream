@@ -1,6 +1,17 @@
 MIRROR=ftp://gcc.gnu.org/pub/gcc/infrastructure/
+CONTRIB_LIBDIR=install/lib/
+LAPACK_VERSION=3.3.1
+CONTRI_OPT=-O3
 
-all: ./gcc/mpc/openstreamdep \
+all: openstreamdeps
+
+alldeps: openstreamdeps exampledeps
+
+################################################################################
+# Dependencies of the compiler itself                                          #
+################################################################################
+
+openstreamdeps: ./gcc/mpc/openstreamdep \
 	./gcc/mpfr/openstreamdep \
 	./gcc/gmp/openstreamdep
 
@@ -33,3 +44,95 @@ gcc/gmp/openstreamdep: archives/gmp-4.3.2.tar.bz2
 archives/gmp-4.3.2.tar.bz2:
 	mkdir -p archives
 	wget '$(MIRROR)/gmp-4.3.2.tar.bz2' -O $@
+
+################################################################################
+# Dependencies of the example programs                                         #
+################################################################################
+
+exampledeps: $(CONTRIB_LIBDIR)/libblas.so \
+	$(CONTRIB_LIBDIR)/liblapack.so \
+	$(CONTRIB_LIBDIR)/libcblas.so
+
+#
+# LAPACK (BLAS library is shipped along with LAPACK)
+#
+$(CONTRIB_LIBDIR)/libblas.so: contrib/lapack-$(LAPACK_VERSION)/libblas.so
+	mkdir -p $(CONTRIB_LIBDIR)
+	cp $< $@
+
+$(CONTRIB_LIBDIR)/liblapack.so: contrib/lapack-$(LAPACK_VERSION)/liblapack.so
+	mkdir -p $(CONTRIB_LIBDIR)
+	cp $< $@
+
+contrib/lapack-$(LAPACK_VERSION)/exdep: archives/lapack-$(LAPACK_VERSION).tgz
+	mkdir -p contrib
+	if [ -d contrib/lapack-$(LAPACK_VERSION) ] ; \
+		then rm -rf contrib/lapack-$(LAPACK_VERSION) ; fi
+	cd contrib; tar xf ../$<
+	cd contrib/lapack-$(LAPACK_VERSION); cp make.inc.example make.inc
+	touch $@
+
+contrib/lapack-$(LAPACK_VERSION)/libblas.a: contrib/lapack-$(LAPACK_VERSION)/exdep
+	make OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
+		BLASLIB="../../libblas.a" \
+		-C contrib/lapack-$(LAPACK_VERSION)/BLAS/SRC
+
+contrib/lapack-$(LAPACK_VERSION)/libblas.so: contrib/lapack-$(LAPACK_VERSION)/libblas.a
+	rm -rf contrib/tmp/libblas
+	mkdir -p contrib/tmp/libblas
+	cd contrib/tmp/libblas; \
+		ar x ../../lapack-$(LAPACK_VERSION)/libblas.a; \
+		gcc -shared -Wl,-soname,libblas.so -o libblas.so *.o -lgfortran; \
+		mv libblas.so ../../lapack-$(LAPACK_VERSION)/libblas.so
+	rm -rf contrib/tmp/libblas
+
+contrib/lapack-$(LAPACK_VERSION)/liblapack.a: contrib/lapack-$(LAPACK_VERSION)/libblas.a
+	make OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
+		BLASLIB="../../libblas.a" \
+		-C contrib/lapack-$(LAPACK_VERSION)
+	mv contrib/lapack-$(LAPACK_VERSION)/lapack_LINUX.a $@
+
+contrib/lapack-$(LAPACK_VERSION)/liblapack.so: contrib/lapack-$(LAPACK_VERSION)/liblapack.a
+	rm -rf contrib/tmp/liblapack
+	mkdir -p contrib/tmp/liblapack
+	cd contrib/tmp/liblapack; \
+		ar x ../../lapack-$(LAPACK_VERSION)/liblapack.a; \
+		gcc -shared -Wl,-soname,liblapack.so -o liblapack.so *.o -lgfortran; \
+		mv liblapack.so ../../lapack-$(LAPACK_VERSION)/liblapack.so
+	rm -rf contrib/tmp/liblapack
+
+archives/lapack-$(LAPACK_VERSION).tgz:
+	mkdir -p archives
+	wget 'http://www.netlib.org/lapack/lapack-$(LAPACK_VERSION).tgz' -O $@
+#
+# CBLAS
+#
+$(CONTRIB_LIBDIR)/libcblas.so: contrib/CBLAS/libcblas.so
+	mkdir -p $(CONTRIB_LIBDIR)
+	cp $< $@
+
+contrib/CBLAS/exdep: archives/cblas.tgz
+	mkdir -p contrib
+	if [ -d contrib/CBLAS ] ; \
+		then rm -rf contrib/CBLAS ; fi
+	cd contrib; tar xf ../$<
+	touch $@
+
+contrib/CBLAS/libcblas.a: contrib/CBLAS/exdep
+	make CFLAGS="-fPIC $(CONTRIB_OPT) -DADD_" FFLAGS="-fPIC $(CONTRIB_OPT)" \
+		BLLIB="../../lapack-$(LAPACK_VERSION)/libblas.a" \
+		-C contrib/CBLAS
+	mv contrib/CBLAS/lib/cblas_LINUX.a $@
+
+contrib/CBLAS/libcblas.so: contrib/CBLAS/libcblas.a
+	rm -rf contrib/tmp/libcblas
+	mkdir -p contrib/tmp/libcblas
+	cd contrib/tmp/libcblas; \
+		ar x ../../CBLAS/libcblas.a; \
+		gcc -shared -Wl,-soname,libcblas.so -o libcblas.so *.o -lgfortran; \
+		mv libcblas.so ../../CBLAS/libcblas.so
+	rm -rf contrib/tmp/libcblas
+
+archives/cblas.tgz:
+	mkdir -p archives
+	wget 'http://www.netlib.org/blas/blast-forum/cblas.tgz' -O $@
