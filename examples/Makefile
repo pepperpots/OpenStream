@@ -1,6 +1,6 @@
 include Makefile.config
 
-SUBDIRS=cholesky fft-1d fibo fmradio seidel syntax
+SUBDIRS=cholesky fft-1d fibo fmradio seidel syntax jacobi knapsack matmul strassen
 
 .PHONY: $(SUBDIRS)
 
