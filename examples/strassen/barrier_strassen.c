@@ -717,7 +717,7 @@ main (int argc, char *argv[])
 
   /* standard benchmark options*/
   if (argc != 2) {
-    fprintf (stderr, "Usage: matmul <n>\n");
+    fprintf (stderr, "Usage: strassen <n>\n");
     exit (1);
   }
   n = atoi(argv[1]);
