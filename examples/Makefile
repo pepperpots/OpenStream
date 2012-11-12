@@ -1,7 +1,15 @@
-DIRS = fibo seidel fft-1d
+include Makefile.config
 
-build_mem_cst_test:
-	for d in $(DIRS); do (cd $$d && make clean mem_cst_test); done
+SUBDIRS=cholesky fft-1d fibo fmradio seidel syntax
 
-run_mem_cst_test:
-	sh ./benchmark-examples.sh -t100
+.PHONY: $(SUBDIRS)
+
+all: $(SUBDIRS)
+
+$(SUBDIRS):
+	$(MAKE) -C $@
+
+clean: $(patsubst %,clean-%,$(SUBDIRS))
+
+clean-%:
+	$(MAKE) -C $* clean
