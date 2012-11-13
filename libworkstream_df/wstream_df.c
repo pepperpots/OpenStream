@@ -775,7 +775,10 @@ void pre_main() {
 
   /* Set workers number as the number of cores.  */
 #ifndef _WSTREAM_DF_NUM_THREADS
-  num_workers = wstream_df_num_cores ();
+  if(getenv("OMP_NUM_THREADS"))
+    num_workers = atoi(getenv("OMP_NUM_THREADS"));
+  else
+    num_workers = wstream_df_num_cores ();
 #else
   num_workers = _WSTREAM_DF_NUM_THREADS;
 #endif
