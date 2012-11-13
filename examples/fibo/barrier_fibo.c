@@ -59,11 +59,10 @@ main (int argc, char **argv)
   int i, j, iter;
   int n = 15;
 
-  int numiters = 10;
   int cutoff = 10;
   int result;
 
-  while ((option = getopt(argc, argv, "n:c:r:")) != -1)
+  while ((option = getopt(argc, argv, "n:c:h")) != -1)
     {
       switch(option)
 	{
@@ -73,11 +72,25 @@ main (int argc, char **argv)
 	case 'c':
 	  cutoff = atoi(optarg);
 	  break;
-	case 'r':
-	  numiters = atoi (optarg);
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -n <number>                  Calculate fibonacci number <number>, default is %d\n"
+		 "  -c <cutoff>                  Start generating tasks at n = <cutoff>, default is %d\n",
+		 argv[0], n, cutoff);
+	  exit(0);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
 	  break;
 	}
     }
+
+  if(optind != argc) {
+	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+  }
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));

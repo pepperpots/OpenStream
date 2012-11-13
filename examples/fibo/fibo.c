@@ -33,28 +33,36 @@ main (int argc, char **argv)
   int i, j, iter;
   int n = 15;
 
-  int numiters = 10;
-  int cutoff = 10;
   int result;
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
-  while ((option = getopt(argc, argv, "n:c:r:")) != -1)
+  while ((option = getopt(argc, argv, "n:h")) != -1)
     {
       switch(option)
 	{
 	case 'n':
 	  n = atoi(optarg);
 	  break;
-	case 'c':
-	  cutoff = atoi(optarg);
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -n <number>                  Calculate fibonacci number <number>, default is %d\n",
+		 argv[0], n);
+	  exit(0);
 	  break;
-	case 'r':
-	  numiters = atoi (optarg);
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
 	  break;
 	}
     }
+
+  if(optind != argc) {
+	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+  }
 
   gettimeofday (start, NULL);
   result = fibo (n);
