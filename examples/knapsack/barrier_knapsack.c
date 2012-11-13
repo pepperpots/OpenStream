@@ -161,15 +161,32 @@ main (int argc, char *argv[])
   char filename[100];
 
 
-  while ((option = getopt(argc, argv, "n:")) != -1)
+  while ((option = getopt(argc, argv, "n:h")) != -1)
     {
       switch(option)
 	{
 	case 'n':
 	  benchmark = atoi(optarg);
 	  break;
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -n <benchmark>               Benchmark number; selects input file knapsack-example<benchmark>.input\n"
+		 "                               Valid values are 1, 2, 3 or 4\n",
+		 argv[0]);
+	  exit(0);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+	  break;
 	}
     }
+
+  if(optind != argc) {
+	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+  }
 
   if (benchmark < 1 || benchmark > 4)
     /* standard benchmark options */
