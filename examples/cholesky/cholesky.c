@@ -32,7 +32,7 @@ main(int argc, char *argv[])
   int option;
   int i, j, iter;
   int N = 64;
-  int numiters, block_size, size;
+  int block_size, size;
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
@@ -41,7 +41,7 @@ main(int argc, char *argv[])
   int nfo;
   unsigned char lower = 'L';
 
-  while ((option = getopt(argc, argv, "n:s:b:r:i:o:")) != -1)
+  while ((option = getopt(argc, argv, "n:s:b:i:o:h")) != -1)
     {
       switch(option)
 	{
@@ -54,17 +54,34 @@ main(int argc, char *argv[])
 	case 'b':
 	  block_size = 1 << atoi (optarg);
 	  break;
-	case 'r':
-	  numiters = atoi (optarg);
-	  break;
 	case 'i':
 	  in_file = fopen(optarg, "r");
 	  break;
 	case 'o':
 	  res_file = fopen(optarg, "w");
 	  break;
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -n <size>                    Number of colums of the square matrix, default is %d\n"
+		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
+		 "  -b <block size power>        Set the block size 1 << <block size power>\n"
+		 "  -i <input file>              Read matrix data from an input file\n"
+		 "  -o <output file>             Write matrix data to an output file\n",
+		 argv[0], N);
+	  exit(0);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+	  break;
 	}
     }
+
+  if(optind != argc) {
+	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+  }
 
   size = N * N;
 
