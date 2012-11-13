@@ -54,3 +54,6 @@ examples/strassen/x86_strassen
 examples/strassen/x86_strassen_c11
 examples/strassen/x86_strassen_dumbc11
 examples/strassen/x86_strassen_nofences
+*.out
+examples/fmradio/*.raw
+examples/fmradio/*.txt
