@@ -1,14 +1,13 @@
+#include <assert.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <unistd.h>
-#include <assert.h>
 
-#define _WSTREAM_DF_DEBUG 1
-
+//#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
 #include "papi-defs.h"
 
@@ -16,6 +15,7 @@
 #include "error.h"
 #include "cdeque.h"
 #include "alloc.h"
+#include "fibers.h"
 
 //#define _PRINT_STATS
 
@@ -109,12 +109,11 @@ struct barrier;
 
 typedef struct wstream_df_frame
 {
-  size_t continuation_label_id;
-  void (*work_fn) (void);
   int synchronization_counter;
   int size;
-
+  void (*work_fn) (void *);
   struct barrier *own_barrier;
+
   /* Variable size struct */
   //char buf [];
 } wstream_df_frame_t, *wstream_df_frame_p;
@@ -151,6 +150,16 @@ typedef struct wstream_df_stream
   int refcount;
 } wstream_df_stream_t, *wstream_df_stream_p;
 
+
+typedef struct barrier
+{
+  int barrier_counter_executed __attribute__((aligned (64)));
+  int barrier_counter_created __attribute__((aligned (64)));
+  bool barrier_unused;
+  ws_ctx_t continuation_context;
+
+} barrier_t, *barrier_p;
+
 /* T* worker threads have each their own private work queue, which
    contains the frames that are ready to be executed.  For now the
    control program will be distributing work round-robin, later we
@@ -162,195 +171,136 @@ typedef struct wstream_df_stream
 typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 {
   pthread_t posix_thread_id;
+  int worker_id;
 
   cdeque_t work_deque __attribute__((aligned (64)));
-  bool volatile terminate_p __attribute__((aligned (64)));
+  wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
-  int worker_id;
-  wstream_df_frame_p own_next_cached_thread;
-
+  barrier_p swap_barrier;
+  void *current_stack; // BUG in swap/get context: stack is not set
 #ifdef _PAPI_PROFILE
   int _papi_eset[16];
   long long counters[16][_papi_num_events];
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
-
-typedef struct barrier
-{
-  bool cp_barrier;
-  bool barrier_ready;
-  bool barrier_unused;
-  int continuation_is_scheduled;
-  wstream_df_frame_p continuation_frame;
-  int barrier_counter_created;
-  int barrier_counter_executed;
-
-} barrier_t, *barrier_p;
-
 /***************************************************************************/
 /***************************************************************************/
-/* The current frame pointer is stored here in TLS */
-static __thread wstream_df_frame_p current_fp;
-static __thread barrier_p current_barrier;
-static int num_workers;
-static wstream_df_thread_p wstream_df_worker_threads;
+/* The current frame pointer, thread data, barrier and saved barrier
+   for lastprivate implementation, are stored here in TLS.  */
 static __thread wstream_df_thread_p current_thread = NULL;
+static __thread wstream_df_frame_p current_fp = NULL;
+static __thread barrier_p current_barrier = NULL;
+static __thread barrier_p save_current_barrier = NULL;
+
+static wstream_df_thread_p wstream_df_worker_threads;
+static int num_workers;
 
 /*************************************************************************/
 /*******             BARRIER/SYNC Handling                         *******/
 /*************************************************************************/
 
-size_t
-wstream_df_get_continuation_id ()
-{
-  return current_fp->continuation_label_id;
-}
+static void worker_thread ();
 
-void
+static inline barrier_p
 wstream_df_create_barrier ()
 {
   barrier_p barrier;
 
-  wstream_alloc(&barrier, 64, sizeof (barrier_t));
+  wstream_alloc (&barrier, 64, sizeof (barrier_t));
+  memset (barrier, 0, sizeof (barrier_t));
 
-  barrier->cp_barrier = false;
-  barrier->barrier_ready = false;
-  barrier->barrier_unused = false;
-  barrier->continuation_frame = NULL;
-  barrier->continuation_is_scheduled = 0;
-  barrier->barrier_counter_created = 0;
-  barrier->barrier_counter_executed = 0;
-
-  current_barrier = barrier;
+  /* Add one guard elemment, it will be matched by one increment of
+     the exec counter once the barrier is ready.  */
+  barrier->barrier_counter_created = 1;
+  return barrier;
 }
 
-/* Save self frame with the proper jump label identifier for
-   continuation once the barrier passes.  */
+static inline __attribute__((__optimize__("O1")))
 void
-wstream_df_schedule_continuation (size_t cont_id)
-{
-  /* ERROR if no barrier is associated.  */
-  if (current_barrier == NULL)
-    wstream_df_fatal ("Attempting to release a barrier without having created one.");
-
-  current_fp->continuation_label_id = cont_id;
-
-  /* Make barrier passable or free barrier and schedule the
-     continuation if the barrier synchronizes no tasks.  */
-  if (current_barrier->barrier_counter_created == 0)
-    {
-      wstream_free(current_barrier, sizeof (barrier_t));
-      if (current_thread->own_next_cached_thread == NULL)
-	current_thread->own_next_cached_thread = current_fp;
-      else
-	cdeque_push_bottom (&current_thread->work_deque,
-			    (wstream_df_type) current_fp);
-    }
-  else
-    {
-      current_barrier->continuation_frame = current_fp;
-      current_barrier->barrier_ready = true;
-    }
-  /* Release barrier from its owner.  */
-  current_barrier = NULL;
-}
-
-static inline bool
 try_pass_barrier (barrier_p bar)
 {
-  if (bar->barrier_ready == false)
-    return bar->barrier_unused;
+  int exec = __sync_add_and_fetch (&bar->barrier_counter_executed, 1);
 
-  if (bar->barrier_counter_created == bar->barrier_counter_executed)
+  if (bar->barrier_counter_created == exec)
     {
-      /* If this is not a CP barrier, and we make sure a single thread
-	 is allowed to schedule the continuation on its queue, using
-	 an atomic CAS, then we schedule this continuation on the
-	 thread's queue.  Otherwise simply return true, which is
-	 meaningless for all but the CP.  */
-      if (bar->cp_barrier == false)
-	if (__sync_bool_compare_and_swap (&bar->continuation_is_scheduled, 0, 1))
-	  {
-	    if (bar->continuation_frame != NULL)
-	      {
-		if (current_thread->own_next_cached_thread == NULL)
-		  current_thread->own_next_cached_thread = bar->continuation_frame;
-		else
-		  cdeque_push_bottom (&current_thread->work_deque,
-				      (wstream_df_type) bar->continuation_frame);
-	      }
-	    wstream_free(bar, sizeof (barrier_t));
-	  }
-      return true;
+      if (bar->barrier_unused == true)
+	wstream_free (bar, sizeof (barrier_t));
+      else
+	{
+	  ws_ctx_t ctx;
+
+	  if (ws_swapcontext (&ctx, &bar->continuation_context) == -1)
+	    wstream_df_fatal ("Cannot swap contexts when passing barrier.");
+
+	  /* This swap is "final" so this thread will never be resumed.
+	     The stack is collected by the continuation.  */
+	}
     }
-  return false;
 }
 
-static inline void
-try_execute_one_task (cdeque_p sched_deque, unsigned int *rands)
+__attribute__((__optimize__("O1")))
+void
+wstream_df_taskwait ()
 {
-  const unsigned int wid = current_thread->worker_id;
-  wstream_df_frame_p fp = current_thread->own_next_cached_thread;
-  __compiler_fence;
+  /* Save on stack all thread-local variables.  The contents will be
+     clobbered once another context runs on this thread, but the stack
+     is saved.  */
+  void *save_stack = current_thread->current_stack;
+  wstream_df_frame_p save_frame = current_fp;
+  barrier_p bar = current_barrier;
+  barrier_p save_bar = save_current_barrier;
 
-  if (fp == NULL)
-    fp = (wstream_df_frame_p)  (cdeque_take (sched_deque));
-  else
-    current_thread->own_next_cached_thread = NULL;
+  /* If no barrier is associated, then just return, no sync needed.  */
+  if (bar == NULL)
+    return;
 
-  if (fp == NULL)
+  /* If a barrier is present, but no tasks are associated to the
+     barrier, then we have an error.  */
+  if (bar->barrier_counter_created == 1)
+    wstream_df_fatal ("Barrier created without associated tasks.");
+
+  /* If the barrier si ready to pass, missing only the guard element,
+     then just pass through.  */
+  if (bar->barrier_counter_created != bar->barrier_counter_executed + 1)
     {
-      // Cheap alternative to nrand48
-      unsigned int steal_from;
-      *rands = *rands * 1103515245 + 12345;
-      steal_from = *rands % num_workers;
-      if (__builtin_expect (steal_from != wid, 1))
-	fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-    }
+      ws_ctx_t ctx;
+      void *stack;
 
-  if (fp != NULL)
-    {
-      current_fp = fp;
+      /* Reset current_barrier on this thread, the barrier reference is
+	 kept in the stack-local variable BAR.  */
       current_barrier = NULL;
 
-      _PAPI_P3B;
-      fp->work_fn ();
-      _PAPI_P3E;
+      /* Build a new context to execute the scheduler function after the
+	 swap.  Allocate a new stack and set the continuation link to NULL
+	 (in general, it is not possible to know what the continuation of
+	 this scheduler will be, so leave NULL then set when a barrier
+	 passes to the barrier's continuation).  */
 
-      __compiler_fence;
+      wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
+      ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
+      ws_prepcontext (&bar->continuation_context, stack, WSTREAM_STACK_SIZE, worker_thread);
+
+      current_thread->swap_barrier = bar;
+      current_thread->current_stack = stack;
+
+      if (ws_swapcontext (&bar->continuation_context, &ctx) == -1)
+	wstream_df_fatal ("Cannot swap contexts at taskwait.");
+
+      /* When this context is reactivated, we must deallocate the stack of
+	 the context that was swapped out (can only happen in TEND).  The
+	 stack-stored variable BAR should have been preserved even if the
+	 thread-local "current_barrier" has not.  */
+      wstream_free (current_thread->current_stack, WSTREAM_STACK_SIZE);
     }
+
+  wstream_free (bar, sizeof (barrier_t));
+  /* Restore thread-local variables.  */
+  current_thread->current_stack = save_stack;
+  current_fp = save_frame;
+  current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
+  save_current_barrier = NULL;
 }
-
-
-void
-wstream_df_taskwait (size_t s)
-{
-  unsigned int rands = 77773;
-  barrier_p bar = current_barrier;
-
-  /* Make barrier active, but tagged so nobody tries to pass
-     it... worst case, we also flag it as already scheduled.  */
-  bar->cp_barrier = true;
-  bar->continuation_is_scheduled = 1;
-  bar->continuation_frame = NULL;
-  bar->barrier_ready = true;
-
-  while (!try_pass_barrier (bar))
-    try_execute_one_task (&current_thread->work_deque, &rands);
-
-  /* Executing tasks may clobber current_barrier.  Use saved
-     version.  */
-  wstream_free(bar, sizeof (barrier_t));
-  current_barrier = NULL;
-
-  /* Create the next barrier (which may not be used/useful if no
-     further taskwaits occur -- can be switched off with unused param
-     for the one in the post_main).  */
-  if (s != 77)
-    wstream_df_create_barrier ();
-}
-
 
 /***************************************************************************/
 /***************************************************************************/
@@ -427,16 +377,9 @@ accum_papi_counters (int eset_id)
 /***************************************************************************/
 /***************************************************************************/
 
-/* Get the frame pointer of the current thread */
-void *
-__builtin_ia32_get_cfp() {
-  return current_fp;
-}
-
-
 /* Create a new thread, with frame pointer size, and sync counter */
 void *
-__builtin_ia32_tcreate (size_t sc, size_t size, void *wfn)
+__builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 {
   wstream_df_frame_p frame_pointer;
 
@@ -445,20 +388,24 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn)
   wstream_alloc(&frame_pointer, 64, size);
   //memset (frame_pointer, 0, size);
 
-  frame_pointer->continuation_label_id = 0;
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
-  frame_pointer->work_fn = (void (*) (void)) wfn;
+  frame_pointer->work_fn = (void (*) (void *)) wfn;
 
-  if (current_barrier)
+  if (has_lp)
     {
-      current_barrier->barrier_counter_created++;
-      frame_pointer->own_barrier = current_barrier;
+      save_current_barrier = current_barrier;
+      current_barrier = wstream_df_create_barrier ();
     }
+
+  if (current_barrier == NULL)
+    current_barrier = wstream_df_create_barrier ();
+
+  current_barrier->barrier_counter_created++;
+  frame_pointer->own_barrier = current_barrier;
 
   return frame_pointer;
 }
-
 
 /* Decrease the synchronization counter by N.  */
 static inline void
@@ -502,30 +449,27 @@ __builtin_ia32_tdecrease_n (void *data, size_t n)
 void
 __builtin_ia32_tend ()
 {
-  /* If this task belongs to a barrier, increment the exec count and
-     try to pass the barrier. */
-  if (current_fp->own_barrier != NULL)
-    {
-      __sync_add_and_fetch (&current_fp->own_barrier->barrier_counter_executed, 1);
-      try_pass_barrier (current_fp->own_barrier);
-    }
+  barrier_p bar = current_fp->own_barrier;
 
-  /* If a current_barrier is active, then it was created without being
-     needed.  */
+  /* If this task spawned some tasks within a barrier, it needs to
+     ensure the barrier gets collected.  */
   if (current_barrier != NULL)
     {
-      if (current_barrier->barrier_counter_created == 0)
-	wstream_free(current_barrier, sizeof (barrier_t));
-      else
-	{
-	  current_barrier->barrier_unused = true;
-	  current_barrier->barrier_ready = true;
-	  try_pass_barrier (current_barrier);
-	}
+      if (current_barrier->barrier_counter_created == 1)
+	wstream_df_fatal ("Barrier created without associated tasks.");
+
+      current_barrier->barrier_unused = true;
+      try_pass_barrier (current_barrier);
+      current_barrier = NULL;
     }
-  current_barrier = NULL;
-  wstream_free(current_fp, current_fp->size);
+
+  wstream_free (current_fp, current_fp->size);
   current_fp = NULL;
+
+  /* If this task belongs to a barrier, increment the exec count and
+     try to pass the barrier.  */
+  if (bar != NULL)
+    try_pass_barrier (bar);
 }
 
 
@@ -651,45 +595,45 @@ wstream_df_num_cores ()
   return cnt;
 }
 
-void *
-wstream_df_worker_thread_fn (void *data)
+static __attribute__((__optimize__("O1"))) void
+worker_thread (void)
 {
-  cdeque_p sched_deque;
-  wstream_df_thread_p cthread = (wstream_df_thread_p) data;
-  const unsigned int wid = cthread->worker_id;
-  unsigned int rands = 77777 + wid * 19;
-  unsigned int steal_from = 0;
-
-  current_thread = cthread;
   current_fp = NULL;
   current_barrier = NULL;
+  save_current_barrier = NULL;
+  unsigned int rands = 77777 + current_thread->worker_id * 19;
+  unsigned int steal_from = 0;
 
-  sched_deque = &cthread->work_deque;
+  /* Enable barrier passing if needed.  */
+  if (current_thread->swap_barrier != NULL)
+    {
+      barrier_p bar = current_thread->swap_barrier;
+      current_thread->swap_barrier = NULL;
+      try_pass_barrier (bar);
+    }
 
-  wstream_init_alloc();
 
-  if (wid != 0)
+  if (current_thread->worker_id != 0)
     {
       _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
     }
 
   while (true)
     {
-      bool termination_p = cthread->terminate_p;
-      wstream_df_frame_p fp = cthread->own_next_cached_thread;
+      wstream_df_frame_p fp = current_thread->own_next_cached_thread;
       __compiler_fence;
 
       if (fp == NULL)
-	fp = (wstream_df_frame_p)  (cdeque_take (sched_deque));
+	fp = (wstream_df_frame_p)  (cdeque_take (&current_thread->work_deque));
       else
-	cthread->own_next_cached_thread = NULL;
+	current_thread->own_next_cached_thread = NULL;
 
       if (fp == NULL)
 	{
 	  // Cheap alternative to nrand48
 	  rands = rands * 1103515245 + 12345;
 	  steal_from = rands % num_workers;
-	  if (__builtin_expect (steal_from != wid, 1))
+	  if (__builtin_expect (steal_from != current_thread->worker_id, 1))
 	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 	}
 
@@ -699,24 +643,30 @@ wstream_df_worker_thread_fn (void *data)
 	  current_barrier = NULL;
 
 	  _PAPI_P3B;
-	  fp->work_fn ();
+	  fp->work_fn (fp);
 	  _PAPI_P3E;
 
 	  __compiler_fence;
 	}
-      else if (!termination_p)
-	{
-	  sched_yield ();
-	}
       else
 	{
-	  if (wid != 0)
-	    {
-	      _PAPI_DUMP_CTRS (_PAPI_COUNTER_SETS);
-	    }
-	  return NULL;
+#ifndef _WS_NO_YIELD_SPIN
+	  sched_yield ();
+#endif
 	}
     }
+}
+
+void *
+wstream_df_worker_thread_fn (void *data)
+{
+  if (((wstream_df_thread_p) data)->worker_id != 0)
+    {
+      wstream_init_alloc();
+    }
+  current_thread = ((wstream_df_thread_p) data);
+  worker_thread ();
+  return NULL;
 }
 
 static void
@@ -733,6 +683,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores)
 #endif
 
   pthread_attr_init (&thread_attr);
+  pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
 
   cpu_set_t cs;
   CPU_ZERO (&cs);
@@ -741,6 +692,11 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores)
   int errno = pthread_attr_setaffinity_np (&thread_attr, sizeof (cs), &cs);
   if (errno < 0)
     wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
+
+  void *stack;
+  wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
+  errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
+  wstream_df_worker->current_stack = stack;
 
   pthread_create (&wstream_df_worker->posix_thread_id, &thread_attr,
 		  wstream_df_worker_thread_fn, wstream_df_worker);
@@ -761,17 +717,16 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores)
 }
 
 __attribute__((constructor))
-void pre_main() {
-
+void pre_main()
+{
   int i;
-
-  wstream_init_alloc();
-
 #ifdef _PAPI_PROFILE
   int retval = PAPI_library_init(PAPI_VER_CURRENT);
   if (retval != PAPI_VER_CURRENT)
     wstream_df_fatal ("Cannot initialize PAPI library");
 #endif
+
+  wstream_init_alloc();
 
   /* Set workers number as the number of cores.  */
 #ifndef _WSTREAM_DF_NUM_THREADS
@@ -793,9 +748,9 @@ void pre_main() {
   for (i = 0; i < num_workers; ++i)
     {
       cdeque_init (&wstream_df_worker_threads[i].work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
-      wstream_df_worker_threads[i].terminate_p = false;
       wstream_df_worker_threads[i].worker_id = i;
       wstream_df_worker_threads[i].own_next_cached_thread = NULL;
+      wstream_df_worker_threads[i].swap_barrier = NULL;
     }
 
   /* Add a guard frame for the control program (in case threads catch
@@ -803,6 +758,7 @@ void pre_main() {
   current_thread = &wstream_df_worker_threads[0];
   current_fp = NULL;
   current_barrier = NULL;
+  save_current_barrier = NULL;
 
   _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
 
@@ -810,8 +766,6 @@ void pre_main() {
 
   for (i = 1; i < num_workers; ++i)
     start_worker (&wstream_df_worker_threads[i], ncores);
-
-  wstream_df_create_barrier ();
 }
 
 __attribute__((destructor))
@@ -820,23 +774,8 @@ void post_main() {
   void *ret;
 
   /* Current barrier is the last one, so it allows terminating the
-     scheduler functions once it clears.  */
-  wstream_df_taskwait (77);
-
-  for (i = 0; i < num_workers; ++i)
-    {
-      wstream_df_worker_threads[i].terminate_p = true;
-    }
-
-  /* Also have this thread execute tasks once it's done.  This also
-     serves in the case of 0 worker threads, to execute all on a
-     single thread.  */
-  wstream_df_worker_thread_fn (&wstream_df_worker_threads[0]);
-
-  for (i = 1; i < num_workers; ++i)
-    {
-      pthread_join (wstream_df_worker_threads[i].posix_thread_id, &ret);
-    }
+     scheduler functions and exiting once it clears.  */
+  wstream_df_taskwait ();
 
   _PAPI_DUMP_CTRS (_PAPI_COUNTER_SETS);
 
