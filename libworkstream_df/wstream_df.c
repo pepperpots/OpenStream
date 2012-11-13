@@ -158,6 +158,7 @@ typedef struct barrier
   bool barrier_unused;
   ws_ctx_t continuation_context;
 
+  struct barrier *save_barrier;
 } barrier_t, *barrier_p;
 
 /* T* worker threads have each their own private work queue, which
@@ -189,9 +190,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 /* The current frame pointer, thread data, barrier and saved barrier
    for lastprivate implementation, are stored here in TLS.  */
 static __thread wstream_df_thread_p current_thread = NULL;
-static __thread wstream_df_frame_p current_fp = NULL;
 static __thread barrier_p current_barrier = NULL;
-static __thread barrier_p save_current_barrier = NULL;
 
 static wstream_df_thread_p wstream_df_worker_threads;
 static int num_workers;
@@ -243,26 +242,29 @@ __attribute__((__optimize__("O1")))
 void
 wstream_df_taskwait ()
 {
+  wstream_df_thread_p cthread = current_thread;
+
   /* Save on stack all thread-local variables.  The contents will be
      clobbered once another context runs on this thread, but the stack
      is saved.  */
-  void *save_stack = current_thread->current_stack;
-  wstream_df_frame_p save_frame = current_fp;
-  barrier_p bar = current_barrier;
-  barrier_p save_bar = save_current_barrier;
+  void *save_stack = cthread->current_stack;
+  barrier_p cbar = current_barrier;
+  barrier_p save_bar = NULL;
 
   /* If no barrier is associated, then just return, no sync needed.  */
-  if (bar == NULL)
+  if (cbar == NULL)
     return;
+  else
+    save_bar = cbar->save_barrier;
 
   /* If a barrier is present, but no tasks are associated to the
      barrier, then we have an error.  */
-  if (bar->barrier_counter_created == 1)
+  if (cbar->barrier_counter_created == 1)
     wstream_df_fatal ("Barrier created without associated tasks.");
 
   /* If the barrier si ready to pass, missing only the guard element,
      then just pass through.  */
-  if (bar->barrier_counter_created != bar->barrier_counter_executed + 1)
+  if (cbar->barrier_counter_created != cbar->barrier_counter_executed + 1)
     {
       ws_ctx_t ctx;
       void *stack;
@@ -279,27 +281,30 @@ wstream_df_taskwait ()
 
       wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
       ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
-      ws_prepcontext (&bar->continuation_context, stack, WSTREAM_STACK_SIZE, worker_thread);
+      ws_prepcontext (&cbar->continuation_context, stack, WSTREAM_STACK_SIZE, worker_thread);
 
-      current_thread->swap_barrier = bar;
-      current_thread->current_stack = stack;
+      cthread->swap_barrier = cbar;
+      cthread->current_stack = stack;
 
-      if (ws_swapcontext (&bar->continuation_context, &ctx) == -1)
+      if (ws_swapcontext (&cbar->continuation_context, &ctx) == -1)
 	wstream_df_fatal ("Cannot swap contexts at taskwait.");
+
+      /* Restore local copy of current thread from TLS when resuming
+	 execution.  This may not be the same worker thread as before
+	 swapping contexts.  */
+      cthread = current_thread;
 
       /* When this context is reactivated, we must deallocate the stack of
 	 the context that was swapped out (can only happen in TEND).  The
 	 stack-stored variable BAR should have been preserved even if the
 	 thread-local "current_barrier" has not.  */
-      wstream_free (current_thread->current_stack, WSTREAM_STACK_SIZE);
+      wstream_free (cthread->current_stack, WSTREAM_STACK_SIZE);
     }
 
-  wstream_free (bar, sizeof (barrier_t));
+  wstream_free (cbar, sizeof (barrier_t));
   /* Restore thread-local variables.  */
-  current_thread->current_stack = save_stack;
-  current_fp = save_frame;
+  cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
-  save_current_barrier = NULL;
 }
 
 /***************************************************************************/
@@ -382,6 +387,7 @@ void *
 __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 {
   wstream_df_frame_p frame_pointer;
+  barrier_p cbar = current_barrier;
 
   __compiler_fence;
 
@@ -394,15 +400,20 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   if (has_lp)
     {
-      save_current_barrier = current_barrier;
-      current_barrier = wstream_df_create_barrier ();
+      barrier_p temp_bar = cbar;
+      cbar = wstream_df_create_barrier ();
+      current_barrier = cbar;
+      cbar->save_barrier = temp_bar;
     }
 
-  if (current_barrier == NULL)
-    current_barrier = wstream_df_create_barrier ();
+  if (cbar == NULL)
+    {
+      cbar = wstream_df_create_barrier ();
+      current_barrier = cbar;
+    }
 
-  current_barrier->barrier_counter_created++;
-  frame_pointer->own_barrier = current_barrier;
+  cbar->barrier_counter_created++;
+  frame_pointer->own_barrier = cbar;
 
   return frame_pointer;
 }
@@ -422,10 +433,12 @@ tdecrease_n (void *data, size_t n)
   /* Schedule the thread if its synchronization counter reaches 0.  */
   if (sc == 0)
     {
-      if (current_thread->own_next_cached_thread != NULL)
-	cdeque_push_bottom (&current_thread->work_deque,
-			    (wstream_df_type) current_thread->own_next_cached_thread);
-      current_thread->own_next_cached_thread = fp;
+      wstream_df_thread_p cthread = current_thread;
+
+      if (cthread->own_next_cached_thread != NULL)
+	cdeque_push_bottom (&cthread->work_deque,
+			    (wstream_df_type) cthread->own_next_cached_thread);
+      cthread->own_next_cached_thread = fp;
     }
 }
 
@@ -447,24 +460,25 @@ __builtin_ia32_tdecrease_n (void *data, size_t n)
 
 /* Destroy the current thread */
 void
-__builtin_ia32_tend ()
+__builtin_ia32_tend (void *fp)
 {
-  barrier_p bar = current_fp->own_barrier;
+  wstream_df_frame_p cfp = (wstream_df_frame_p) fp;
+  barrier_p cbar = current_barrier;
+  barrier_p bar = cfp->own_barrier;
 
   /* If this task spawned some tasks within a barrier, it needs to
      ensure the barrier gets collected.  */
-  if (current_barrier != NULL)
+  if (cbar != NULL)
     {
-      if (current_barrier->barrier_counter_created == 1)
+      if (cbar->barrier_counter_created == 1)
 	wstream_df_fatal ("Barrier created without associated tasks.");
 
-      current_barrier->barrier_unused = true;
-      try_pass_barrier (current_barrier);
+      cbar->barrier_unused = true;
+      try_pass_barrier (cbar);
       current_barrier = NULL;
     }
 
-  wstream_free (current_fp, current_fp->size);
-  current_fp = NULL;
+  wstream_free (cfp, cfp->size);
 
   /* If this task belongs to a barrier, increment the exec count and
      try to pass the barrier.  */
@@ -598,53 +612,69 @@ wstream_df_num_cores ()
 static __attribute__((__optimize__("O1"))) void
 worker_thread (void)
 {
-  current_fp = NULL;
-  current_barrier = NULL;
-  save_current_barrier = NULL;
-  unsigned int rands = 77777 + current_thread->worker_id * 19;
+  wstream_df_thread_p cthread = current_thread;
+  unsigned int rands = 77777 + cthread->worker_id * 19;
   unsigned int steal_from = 0;
 
+  current_barrier = NULL;
+
   /* Enable barrier passing if needed.  */
-  if (current_thread->swap_barrier != NULL)
+  if (cthread->swap_barrier != NULL)
     {
-      barrier_p bar = current_thread->swap_barrier;
-      current_thread->swap_barrier = NULL;
+      barrier_p bar = cthread->swap_barrier;
+      cthread->swap_barrier = NULL;
       try_pass_barrier (bar);
+      /* If a swap occurs in try_pass_barrier, then that swap is final
+	 and this stack is recycled, so no need to restore TLS local
+	 saves.  */
     }
 
 
-  if (current_thread->worker_id != 0)
+  if (cthread->worker_id != 0)
     {
       _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
     }
 
   while (true)
     {
-      wstream_df_frame_p fp = current_thread->own_next_cached_thread;
+      wstream_df_frame_p fp = cthread->own_next_cached_thread;
       __compiler_fence;
 
       if (fp == NULL)
-	fp = (wstream_df_frame_p)  (cdeque_take (&current_thread->work_deque));
+	fp = (wstream_df_frame_p)  (cdeque_take (&cthread->work_deque));
       else
-	current_thread->own_next_cached_thread = NULL;
+	cthread->own_next_cached_thread = NULL;
 
       if (fp == NULL)
 	{
 	  // Cheap alternative to nrand48
 	  rands = rands * 1103515245 + 12345;
 	  steal_from = rands % num_workers;
-	  if (__builtin_expect (steal_from != current_thread->worker_id, 1))
+	  if (__builtin_expect (steal_from != cthread->worker_id, 1))
 	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 	}
 
       if (fp != NULL)
 	{
-	  current_fp = fp;
 	  current_barrier = NULL;
 
 	  _PAPI_P3B;
 	  fp->work_fn (fp);
 	  _PAPI_P3E;
+
+	  __compiler_fence;
+
+	  /* It is possible that the work function was suspended then
+	     its continuation migrated.  We need to restore TLS local
+	     saves.  */
+
+	  /* WARNING: Hack to prevent GCC from deadcoding the next
+	     assignment (volatile qualifier does not prevent the
+	     optimization).  CTHREAD is guaranteed not to be null
+	     here.  */
+	  if (cthread != NULL)
+	    __asm__ __volatile__ ("mov %[current_thread], %[cthread]"
+				  : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
 
 	  __compiler_fence;
 	}
@@ -756,9 +786,7 @@ void pre_main()
   /* Add a guard frame for the control program (in case threads catch
      up with the control program).  */
   current_thread = &wstream_df_worker_threads[0];
-  current_fp = NULL;
   current_barrier = NULL;
-  save_current_barrier = NULL;
 
   _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
 

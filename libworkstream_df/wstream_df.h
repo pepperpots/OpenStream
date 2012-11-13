@@ -19,7 +19,7 @@ extern void __builtin_ia32_tdecrease (void *);
 extern void __builtin_ia32_tdecrease_n (void *, size_t);
 extern void __builtin_ia32_tdecrease_n_vec (size_t, void *, size_t);
 /* Destroy (free) the current thread */
-extern void __builtin_ia32_tend ();
+extern void __builtin_ia32_tend (void *);
 
 /* Suspend the execution of the current task until all children tasks
    spawned up to this point have completed.  When the las spawned task

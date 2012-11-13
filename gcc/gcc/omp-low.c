@@ -7366,7 +7366,7 @@ lower_omp_taskreg (gimple_stmt_iterator *gsi_p, omp_context *ctx)
       gimple_omp_taskreg_set_data_arg (stmt, ctx->sender_decl);
 
       /* Issue tend call.  */
-      x = build_call_expr (tend_fn, 0);
+      x = build_call_expr (tend_fn, 1, ctx->receiver_decl);
       gimplify_stmt (&x, &par_olist);
     }
   else if (ctx->record_type)
