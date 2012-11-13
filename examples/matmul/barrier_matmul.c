@@ -169,8 +169,10 @@ main (int argc, char *argv[])
   REAL *A, *B, *C1, *C2;
   double err;
 
-  if (argc != 2) {
-    fprintf (stderr, "Usage: matmul <n>\n");
+  if (argc != 2 || strcmp(argv[1], "-h") == 0) {
+    fprintf (stderr, "Usage: %s <N>\n\n"
+	     "Options:\n"
+	     "  N                            Size of the square matrix\n", argv[0]);
     exit (1);
   }
   n = atoi(argv[1]);
