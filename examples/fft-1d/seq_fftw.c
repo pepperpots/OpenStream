@@ -27,21 +27,14 @@ int main (int argc, char *argv[])
   int i, j;
 
   int option;
-
-  int radix = 0;
-  int N1 = 0;
-  int N2 = 0;
   int N = 0;
 
   int numiters = 1;
-  int n_threads = 8;
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
 
-  int volatile res = 0;
-
-  while ((option = getopt(argc, argv, "r:s:x:i:o:t:")) != -1)
+  while ((option = getopt(argc, argv, "r:s:i:o:h")) != -1)
     {
       switch(option)
 	{
@@ -53,28 +46,36 @@ int main (int argc, char *argv[])
 	    N = 1 << atoi(optarg);
 	  }
 	  break;
-	case 'x':
-	  radix = atoi (optarg);
-	  break;
 	case 'i':
 	  in_file = fopen(optarg, "r");
 	  break;
 	case 'o':
 	  res_file = fopen(optarg, "w");
 	  break;
-	case 't':
-	  n_threads = atoi (optarg);
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -r <iterations>              Number of iterations\n"
+		 "  -s <power>                   Set the number FFT samples to 1 << <power>\n"
+		 "  -i <input file>              Read FFT data from an input file\n"
+		 "  -o <output file>             Write FFT data to an output file, default is seq_fftw.out\n",
+		 argv[0]);
+	  exit(0);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
 	  break;
 	}
     }
 
+  if(optind != argc) {
+	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+  }
+
   if (N == 0)
     N = 1 << 10;
-  if (radix == 0)
-    radix = 3;
-  if (N2 == 0)
-    N2 = N >> radix;
-  N1 = 1 << radix;
 
   if (res_file == NULL)
     res_file = fopen("seq_fftw.out", "w");
