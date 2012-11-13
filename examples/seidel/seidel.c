@@ -38,11 +38,10 @@ main (int argc, char **argv)
   int block_size = 4;
 
   FILE *res_file = NULL;
-  FILE *in_file = NULL;
 
   int volatile res = 0;
 
-  while ((option = getopt(argc, argv, "n:s:b:r:i:o:")) != -1)
+  while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
       switch(option)
 	{
@@ -58,14 +57,31 @@ main (int argc, char **argv)
 	case 'r':
 	  numiters = atoi (optarg);
 	  break;
-	case 'i':
-	  in_file = fopen(optarg, "r");
-	  break;
 	case 'o':
 	  res_file = fopen(optarg, "w");
 	  break;
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -n <size>                    Number of colums of the square matrix, default is %d\n"
+		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
+		 "  -b <block size power>        Set the block size 1 << <block size power>, default is %d\n"
+		 "  -r <iterations>              Number of iterations\n"
+		 "  -o <output file>             Write data to output file, default is seidel.out\n",
+		 argv[0], N, block_size);
+	  exit(0);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+	  break;
 	}
     }
+
+  if(optind != argc) {
+	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+  }
 
   if (res_file == NULL)
     res_file = fopen("seidel.out", "w");
