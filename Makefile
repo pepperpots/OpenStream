@@ -17,7 +17,10 @@ clean:
 			$(MAKE) -C $(GCC_BUILD_DIR) clean; \
 		fi \
 	fi
+	$(MAKE) -C libworkstream_df clean
+	$(MAKE) -C examples clean
 
 clean-clean:
 	rm -rf $(INST_DIR) $(GCC_BUILD_DIR) $(ARCHIVES_DIR) $(CONTRIB_DIR)
+	$(MAKE) -C libworkstream_df clean
 	$(MAKE) -C examples clean
