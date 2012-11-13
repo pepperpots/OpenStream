@@ -714,14 +714,114 @@ wstream_df_worker_thread_fn (void *data)
     }
 }
 
+/**
+ * Based on parse_affinity of libgomp
+ * Taken from gcc/libgomp/env.c with minor changes
+ */
+static bool
+openstream_parse_affinity (unsigned short **cpus_out, size_t *num_cpus_out)
+{
+  char *env, *end;
+  unsigned long cpu_beg, cpu_end, cpu_stride;
+  unsigned short *cpus = NULL;
+  size_t allocated = 0, used = 0, needed;
+
+  env = getenv ("OPENSTREAM_CPU_AFFINITY");
+  if (env == NULL)
+    return false;
+
+  do
+    {
+      while (*env == ' ' || *env == '\t')
+	env++;
+
+      cpu_beg = strtoul (env, &end, 0);
+      cpu_end = cpu_beg;
+      cpu_stride = 1;
+      if (env == end || cpu_beg >= 65536)
+	goto invalid;
+
+      env = end;
+      if (*env == '-')
+	{
+	  cpu_end = strtoul (++env, &end, 0);
+	  if (env == end || cpu_end >= 65536 || cpu_end < cpu_beg)
+	    goto invalid;
+
+	  env = end;
+	  if (*env == ':')
+	    {
+	      cpu_stride = strtoul (++env, &end, 0);
+	      if (env == end || cpu_stride == 0 || cpu_stride >= 65536)
+		goto invalid;
+
+	      env = end;
+	    }
+	}
+
+      needed = (cpu_end - cpu_beg) / cpu_stride + 1;
+      if (used + needed >= allocated)
+	{
+	  unsigned short *new_cpus;
+
+	  if (allocated < 64)
+	    allocated = 64;
+	  if (allocated > needed)
+	    allocated <<= 1;
+	  else
+	    allocated += 2 * needed;
+	  new_cpus = realloc (cpus, allocated * sizeof (unsigned short));
+	  if (new_cpus == NULL)
+	    {
+	      free (cpus);
+	      fprintf (stderr, "not enough memory to store OPENSTREAM_CPU_AFFINITY list");
+	      return false;
+	    }
+
+	  cpus = new_cpus;
+	}
+
+      while (needed--)
+	{
+	  cpus[used++] = cpu_beg;
+	  cpu_beg += cpu_stride;
+	}
+
+      while (*env == ' ' || *env == '\t')
+	env++;
+
+      if (*env == ',')
+	env++;
+      else if (*env == '\0')
+	break;
+    }
+  while (1);
+
+  *cpus_out = cpus;
+  *num_cpus_out = used;
+
+  return true;
+
+ invalid:
+  fprintf (stderr, "Invalid value for enviroment variable OPENSTREAM_CPU_AFFINITY");
+  free (cpus);
+  return false;
+}
+
 static void
-start_worker (wstream_df_thread_p wstream_df_worker, int ncores)
+start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
+	      unsigned short *cpu_affinities, size_t num_cpu_affinities)
 {
   pthread_attr_t thread_attr;
   int i;
 
   int id = wstream_df_worker->worker_id;
-  int core = id % ncores;
+  int core;
+
+  if (cpu_affinities == NULL)
+    core = id % ncores;
+  else
+    core = cpu_affinities[(id-1) % num_cpu_affinities];
 
 #ifdef _PRINT_STATS
   printf ("worker %d mapped to core %d\n", id, core);
@@ -759,6 +859,8 @@ __attribute__((constructor))
 void pre_main() {
 
   int i;
+  unsigned short *cpu_affinities = NULL;
+  size_t num_cpu_affinities = 0;
 
   wstream_init_alloc();
 
@@ -806,8 +908,12 @@ void pre_main() {
 
   __compiler_fence;
 
+  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
+
   for (i = 1; i < num_workers; ++i)
-    start_worker (&wstream_df_worker_threads[i], ncores);
+    start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities);
+
+  free (cpu_affinities);
 
   wstream_df_create_barrier ();
 }
