@@ -431,7 +431,7 @@ main(int argc, char* argv[])
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
-  while ((option = getopt(argc, argv, "i:o:t:f:n:g:")) != -1)
+  while ((option = getopt(argc, argv, "i:o:t:f:n:g:h")) != -1)
     {
       switch(option)
 	{
@@ -455,8 +455,31 @@ main(int argc, char* argv[])
 	  grain8 = 8 * grain;
 	  grain16 = 16 * grain;
 	  break;
+	case 'h':
+	  printf("Usage: %s [option]...\n\n"
+		 "Options:\n"
+		 "  -i <input file>              Read data from input file, default is input.dat\n"
+		 "  -o <output file>             Write data to output file, default is %s.raw\n"
+		 "  -t <text file>               Write output into a text file, default is %s.txt\n"
+		 "  -f <frequency>               Set final audio frequency, default is %d\n"
+		 "  -n <iterations>              Number of iterations\n"
+		 "  -g <grain>                   Set grain, default is %d\n",
+		 argv[0], argv[0], argv[0], final_audio_frequency, grain);
+	  exit(0);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+	  break;
 	}
     }
+
+  if (optind != argc)
+    {
+      fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+      exit(1);
+    }
+
   if (input_file == 0)
     input_file = open ("input.dat", O_RDONLY);
   if (output_file == 0)
