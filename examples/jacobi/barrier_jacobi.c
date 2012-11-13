@@ -342,8 +342,10 @@ main (int argc, char *argv[])
   leafmaxcol = 10;
   filename[0]=0;
 
-  if (argc != 2) {
-    fprintf (stderr, "Usage: %s benchID (in 1-3)\n", argv[0]);
+  if (argc != 2 || strcmp(argv[1], "-h") == 0) {
+    fprintf (stderr, "Usage: %s <benchID>\n\n"
+	     "Options:\n"
+	     "  benchID                      Select a benchmark; valid values are 1, 2 and 3\n", argv[0]);
     exit (1);
   }
   benchmark = atoi(argv[1]);
