@@ -639,16 +639,11 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 static int
 wstream_df_num_cores ()
 {
-  int i, cnt=0;
   cpu_set_t cs;
   CPU_ZERO (&cs);
   sched_getaffinity (getpid (), sizeof (cs), &cs);
 
-  for (i = 0; i < MAX_NUM_CORES; i++)
-    if (CPU_ISSET (i, &cs))
-      cnt++;
-
-  return cnt;
+  return CPU_COUNT (&cs);
 }
 
 void *
