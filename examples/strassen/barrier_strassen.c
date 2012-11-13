@@ -716,8 +716,11 @@ main (int argc, char *argv[])
   int n;
 
   /* standard benchmark options*/
-  if (argc != 2) {
-    fprintf (stderr, "Usage: strassen <n>\n");
+  if (argc != 2 || strcmp(argv[1], "-h") == 0) {
+    fprintf (stderr, "Usage: %s <N>\n\n"
+	     "Options:\n"
+	     "  N                            Size of the square matrix\n"
+	     "                               Must be a power of 2 and a multiple of %d\n", argv[0], 16);
     exit (1);
   }
   n = atoi(argv[1]);
