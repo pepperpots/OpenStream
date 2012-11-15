@@ -46,6 +46,7 @@ clean:
 	rm -f *~ *.o
 	rm -f libwstream_df*.so
 	rm -f $(TEST_PROGS)
+	rm -f TAGS
 
 install: all
 	mkdir -p ../install/lib64
@@ -63,3 +64,6 @@ libwstream_df_%.so: wstream_df.c error.c $(WSTREAM_DEPS)
 install-alternative: alternative
 	mkdir -p ../install/lib64
 	cp libwstream_df_*.so ../install/lib64
+
+TAGS:
+	find . -iname "*.[ch]" -print | etags -
