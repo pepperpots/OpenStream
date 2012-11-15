@@ -12,6 +12,7 @@ examples/cholesky/stream_cholesky
 examples/fft-1d/barrier_fft
 examples/fft-1d/radix_fft_stream_pure
 examples/fft-1d/seq_fftw
+examples/fibo/barrier_fibo
 examples/fibo/fibo
 examples/fibo/stream_fibo
 examples/fibo/stream_fibo_single_stream
@@ -38,6 +39,10 @@ examples/syntax/011_modular_with_arrays_of_streams
 examples/syntax/012_variadic_clauses_with_arrays_of_windows
 examples/syntax/013_stream_selection_arrays
 examples/syntax/014_broadcasting_across_selection_arrays
+examples/syntax/015_nested_streaming
+examples/syntax/016_lastprivate_clause
+examples/syntax/017_lastprivate_clause_nested
+examples/syntax/018_modular_taskwait
 examples/jacobi/x86_jacobi
 examples/jacobi/x86_jacobi_c11
 examples/jacobi/x86_jacobi_dumbc11
