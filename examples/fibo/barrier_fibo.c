@@ -28,24 +28,20 @@ fibo (int n)
 void
 bar_fibo (int n, int cutoff, int *result)
 {
+  int a, b;
+
   if (n <= cutoff)
     {
-#pragma omp task firstprivate (result, n)
+#pragma omp task firstprivate (n) firstprivate (result)
       *result = fibo (n);
     }
   else
     {
-#pragma omp task firstprivate (result, n, cutoff)
+#pragma omp task firstprivate (n, cutoff, result) private (a, b)
       {
-	int a, b;
-	int *pa = &a;
-	int *pb = &b;
-	//printf ("L0-%d:  %d %d\n", n, a, b);
-	bar_fibo (n - 1, cutoff, pa);
-	bar_fibo (n - 2, cutoff, pb);
-	//printf ("L0-%d:  %d %d\n", n, a, b);
+	bar_fibo (n - 1, cutoff, &a);
+	bar_fibo (n - 2, cutoff, &b);
 #pragma omp taskwait
-	//printf ("L1-%d:  %d %d\n", n, a, b);
 	*result = a + b;
       }
     }
@@ -59,25 +55,22 @@ main (int argc, char **argv)
   int i, j, iter;
   int n = 15;
 
+  int numiters = 10;
   int cutoff = 10;
   int result;
 
-  while ((option = getopt(argc, argv, "n:c:h")) != -1)
+  while ((option = getopt(argc, argv, "n:h")) != -1)
     {
       switch(option)
 	{
 	case 'n':
 	  n = atoi(optarg);
 	  break;
-	case 'c':
-	  cutoff = atoi(optarg);
-	  break;
 	case 'h':
 	  printf("Usage: %s [option]...\n\n"
 		 "Options:\n"
-		 "  -n <number>                  Calculate fibonacci number <number>, default is %d\n"
-		 "  -c <cutoff>                  Start generating tasks at n = <cutoff>, default is %d\n",
-		 argv[0], n, cutoff);
+		 "  -n <number>                  Calculate fibonacci number <number>, default is %d\n",
+		 argv[0], n);
 	  exit(0);
 	  break;
 	case '?':
@@ -105,5 +98,5 @@ main (int argc, char **argv)
   printf ("%.5f\n", tdiff (end, start));
 
   if (_WITH_OUTPUT)
-    printf ("[stream] Fibo (%d, %d) = %d\n", n, cutoff, result);
+    printf ("[taskwait] Fibo (%d, %d) = %d\n", n, cutoff, result);
 }
