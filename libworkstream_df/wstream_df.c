@@ -172,7 +172,7 @@ typedef struct barrier
 typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 {
   pthread_t posix_thread_id;
-  int worker_id;
+  unsigned int worker_id;
 
   cdeque_t work_deque __attribute__((aligned (64)));
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
@@ -215,8 +215,8 @@ wstream_df_create_barrier ()
   return barrier;
 }
 
-static inline __attribute__((__optimize__("O1")))
-void
+__attribute__((__optimize__("O1")))
+static inline void
 try_pass_barrier (barrier_p bar)
 {
   int exec = __sync_add_and_fetch (&bar->barrier_counter_executed, 1);
@@ -227,9 +227,7 @@ try_pass_barrier (barrier_p bar)
 	wstream_free (bar, sizeof (barrier_t));
       else
 	{
-	  ws_ctx_t ctx;
-
-	  if (ws_swapcontext (&ctx, &bar->continuation_context) == -1)
+	  if (ws_setcontext (&bar->continuation_context) == -1)
 	    wstream_df_fatal ("Cannot swap contexts when passing barrier.");
 
 	  /* This swap is "final" so this thread will never be resumed.
@@ -392,7 +390,6 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   __compiler_fence;
 
   wstream_alloc(&frame_pointer, 64, size);
-  //memset (frame_pointer, 0, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -604,7 +601,8 @@ wstream_df_num_cores ()
   return CPU_COUNT (&cs);
 }
 
-static __attribute__((__optimize__("O1"))) void
+__attribute__((__optimize__("O1")))
+static void
 worker_thread (void)
 {
   wstream_df_thread_p cthread = current_thread;
@@ -904,10 +902,8 @@ void pre_main()
 }
 
 __attribute__((destructor))
-void post_main() {
-  int i;
-  void *ret;
-
+void post_main()
+{
   /* Current barrier is the last one, so it allows terminating the
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
@@ -915,11 +911,15 @@ void post_main() {
   _PAPI_DUMP_CTRS (_PAPI_COUNTER_SETS);
 
 #ifdef _PRINT_STATS
-  for (i = 0; i < num_workers; ++i)
-    {
-      int worker_id = wstream_df_worker_threads[i].worker_id;
-      printf ("worker %d executed %d tasks\n", worker_id, executed_tasks);
-    }
+  {
+    int i;
+
+    for (i = 0; i < num_workers; ++i)
+      {
+	int worker_id = wstream_df_worker_threads[i].worker_id;
+	printf ("worker %d executed %d tasks\n", worker_id, executed_tasks);
+      }
+  }
 #endif
 }
 
