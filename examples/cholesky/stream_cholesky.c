@@ -5,9 +5,10 @@
 #include <math.h>
 #include <cblas.h>
 #include <getopt.h>
+#include <string.h>
 
-#define _WITH_OUTPUT 0
 #define _SPEEDUPS 1
+#define _VERIFY 1
 
 #include <sys/time.h>
 #include <unistd.h>
@@ -21,7 +22,7 @@ tdiff (struct timeval *end, struct timeval *start)
 static inline bool
 double_equal (double a, double b)
 {
-  return (abs (a - b) < 1e-9);
+  return (abs (a - b) < 1e-7);
 }
 
 
@@ -219,18 +220,17 @@ blockify (int block_size, int blocks, int N,
 int
 main(int argc, char *argv[])
 {
-  struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
-  struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
-
   int option;
   int i, j, iter;
-  int N = 64;
-  int block_size = 8;
+  int N = 4096;
+
+  int numiters = 10;
+  int block_size = 256;
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
 
-  while ((option = getopt(argc, argv, "n:s:b:i:o:h")) != -1)
+  while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
       switch(option)
 	{
@@ -242,6 +242,9 @@ main(int argc, char *argv[])
 	  break;
 	case 'b':
 	  block_size = 1 << atoi (optarg);
+	  break;
+	case 'r':
+	  numiters = atoi (optarg);
 	  break;
 	case 'i':
 	  in_file = fopen(optarg, "r");
@@ -255,6 +258,7 @@ main(int argc, char *argv[])
 		 "  -n <size>                    Number of colums of the square matrix, default is %d\n"
 		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		 "  -b <block size power>        Set the block size 1 << <block size power>\n"
+		 "  -r <number of iterations>    Number of repetitions of the execution\n"
 		 "  -i <input file>              Read matrix data from an input file\n"
 		 "  -o <output file>             Write matrix data to an output file\n",
 		 argv[0], N);
@@ -271,6 +275,12 @@ main(int argc, char *argv[])
 	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
 	  exit(1);
   }
+
+
+  struct timeval *start = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *end = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *sstart = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *send = (struct timeval *) malloc (numiters * sizeof (struct timeval));
 
   int size = N * N;
   int blocks = (N / block_size);
@@ -319,50 +329,85 @@ main(int argc, char *argv[])
 	printf ("Out of memory.\n");
 	exit (1);
       }
-  blockify (block_size, blocks, N, data, (void *)blocked_data);
 
-  int Rstreams[num_blocks] __attribute__((stream));
-  int streams[num_blocks] __attribute__((stream));
-  int final_view[num_blocks][1];
 
-  int counters[num_blocks];
-
-  for (i = 0; i < num_blocks; ++i)
+  for (iter = 0; iter < numiters; ++iter)
     {
-      int x;
-      counters[i] = 0;
+      int Rstreams[num_blocks] __attribute__((stream));
+      int streams[num_blocks] __attribute__((stream));
+      int counters[num_blocks];
+
+      for (i = 0; i < num_blocks; ++i)
+	{
+	  int x;
+	  counters[i] = 0;
 
 #pragma omp task output (streams[i] << x)
-      x = 0;
+	  x = 0;
+	}
+      blockify (block_size, blocks, N, data, (void *)blocked_data);
+
+      /* Only effectively can start once the previous task completes.  */
+      gettimeofday (&start[iter], NULL);
+      stream_dpotrf (block_size, blocks, (void *)blocked_data, streams, Rstreams, counters);
+
+      for (i = 0; i < num_blocks; ++i)
+	{
+	  int x;
+#pragma omp tick (streams[i] >> 1)
+#pragma omp tick (Rstreams[i] >> counters[i])
+	}
+
+#pragma omp taskwait
+      gettimeofday (&end[iter], NULL);
+
+
+    if (_SPEEDUPS)
+      {
+	unsigned char lower = 'L';
+	int nfo;
+	double stream_time = 0, seq_time = 0;
+
+	stream_time = tdiff (&end[iter], &start[iter]);
+
+	double * seq_data;
+	if (posix_memalign ((void **) &seq_data, 64, size * sizeof (double)))
+	  {
+	    printf ("Out of memory.\n");
+	    exit (1);
+	  }
+	memcpy (seq_data, data, size * sizeof (double));
+
+	gettimeofday (&sstart[iter], NULL);
+	dpotrf_(&lower, &N, seq_data, &N, &nfo);
+	gettimeofday (&send[iter], NULL);
+
+	seq_time = tdiff (&send[iter], &sstart[iter]);
+	if (_VERIFY)
+	  verify (block_size, N, blocks, seq_data, blocked_data);
+	free (seq_data);
+	//printf ("%.5f \t (seq: \t %.5f, str: \t %.5f)\n", seq_time/stream_time, seq_time, stream_time);
+      }
     }
 
+  unsigned char lower = 'L';
+  int nfo;
+  double stream_time = 0, seq_time = 0;
 
-  gettimeofday (start, NULL);
-  stream_dpotrf (block_size, blocks, (void *)blocked_data, streams, Rstreams, counters);
-#pragma omp task input (streams >> final_view[num_blocks][1])
-   {
-     double stream_time, seq_time;
-     unsigned char lower = 'L';
-     int nfo;
+  for (iter = 0; iter < numiters; ++iter)
+    {
+      stream_time += tdiff (&end[iter], &start[iter]);
+      seq_time += tdiff (&send[iter], &sstart[iter]);
+    }
 
-     gettimeofday (end, NULL);
-     stream_time = tdiff (end, start);
-
-     /* Sequential LAPACK comparison. */
-     gettimeofday (start, NULL);
-     dpotrf_(&lower, &N, data, &N, &nfo);
-     gettimeofday (end, NULL);
-     seq_time = tdiff (end, start);
-
-     verify (block_size, N, blocks, data, blocked_data);
-
-     if (_SPEEDUPS)
-       printf ("%.5f \t (seq: \t %.5f, str: \t %.5f)\n", seq_time/stream_time, seq_time, stream_time);
-     else
-       {
-	 printf ("%.5f \n", stream_time);
-       }
-   }
+  if (_SPEEDUPS)
+    {
+      printf ("%.5f \t (seq: \t %.5f, str: \t %.5f)\n", seq_time/stream_time, seq_time, stream_time);
+    }
+  else
+    {
+      printf ("%.5f \n", stream_time);
+    }
 }
 
 
