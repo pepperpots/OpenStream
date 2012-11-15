@@ -42,11 +42,14 @@ typedef struct ws_ctx
 #  endif
 } ws_ctx_t, *ws_ctx_p;
 
-static inline __attribute__((__optimize__("O1"))) void
+__attribute__((__optimize__("O1")))
+static inline void
 ws_prepcontext (ws_ctx_p ctx, void *sp, size_t ssz, void *fn)
 {
-  ctx->stack_bp = sp + ssz;
-  ctx->stack_sp = sp + ssz;
+  /* Hack warning: need to drop 8 bytes from stack to ensure that it
+     is 16-bytes aligned.  */
+  ctx->stack_bp = sp + ssz - 8;
+  ctx->stack_sp = sp + ssz - 8;
   ctx->stack_size = ssz;
   ctx->inst_p = fn;
 
@@ -62,7 +65,8 @@ ws_prepcontext (ws_ctx_p ctx, void *sp, size_t ssz, void *fn)
 #  endif
 }
 
-__attribute__((__noinline__,__noclone__,__optimize__("O1"))) int
+__attribute__((__noinline__,__noclone__,__optimize__("O1")))
+int
 ws_swapcontext (ws_ctx_p old_ctx, ws_ctx_p new_ctx)
 {
   /* Save inst ptr for continuation.  */
