@@ -26,13 +26,14 @@ double_equal (double a, double b)
 int
 main(int argc, char *argv[])
 {
-  struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
-  struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
-
   int option;
   int i, j, iter;
-  int N = 64;
-  int block_size, size;
+  int size;
+
+  int N = 4096;
+
+  int numiters = 10;
+  int block_size = 256;
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
@@ -41,7 +42,7 @@ main(int argc, char *argv[])
   int nfo;
   unsigned char lower = 'L';
 
-  while ((option = getopt(argc, argv, "n:s:b:i:o:h")) != -1)
+  while ((option = getopt(argc, argv, "n:s:r:i:o:h")) != -1)
     {
       switch(option)
 	{
@@ -51,8 +52,8 @@ main(int argc, char *argv[])
 	case 's':
 	  N = 1 << atoi(optarg);
 	  break;
-	case 'b':
-	  block_size = 1 << atoi (optarg);
+	case 'r':
+	  numiters = atoi (optarg);
 	  break;
 	case 'i':
 	  in_file = fopen(optarg, "r");
@@ -65,7 +66,7 @@ main(int argc, char *argv[])
 		 "Options:\n"
 		 "  -n <size>                    Number of colums of the square matrix, default is %d\n"
 		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
-		 "  -b <block size power>        Set the block size 1 << <block size power>\n"
+		 "  -r <number of iterations>    Number of repetitions of the execution\n"
 		 "  -i <input file>              Read matrix data from an input file\n"
 		 "  -o <output file>             Write matrix data to an output file\n",
 		 argv[0], N);
@@ -84,6 +85,9 @@ main(int argc, char *argv[])
   }
 
   size = N * N;
+
+  struct timeval *sstart = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *send = (struct timeval *) malloc (numiters * sizeof (struct timeval));
 
    if (posix_memalign ((void **) &data, 64, size * sizeof (double)))
     {
@@ -112,11 +116,30 @@ main(int argc, char *argv[])
     data[i*N + i] += N;
 
 
-  gettimeofday (start, NULL);
-  dpotrf_(&lower, &N, data, &N, &nfo);
-  gettimeofday (end, NULL);
+  for (iter = 0; iter < numiters; ++iter)
+    {
+      double * seq_data;
+      if (posix_memalign ((void **) &seq_data, 64, size * sizeof (double)))
+	{
+	  printf ("Out of memory.\n");
+	  exit (1);
+	}
+      memcpy (seq_data, data, size * sizeof (double));
 
-  printf ("%.5f \n", tdiff (end, start));
+      gettimeofday (&sstart[iter], NULL);
+      dpotrf_(&lower, &N, seq_data, &N, &nfo);
+      gettimeofday (&send[iter], NULL);
+
+      free (seq_data);
+    }
+
+  double seq_time = 0;
+  for (iter = 0; iter < numiters; ++iter)
+    {
+      seq_time += tdiff (&send[iter], &sstart[iter]);
+    }
+
+  printf ("%.5f \n", seq_time);
 }
 
 
