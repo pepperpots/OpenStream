@@ -9,6 +9,8 @@
 
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
+#define _PHARAON_MODE
+
 #include "papi-defs.h"
 
 #include "wstream_df.h"
@@ -195,6 +197,11 @@ static __thread barrier_p current_barrier = NULL;
 static wstream_df_thread_p wstream_df_worker_threads;
 static int num_workers;
 
+#ifdef _PHARAON_MODE
+static ws_ctx_t master_ctx;
+static bool master_ctx_swap_p = false;
+#endif
+
 /*************************************************************************/
 /*******             BARRIER/SYNC Handling                         *******/
 /*************************************************************************/
@@ -279,7 +286,7 @@ wstream_df_taskwait ()
 
       wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
       ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
-      ws_prepcontext (&cbar->continuation_context, stack, WSTREAM_STACK_SIZE, worker_thread);
+      ws_prepcontext (&cbar->continuation_context, NULL, WSTREAM_STACK_SIZE, NULL);
 
       cthread->swap_barrier = cbar;
       cthread->current_stack = stack;
@@ -788,7 +795,8 @@ openstream_parse_affinity (unsigned short **cpus_out, size_t *num_cpus_out)
 
 static void
 start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
-	      unsigned short *cpu_affinities, size_t num_cpu_affinities)
+	      unsigned short *cpu_affinities, size_t num_cpu_affinities,
+	      void *(*work_fn) (void *))
 {
   pthread_attr_t thread_attr;
   int i;
@@ -806,7 +814,9 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 #endif
 
   pthread_attr_init (&thread_attr);
+#ifndef _PHARAON_MODE
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
+#endif
 
   cpu_set_t cs;
   CPU_ZERO (&cs);
@@ -822,7 +832,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   wstream_df_worker->current_stack = stack;
 
   pthread_create (&wstream_df_worker->posix_thread_id, &thread_attr,
-		  wstream_df_worker_thread_fn, wstream_df_worker);
+		  work_fn, wstream_df_worker);
 
   CPU_ZERO (&cs);
   errno = pthread_getaffinity_np (wstream_df_worker->posix_thread_id, sizeof (cs), &cs);
@@ -839,10 +849,43 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   pthread_attr_destroy (&thread_attr);
 }
 
+#ifdef _PHARAON_MODE
+/* Implement two-stage swap of master context for the PHARAON mode,
+   allowing to guarantee that all user code is run in a
+   Pthread-created thread.  */
+void *
+master_waiter_fn (void *data)
+{
+  current_thread = ((wstream_df_thread_p) data);
+
+  while (master_ctx_swap_p == false)
+    {
+#ifndef _WS_NO_YIELD_SPIN
+      sched_yield ();
+#endif
+    }
+  ws_setcontext (&master_ctx);
+  /* Never reached.  Avoid warning nonetheless.  */
+  return NULL;
+}
+
+void
+master_join_fn (void)
+{
+  void *ret;
+  int i;
+
+  master_ctx_swap_p = true;
+
+  for (i = 0; i < num_workers; ++i)
+    pthread_join (wstream_df_worker_threads[i].posix_thread_id, &ret);
+}
+#endif
+
 __attribute__((constructor))
 void pre_main()
 {
-  int i;
+  int i, ncores;
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
 
@@ -853,8 +896,6 @@ void pre_main()
   if (retval != PAPI_VER_CURRENT)
     wstream_df_fatal ("Cannot initialize PAPI library");
 #endif
-
-  wstream_init_alloc();
 
   /* Set workers number as the number of cores.  */
 #ifndef _WSTREAM_DF_NUM_THREADS
@@ -870,7 +911,7 @@ void pre_main()
 		      num_workers * sizeof (wstream_df_thread_t)))
     wstream_df_fatal ("Out of memory ...");
 
-  int ncores = wstream_df_num_cores ();
+  ncores = wstream_df_num_cores ();
 
 #ifdef _PRINT_STATS
   printf ("Creating %d workers for %d cores\n", num_workers, ncores);
@@ -891,13 +932,34 @@ void pre_main()
 
   _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
 
-  __compiler_fence;
-
   openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
-
   for (i = 1; i < num_workers; ++i)
-    start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities);
+    start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
+		  wstream_df_worker_thread_fn);
 
+#ifdef _PHARAON_MODE
+  /* In order to ensure that all user code is executed by threads
+     created through the pthreads interface (PHARAON project specific
+     mode), we swap the main thread out here and swap in a new thread.
+  */
+  {
+    ws_ctx_t ctx;
+    void *stack;
+
+    wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
+    ws_prepcontext (&master_ctx, NULL, WSTREAM_STACK_SIZE, NULL);
+    ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, master_join_fn);
+
+    /* Start replacement for master thread on a temporary function
+       that will swap back to this context.  */
+    start_worker (&wstream_df_worker_threads[0], ncores, cpu_affinities, num_cpu_affinities,
+		  master_waiter_fn);
+
+    /* Swap master thread to a function that joins all threads.  The
+       replacement thread will execute the main from this point. */
+    ws_swapcontext (&master_ctx, &ctx);
+  }
+#endif
   free (cpu_affinities);
 }
 
@@ -1191,5 +1253,3 @@ __builtin_ia32_tick (void *s, size_t burst)
 
   wstream_df_resolve_dependences ((void *) cons_view, s, true);
 }
-
-
