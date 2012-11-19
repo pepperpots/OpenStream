@@ -2,17 +2,17 @@ include ../Makefile.config
 
 TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo
 CFLAGS = -Wall -std=c99 -O3 -ffast-math
-LDFLAGS = -L$(LIB_DIR) -lm -rdynamic -Wl,-rpath,$(LIB_DIR)
+LDFLAGS = -L$(LIB_DIR) -lm -rdynamic $(LD_RPATH_FLAGS)
 
 all: $(TESTS)
 
 fibo: fibo.c
 	$(GCC) $(CFLAGS) $^ -o $@ -fno-inline $(LDFLAGS) # Need -fno-inline to prevent GCC from deadcoding when no output.
 
-stream_%: LDFLAGS += -Wl,-rpath,$(LIBWSTREAM_DF_LIB_DIR) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+stream_%: LDFLAGS += $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 stream_%: CFLAGS += -fopenmp
 stream_%: stream_%.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_DIR) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

@@ -9,8 +9,8 @@ TESTS = 001_scalar_streams 002_scalar_streams_broadcast \
 	012_variadic_clauses_with_arrays_of_windows \
 	013_stream_selection_arrays \
 	014_broadcasting_across_selection_arrays
-CFLAGS = -fopenmp -Wall -std=c99 -O2 -ffast-math -g -Wl,-rpath,$(INST_DIR)/lib64 #-fdump-tree-all  #-Werror
-LDFLAGS = -L$(LIB_DIR) -lm -rdynamic -Wl,-rpath,$(LIB_DIR) -Wl,-rpath,$(LIBWSTREAM_DF_LIB_DIR) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+CFLAGS = -fopenmp -Wall -std=c99 -O2 -ffast-math -g $(LD_RPATH_FLAGS) #-fdump-tree-all  #-Werror
+LDFLAGS = -L$(LIB_DIR) -lm -rdynamic $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 all: $(TESTS)
 
