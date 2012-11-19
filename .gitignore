@@ -25,6 +25,8 @@ examples/seidel/seidel
 examples/seidel/starss_to_stream_seidel
 examples/seidel/stream_seidel
 examples/seidel/topsort-deps_stream_seidel
+examples/sparse_lu/sparse-lu
+examples/sparse_lu/stream_sparse-lu
 examples/syntax/001_scalar_streams
 examples/syntax/002_scalar_streams_broadcast
 examples/syntax/003_access_interleaving
