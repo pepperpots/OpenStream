@@ -2416,7 +2416,10 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		      if (TREE_CODE (type) == ARRAY_TYPE)
 			{
 			  tree size = TYPE_MAX_VALUE (TYPE_DOMAIN (type));
-			  size = maybe_lookup_decl (size, ctx);
+			  tree lsize = maybe_lookup_decl (size, ctx);
+
+			  if (lsize != NULL_TREE)
+			    size = lsize;
 			  num_streams = fold_build2 (PLUS_EXPR, size_type_node,
 						     size, size_one_node);
 			}
