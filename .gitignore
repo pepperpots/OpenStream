@@ -45,6 +45,7 @@ examples/syntax/015_nested_streaming
 examples/syntax/016_lastprivate_clause
 examples/syntax/017_lastprivate_clause_nested
 examples/syntax/018_modular_taskwait
+examples/syntax/019_streams_of_streams
 examples/jacobi/x86_jacobi
 examples/jacobi/x86_jacobi_c11
 examples/jacobi/x86_jacobi_dumbc11
