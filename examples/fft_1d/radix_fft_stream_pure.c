@@ -153,19 +153,23 @@ main (int argc, char *argv[])
 
   {
     fftw_complex streams[(1 << (radix+2))] __attribute__((stream));
+    int serializer __attribute__((stream));
     fftw_complex fake_plan_in, fake_plan_out;
     fftw_plan plan =
       fftw_plan_dft_1d (N2, &fake_plan_in, &fake_plan_out,
 			FFTW_FORWARD, FFTW_ESTIMATE | FFTW_UNALIGNED);
 
     gettimeofday (start, NULL);
+#pragma omp task output (serializer)
+    serializer = 0;
+
     for (it = 0; it < numiters; ++it)
       {
 	fftw_complex vout[N];
 
 	//printf ("T0 in[ ] out[ %d]\n", 0); fflush (stdout);
 	/* 1. Get input data.  */
-#pragma omp task output (streams[0] << vout[N]) firstprivate (data)
+#pragma omp task output (streams[0] << vout[N]) firstprivate (data) input (serializer)
 	{
 	  memcpy (vout, data, N * sizeof (fftw_complex));
 	}
@@ -237,7 +241,7 @@ main (int argc, char *argv[])
 	{
 	  fftw_complex vin[N];
 	  //printf ("T4 in[%d  ] out[  ]\n", (1 << (radix + 2)) - 3); fflush (stdout);
-#pragma omp task input (streams[(1 << (radix + 2)) - 3] >> vin[N])
+#pragma omp task input (streams[(1 << (radix + 2)) - 3] >> vin[N]) output (serializer)
 	  {
 	    if (it == numiters - 1)
 	      {

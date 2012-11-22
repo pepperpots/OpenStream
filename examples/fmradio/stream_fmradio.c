@@ -333,8 +333,8 @@ main(int argc, char* argv[])
   int output_file = 0;
   int text_file = 0;
 
-  int in_samples = 1 << 16;
-  int out_samples = 1 << 13;
+  int in_samples = 800000;
+  int out_samples = 100000;
 
   ntaps_filter_conf lp_2_conf;
   ntaps_filter_conf lp_11_conf, lp_12_conf;
@@ -354,9 +354,7 @@ main(int argc, char* argv[])
   float inout_ratio;
 
   int niter = 1;
-  int grain = 1;
-  int grain8 = 8;
-  int grain16 = 16;
+  int grain = 4;
   int option;
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
@@ -382,9 +380,7 @@ main(int argc, char* argv[])
 	  niter = atoi(optarg);
 	  break;
 	case 'g':
-	  grain = atoi (optarg);
-	  grain8 = 8 * grain;
-	  grain16 = 16 * grain;
+	  grain = 1 << atoi (optarg);
 	  break;
 	case 'h':
 	  printf("Usage: %s [option]...\n\n"
@@ -394,7 +390,7 @@ main(int argc, char* argv[])
 		 "  -t <text file>               Write output into a text file, default is %s.txt\n"
 		 "  -f <frequency>               Set final audio frequency, default is %d\n"
 		 "  -n <iterations>              Number of iterations\n"
-		 "  -g <grain>                   Set grain, default is %d\n",
+		 "  -g <grain power>             Set grain as a power of 2, default is %d\n",
 		 argv[0], argv[0], argv[0], final_audio_frequency, grain);
 	  exit(0);
 	  break;
@@ -410,6 +406,9 @@ main(int argc, char* argv[])
       fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
       exit(1);
     }
+
+  int grain8 = 8 * grain;
+  int grain16 = 16 * grain;
 
   if (input_file == 0)
     input_file = open ("input.dat", O_RDONLY);
@@ -561,7 +560,7 @@ main(int argc, char* argv[])
   int i;
 
   for (i = 0; i < out_samples; i += 2)
-    text_out_chars += sprintf (text_output + text_out_chars, "%-10.5f %-10.5f\n", data_out_flt[i], data_out_flt[i + 1]);
+    text_out_chars += sprintf (text_output + text_out_chars, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 
   written = 0;
   while (written < text_out_chars)

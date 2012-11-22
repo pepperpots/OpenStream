@@ -7,8 +7,13 @@ all:
 check:
 	echo "To be implemented"
 
-perf-test:
-	echo "Comming soon."
+run: run-A
+perf-test: run-A
+run-%:
+	$(MAKE) -C examples $@
+
+clean-tuning:
+	$(MAKE) -C examples clean-tuning
 
 clean:
 	rm -rf $(INST_DIR)

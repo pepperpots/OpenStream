@@ -7,6 +7,8 @@
 #include <assert.h>
 #include <string.h>
 
+#define _WITH_SPEEDUPS 0
+#define _CHECK_STREAM 1
 #define _CHECK_SEQUENTIAL 0
 #define _WITH_OUTPUT 0
 
@@ -273,7 +275,10 @@ matrix_diff (int num_blocks, int block_size,
   for (i = 0; i < num_blocks; ++i)
     for (j = 0; j < num_blocks; ++j)
       if (double_equal (error[i*num_blocks + j], 0.0) == false)
-	printf ("ERROR: Matrices differ at block (%d, %d). Error is %lf\n", i, j, error[i*num_blocks + j]);
+	{
+	  printf ("ERROR: Matrices differ at block (%d, %d). Error is %lf\n", i, j, error[i*num_blocks + j]);
+	  exit (1);
+	}
   free (error);
 }
 
@@ -337,6 +342,155 @@ fwd (int block_size,
 	(*block_c)[i][j] -= (*block_d)[i][k] * (*block_c)[k][j];
 }
 
+
+/* Main work function.  */
+static inline void
+stream_factorize (int num_blocks, int block_size,
+		  void * (*data)[num_blocks][num_blocks],
+		  int Rstreams[num_blocks*num_blocks] __attribute__((stream)),
+		  int Wstreams[num_blocks*num_blocks] __attribute__((stream)),
+		  int counters[num_blocks*num_blocks])
+{
+  int i, j, k;
+
+  for (k=0; k<num_blocks; k++)
+    {
+      // TASK 1
+      {
+	int readers = counters[k*num_blocks + k];
+	int win, wout;
+
+	if (readers == 0)
+	  {
+#pragma omp task input (Wstreams[k*num_blocks + k] >> win) output (Wstreams[k*num_blocks + k] << wout)
+	    {
+	      lu_block (block_size, (*data)[k][k]);
+	    }
+	  }
+	else
+	  {
+	    int Rwin[readers];
+	    counters[k*num_blocks + k] = 0;
+
+#pragma omp task input (Wstreams[k*num_blocks + k] >> win) output (Wstreams[k*num_blocks + k] << wout) \
+  input (Rstreams[k*num_blocks + k] >> Rwin[readers])
+	    {
+	      lu_block (block_size, (*data)[k][k]);
+	    }
+	  }
+      }
+
+      // TASK 2
+      for (j=k+1; j<num_blocks; j++)
+	if ((*data)[k][j] != NULL)
+	  {
+	    int readers = counters[k*num_blocks + j];
+	    int win, wout;
+	    int win2, wout2;
+
+	    counters[k*num_blocks + k] += 1;
+
+	    if (readers == 0)
+	      {
+#pragma omp task peek (Wstreams[k*num_blocks + k] >> win) output (Rstreams[k*num_blocks + k] << wout) \
+  input (Wstreams[k*num_blocks + j] >> win2) output (Wstreams[k*num_blocks + j] << wout2)
+		{
+		  fwd (block_size, (*data)[k][k], (*data)[k][j]);
+		}
+	      }
+	    else
+	      {
+		int Rwin[readers];
+		counters[k*num_blocks + j] = 0;
+
+#pragma omp task peek (Wstreams[k*num_blocks + k] >> win) output (Rstreams[k*num_blocks + k] << wout) \
+  input (Wstreams[k*num_blocks + j] >> win2) output (Wstreams[k*num_blocks + j] << wout2) \
+  input (Rstreams[k*num_blocks + j] >> Rwin[readers])
+		{
+		  fwd (block_size, (*data)[k][k], (*data)[k][j]);
+		}
+	      }
+	  }
+
+      // TASK 3
+      for (i = k + 1; i < num_blocks; ++i)
+	if ((*data)[i][k] != NULL)
+	  {
+	    int readers = counters[i*num_blocks + k];
+	    int win, wout;
+	    int win2, wout2;
+
+	    counters[k*num_blocks + k] += 1;
+
+	    if (readers == 0)
+	      {
+#pragma omp task peek (Wstreams[k*num_blocks + k] >> win) output (Rstreams[k*num_blocks + k] << wout) \
+  input (Wstreams[i*num_blocks + k] >> win2) output (Wstreams[i*num_blocks + k] << wout2)
+		{
+		  bdiv (block_size, (*data)[k][k], (*data)[i][k]);
+		}
+	      }
+	    else
+	      {
+		int Rwin[readers];
+		counters[i*num_blocks + k] = 0;
+
+#pragma omp task peek (Wstreams[k*num_blocks + k] >> win) output (Rstreams[k*num_blocks + k] << wout) \
+  input (Wstreams[i*num_blocks + k] >> win2) output (Wstreams[i*num_blocks + k] << wout2) \
+  input (Rstreams[i*num_blocks + k] >> Rwin[readers])
+		{
+		  bdiv (block_size, (*data)[k][k], (*data)[i][k]);
+		}
+	      }
+	  }
+
+      // TASK 4
+      for (i = k + 1; i < num_blocks; ++i)
+	{
+	if ((*data)[i][k] != NULL)
+	  {
+	  for (j = k + 1; j < num_blocks; ++j)
+	    {
+	      if ((*data)[k][j] != NULL)
+		{
+		  if ((*data)[i][j]==NULL)
+		    (*data)[i][j] = allocate_block (block_size);
+
+		  int readers = counters[i*num_blocks + j];
+		  int wina, winb, wout;
+		  int win2, wouta2, woutb2;
+
+		  counters[i*num_blocks + k] += 1;
+		  counters[k*num_blocks + j] += 1;
+
+		  if (readers == 0)
+		    {
+#pragma omp task peek (Wstreams[i*num_blocks + k] >> wina, Wstreams[k*num_blocks + j] >> winb) \
+  output (Rstreams[i*num_blocks + k] << wouta2, Rstreams[k*num_blocks + j] << woutb2) \
+  output (Wstreams[i*num_blocks + j] << wout) input (Wstreams[i*num_blocks + j] >> win2)
+		      {
+			bmod (block_size, (*data)[i][k], (*data)[k][j], (*data)[i][j]);
+		      }
+		    }
+		  else
+		    {
+		      int Rwin[readers];
+		      counters[i*num_blocks + j] = 0;
+
+#pragma omp task peek (Wstreams[i*num_blocks + k] >> wina, Wstreams[k*num_blocks + j] >> winb) \
+  output (Rstreams[i*num_blocks + k] << wouta2, Rstreams[k*num_blocks + j] << woutb2) \
+  output (Wstreams[i*num_blocks + j] << wout) input (Wstreams[i*num_blocks + j] >> win2) \
+  input (Rstreams[i*num_blocks + j] >> Rwin[readers])
+		      {
+			bmod (block_size, (*data)[i][k], (*data)[k][j], (*data)[i][j]);
+		      }
+		    }
+		}
+	    }
+	}
+      }
+    }
+}
 
 static inline void
 sequential_factorize (int num_blocks, int block_size,
@@ -437,11 +591,25 @@ main (int argc, char* argv[])
   int num_blocks = N / block_size;
   int all_blocks = num_blocks * num_blocks;
 
+  int Rstreams[all_blocks] __attribute__((stream));
+  int Wstreams[all_blocks] __attribute__((stream));
+  int final_view[all_blocks][1];
+  int counters[all_blocks];
+
   void * data;
   void * bckp_data;
   data = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
   bckp_data = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
 
+  /* Initialize streams and counters.  */
+  for (i = 0; i < num_blocks*num_blocks; ++i)
+    {
+      int x;
+      counters[i] = 0;
+
+#pragma omp task output (Wstreams[i] << x)
+      x = 0;
+    }
 
   if (res_file == NULL)
     res_file = fopen("stream_sparse-lu.out", "w");
@@ -449,33 +617,58 @@ main (int argc, char* argv[])
   /* Initialize the matrix to factorize and make a copy for testing
      correctness.  */
   generate_block_sparse_matrix (num_blocks, block_size, data);
+  duplicate (num_blocks, block_size, bckp_data, data);
 
   gettimeofday (start, NULL);
-  sequential_factorize (num_blocks, block_size, data);
-  gettimeofday (end, NULL);
+  stream_factorize (num_blocks, block_size, data, Rstreams, Wstreams, counters);
 
-  double seq_time = tdiff (end, start);
+#pragma omp task input (Wstreams >> final_view[all_blocks][1])
+  {
+    void * seq_data;
+    double stream_time, seq_time;
 
-  printf ("%.5f\n", seq_time);
+    gettimeofday (end, NULL);
+    stream_time = tdiff (end, start);
 
-  // Possibly check that the sequential version was correct
-  if (_CHECK_SEQUENTIAL)
-    {
-      void * l_mat;
-      void * u_mat;
+    if (! _WITH_SPEEDUPS)
+      printf ("%.5f\n", stream_time);
+    else
+      {
+	seq_data = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
+	duplicate (num_blocks, block_size, seq_data, bckp_data);
 
-      l_mat = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
-      u_mat = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
+	gettimeofday (start, NULL);
+	sequential_factorize (num_blocks, block_size, seq_data);
+	gettimeofday (end, NULL);
+        seq_time = tdiff (end, start);
 
-      clear_matrix (num_blocks, block_size, l_mat);
-      clear_matrix (num_blocks, block_size, u_mat);
-      split_matrix (num_blocks, block_size, data, l_mat, u_mat);
-      clear_matrix (num_blocks, block_size, data);
-      sparse_matmult (num_blocks, block_size, l_mat, u_mat, data);
-      matrix_diff (num_blocks, block_size, bckp_data, data);
-    }
+	printf ("Speedup: %.5f \t [seq: %.5f, str: %.5f] -- %d full blocks (%.5f%) \n",
+		seq_time / stream_time, seq_time, stream_time, full_blocks, (((float)full_blocks)/((float)all_blocks))*100.0);
+      }
 
-  // If we didn't exit prematurely, this run was correct.
-  printf ("Successful run.\n");
+    if (_CHECK_STREAM)
+      {
+	void * l_mat;
+	void * u_mat;
+
+	l_mat = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
+	u_mat = (void * (*)[num_blocks][num_blocks]) calloc (all_blocks, sizeof (void *));
+
+	split_matrix (num_blocks, block_size, data, l_mat, u_mat);
+	clear_matrix (num_blocks, block_size, data);
+	sparse_matmult (num_blocks, block_size, l_mat, u_mat, data);
+	matrix_diff (num_blocks, block_size, bckp_data, data);
+
+	// Possibly check that the sequential version was correct
+	if (_CHECK_SEQUENTIAL)
+	  {
+	    clear_matrix (num_blocks, block_size, l_mat);
+	    clear_matrix (num_blocks, block_size, u_mat);
+	    split_matrix (num_blocks, block_size, seq_data, l_mat, u_mat);
+	    clear_matrix (num_blocks, block_size, seq_data);
+	    sparse_matmult (num_blocks, block_size, l_mat, u_mat, seq_data);
+	    matrix_diff (num_blocks, block_size, bckp_data, seq_data);
+	  }
+      }
+  }
 }
-

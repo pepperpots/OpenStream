@@ -7,8 +7,8 @@
 #include <getopt.h>
 #include <string.h>
 
-#define _SPEEDUPS 1
-#define _VERIFY 1
+#define _SPEEDUPS 0
+#define _VERIFY 0
 
 #include <sys/time.h>
 #include <unistd.h>
