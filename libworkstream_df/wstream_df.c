@@ -199,7 +199,7 @@ static int num_workers;
 
 #ifdef _PHARAON_MODE
 static ws_ctx_t master_ctx;
-static bool master_ctx_swap_p = false;
+static volatile bool master_ctx_swap_p = false;
 #endif
 
 /*************************************************************************/
