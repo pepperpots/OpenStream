@@ -12,10 +12,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 
 #include <getopt.h>
 
-#define _WITH_OUTPUT 0
+#define _WITH_OUTPUT 1
 
 #include <sys/time.h>
 #include <unistd.h>
@@ -391,10 +392,12 @@ read_opts(int argc, char* argv[],
 int
 main(int argc, char* argv[])
 {
-  FILE* input_file;
-  FILE* output_file;
-  FILE* text_file;
-  fpos_t in_begin_pos;
+  int input_file = 0;
+  int output_file = 0;
+  int text_file = 0;
+
+  int in_samples = 1 << 16;
+  int out_samples = 1 << 13;
 
   ntaps_filter_conf lp_2_conf;
   ntaps_filter_conf lp_11_conf, lp_12_conf;
@@ -433,13 +436,13 @@ main(int argc, char* argv[])
       switch(option)
 	{
 	case 'i':
-	  input_file = fopen (optarg, "r");
+	  input_file = open (optarg, O_RDONLY);
 	  break;
 	case 'o':
-	  output_file = fopen (optarg, "w");
+	  output_file = open (optarg, O_WRONLY);
 	  break;
 	case 't':
-	  text_file = fopen (optarg, "w");
+	  text_file = open (optarg, O_WRONLY);
 	  break;
 	case 'f':
 	  final_audio_frequency = atoi(optarg);
@@ -471,24 +474,25 @@ main(int argc, char* argv[])
 	}
     }
 
-  if(optind != argc) {
-	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
-	  exit(1);
-  }
+  if (optind != argc)
+    {
+      fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+      exit(1);
+    }
 
-  if (input_file == NULL)
-    input_file = fopen ("input.dat", "r");
-  if (output_file == NULL)
+  if (input_file == 0)
+    input_file = open ("input.dat", O_RDONLY);
+  if (output_file == 0)
     {
       char output_filename[4096];
       sprintf (output_filename, "%s.raw", argv[0]);
-      output_file = fopen (output_filename, "w");
+      output_file = open (output_filename, O_WRONLY);
     }
-  if (text_file == NULL)
+  if (text_file == 0)
     {
       char text_filename[4096];
       sprintf (text_filename, "%s.txt", argv[0]);
-      text_file = fopen (text_filename, "w");
+      text_file = open (text_filename, O_WRONLY);
     }
 
   inout_ratio = ((int) input_rate)/final_audio_frequency;
@@ -500,25 +504,27 @@ main(int argc, char* argv[])
   ntaps_filter_ffd_init(&lp_3_conf,  15000, 4000, 1.0, inout_ratio, input_rate, WIN_HANNING);
   fm_quad_demod_init (&fm_qd_conf);
 
+  float *data_in = malloc (in_samples * sizeof (float));
+  float *data_out_raw = malloc (out_samples * sizeof (short));
+  float *data_out_flt = malloc (out_samples * sizeof (float));
+  read (input_file, data_in, in_samples * sizeof (float));
+
 
   {
     float fm_qd_buffer[grain8];
     float ffd_buffer[grain8];
 
-    int i, j;
+    int i, j, k;
 
     gettimeofday (start, NULL);
 
-    read_buffer = (float *) malloc (grain16 * sizeof (float));
-    fgetpos (input_file, &in_begin_pos);
     for (j = 0; j < niter; ++j)
       {
-	fsetpos (input_file, &in_begin_pos);
-	while (grain16 == fread (read_buffer, sizeof(float), grain16, input_file))
+	for (k = 0; k < in_samples; k += grain16)
 	  {
 	    for (i = 0; i < grain8; i++)
 	      {
-		fm_quad_demod (&fm_qd_conf, read_buffer[2*i], read_buffer[2*i + 1], &fm_qd_buffer[i]);
+		fm_quad_demod (&fm_qd_conf, data_in[k + 2*i], data_in[k + 2*i + 1], &fm_qd_buffer[i]);
 		ntaps_filter_ffd (&lp_11_conf, 1, &fm_qd_buffer[i], &band_11);
 		ntaps_filter_ffd (&lp_12_conf, 1, &fm_qd_buffer[i], &band_12);
 		subctract (band_11, band_12, &resume_1);
@@ -531,15 +537,18 @@ main(int argc, char* argv[])
 
 	    for (i = 0; i < grain; ++i)
 	      {
+		short a, b;
+
 		ntaps_filter_ffd (&lp_2_conf, 8, &fm_qd_buffer[8*i], &band_2);
 		ntaps_filter_ffd (&lp_3_conf, 8, &ffd_buffer[8*i], &band_3);
 		stereo_sum (band_2, band_3, &output1, &output2);
 
-		output_short[0] = dac_cast_trunc_and_normalize_to_short (output1);
-		output_short[1] = dac_cast_trunc_and_normalize_to_short (output2);
-		fwrite (output_short, sizeof(short), 2, output_file);
-		fprintf (text_file, "%-10.5f %-10.5f\n", output1, output2);
-		//fprintf (text_file, "%-10.5f %-10.5f \t %10d %10d\n", output1, output2, output_short[0], output_short[1]);
+		a = dac_cast_trunc_and_normalize_to_short (output1);
+		b = dac_cast_trunc_and_normalize_to_short (output2);
+		data_out_raw[(k >> 3) + 2*i] = a;
+		data_out_raw[(k >> 3) + 2*i + 1] = b;
+		data_out_flt[(k >> 3) + 2*i] = output1;
+		data_out_flt[(k >> 3) + 2*i + 1] = output2;
 	      }
 	  }
       }
@@ -549,9 +558,27 @@ main(int argc, char* argv[])
 
   printf ("%.5f\n", tdiff (end, start));
 
-  fclose (input_file);
-  fclose (output_file);
-  fclose (text_file);
+  int written = 0;
+  while (written < out_samples * sizeof (short))
+    written += write (output_file, data_out_raw + written, out_samples * sizeof (short) - written);
+
+#if _WITH_OUTPUT
+  /* Over-allocate space for output text, with 32 chars per sample.  */
+  char *text_output = malloc (out_samples * 32 * sizeof (char));
+  int text_out_chars = 0;
+  int i;
+
+  for (i = 0; i < out_samples; i += 2)
+    text_out_chars += sprintf (text_output + text_out_chars, "%-10.5f %-10.5f\n", data_out_flt[i], data_out_flt[i + 1]);
+
+  written = 0;
+  while (written < text_out_chars)
+    written += write (text_file, text_output + written, text_out_chars - written);
+#endif
+
+  close (input_file);
+  close (output_file);
+  close (text_file);
 
   return 0;
 }

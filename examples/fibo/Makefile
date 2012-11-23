@@ -1,8 +1,8 @@
 include ../Makefile.config
 
-TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo
+TESTS = fibo stream_fibo stream_fibo_single_stream stream_recursive_fibo barrier_fibo
 CFLAGS = -Wall -std=c99 -O3 -ffast-math
-LDFLAGS = -L$(LIB_DIR) -lm -rdynamic $(LD_RPATH_FLAGS)
+LDFLAGS = -L$(LIB_DIR) -lm -rdynamic
 
 all: $(TESTS)
 
@@ -13,6 +13,11 @@ stream_%: LDFLAGS += $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 stream_%: CFLAGS += -fopenmp
 stream_%: stream_%.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
+
+barrier_%: LDFLAGS += -L$(LIBWSTREAM_DF_LIB_DIR) $(LD_RPATH_FLAGS) -lwstream_df
+barrier_%: CFLAGS += -fopenmp
+barrier_%: barrier_%.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp  $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

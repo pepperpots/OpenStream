@@ -7,25 +7,26 @@
 
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
 #define MAX_NUM_CORES 1024
+#define WSTREAM_STACK_SIZE 1 << 16
 
 #define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
 
-/* Get the frame pointer of the current thread */
-extern void *__builtin_ia32_get_cfp ();
-
 /* Create a new thread, with frame pointer size, and sync counter */
-extern void *__builtin_ia32_tcreate (size_t, size_t, void *);
-
-
+extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool);
 /* Decrease the synchronization counter by one */
 extern void __builtin_ia32_tdecrease (void *);
 /* Decrease the synchronization counter by one */
 extern void __builtin_ia32_tdecrease_n (void *, size_t);
-
-
+extern void __builtin_ia32_tdecrease_n_vec (size_t, void *, size_t);
 /* Destroy (free) the current thread */
-extern void __builtin_ia32_tend ();
+extern void __builtin_ia32_tend (void *);
 
+/* Suspend the execution of the current task until all children tasks
+   spawned up to this point have completed.  When the las spawned task
+   has a lastprivate clause (__builtin_ia32_tcreate_lp), only this
+   task is awaited, but a subsequent call would wait for all other
+   tasks.  */
+extern void wstream_df_taskwait ();
 
 /* Allocate and return an array of streams.  */
 extern void wstream_df_stream_ctor (void **, size_t);

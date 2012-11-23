@@ -7,8 +7,13 @@ all:
 check:
 	echo "To be implemented"
 
-perf-test:
-	echo "Comming soon."
+run: run-A
+perf-test: run-A
+run-%:
+	$(MAKE) -C examples $@
+
+clean-tuning:
+	$(MAKE) -C examples clean-tuning
 
 clean:
 	rm -rf $(INST_DIR)
@@ -17,7 +22,10 @@ clean:
 			$(MAKE) -C $(GCC_BUILD_DIR) clean; \
 		fi \
 	fi
+	$(MAKE) -C libworkstream_df clean
+	$(MAKE) -C examples clean
 
 clean-clean:
 	rm -rf $(INST_DIR) $(GCC_BUILD_DIR) $(ARCHIVES_DIR) $(CONTRIB_DIR)
+	$(MAKE) -C libworkstream_df clean
 	$(MAKE) -C examples clean

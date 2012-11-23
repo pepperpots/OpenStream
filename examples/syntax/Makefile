@@ -8,7 +8,11 @@ TESTS = 001_scalar_streams 002_scalar_streams_broadcast \
 	011_modular_with_arrays_of_streams \
 	012_variadic_clauses_with_arrays_of_windows \
 	013_stream_selection_arrays \
-	014_broadcasting_across_selection_arrays
+	014_broadcasting_across_selection_arrays \
+	015_nested_streaming \
+	016_lastprivate_clause 017_lastprivate_clause_nested \
+	018_modular_taskwait 019_streams_of_streams
+
 CFLAGS = -fopenmp -Wall -std=c99 -O2 -ffast-math -g $(LD_RPATH_FLAGS) #-fdump-tree-all  #-Werror
 LDFLAGS = -L$(LIB_DIR) -lm -rdynamic $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 

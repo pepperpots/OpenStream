@@ -35,7 +35,7 @@ main (int argc, char **argv)
   int N = 64;
 
   int numiters = 10;
-  int block_size = 4;
+  int block_size = 0;
 
   FILE *res_file = NULL;
 
@@ -77,6 +77,9 @@ main (int argc, char **argv)
 	  break;
 	}
     }
+
+  if (block_size == 0)
+    block_size = N;
 
   if(optind != argc) {
 	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);

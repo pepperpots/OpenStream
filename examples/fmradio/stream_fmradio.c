@@ -12,10 +12,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 
 #include <getopt.h>
 
-#define _WITH_OUTPUT 0
+#define _WITH_OUTPUT 1
 
 #include <sys/time.h>
 #include <unistd.h>
@@ -328,10 +329,12 @@ multiply_square (float i1, float i2, float* result)
 int
 main(int argc, char* argv[])
 {
-  FILE* input_file = NULL;
-  FILE* output_file = NULL;
-  FILE* text_file = NULL;
-  fpos_t in_begin_pos;
+  int input_file = 0;
+  int output_file = 0;
+  int text_file = 0;
+
+  int in_samples = 800000;
+  int out_samples = 100000;
 
   ntaps_filter_conf lp_2_conf;
   ntaps_filter_conf lp_11_conf, lp_12_conf;
@@ -351,11 +354,8 @@ main(int argc, char* argv[])
   float inout_ratio;
 
   int niter = 1;
-  int grain = 1;
-  int grain8 = 8;
-  int grain16 = 16;
+  int grain = 4;
   int option;
-  float *read_buffer;
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
@@ -365,13 +365,13 @@ main(int argc, char* argv[])
       switch(option)
 	{
 	case 'i':
-	  input_file = fopen (optarg, "r");
+	  input_file = open (optarg, O_RDONLY);
 	  break;
 	case 'o':
-	  output_file = fopen (optarg, "w");
+	  output_file = open (optarg, O_WRONLY);
 	  break;
 	case 't':
-	  text_file = fopen (optarg, "w");
+	  text_file = open (optarg, O_WRONLY);
 	  break;
 	case 'f':
 	  final_audio_frequency = atoi(optarg);
@@ -380,9 +380,7 @@ main(int argc, char* argv[])
 	  niter = atoi(optarg);
 	  break;
 	case 'g':
-	  grain = atoi (optarg);
-	  grain8 = 8 * grain;
-	  grain16 = 16 * grain;
+	  grain = 1 << atoi (optarg);
 	  break;
 	case 'h':
 	  printf("Usage: %s [option]...\n\n"
@@ -392,7 +390,7 @@ main(int argc, char* argv[])
 		 "  -t <text file>               Write output into a text file, default is %s.txt\n"
 		 "  -f <frequency>               Set final audio frequency, default is %d\n"
 		 "  -n <iterations>              Number of iterations\n"
-		 "  -g <grain>                   Set grain, default is %d\n",
+		 "  -g <grain power>             Set grain as a power of 2, default is %d\n",
 		 argv[0], argv[0], argv[0], final_audio_frequency, grain);
 	  exit(0);
 	  break;
@@ -403,24 +401,28 @@ main(int argc, char* argv[])
 	}
     }
 
-  if(optind != argc) {
-	  fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
-	  exit(1);
-  }
+  if (optind != argc)
+    {
+      fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+      exit(1);
+    }
 
-  if (input_file == NULL)
-    input_file = fopen ("input.dat", "r");
-  if (output_file == NULL)
+  int grain8 = 8 * grain;
+  int grain16 = 16 * grain;
+
+  if (input_file == 0)
+    input_file = open ("input.dat", O_RDONLY);
+  if (output_file == 0)
     {
       char output_filename[4096];
       sprintf (output_filename, "%s.raw", argv[0]);
-      output_file = fopen (output_filename, "w");
+      output_file = open (output_filename, O_WRONLY);
     }
-  if (text_file == NULL)
+  if (text_file == 0)
     {
       char text_filename[4096];
       sprintf (text_filename, "%s.txt", argv[0]);
-      text_file = fopen (text_filename, "w");
+      text_file = open (text_filename, O_WRONLY);
     }
 
   inout_ratio = ((int) input_rate)/final_audio_frequency;
@@ -431,6 +433,12 @@ main(int argc, char* argv[])
   ntaps_filter_ffd_init (lp_22_conf_p, 17000, 2000, 1,   1,           input_rate, WIN_HANNING);
   ntaps_filter_ffd_init (lp_3_conf_p,  15000, 4000, 1.0, inout_ratio, input_rate, WIN_HANNING);
   fm_quad_demod_init (fm_qd_conf_p);
+
+  float *data_in = malloc (in_samples * sizeof (float));
+  float *data_out_raw = malloc (out_samples * sizeof (short));
+  float *data_out_flt = malloc (out_samples * sizeof (float));
+  read (input_file, data_in, in_samples * sizeof (float));
+
 
   {
     float band_2 __attribute__((stream)), band_2_v[grain];
@@ -453,8 +461,7 @@ main(int argc, char* argv[])
     float view[8];
     int sin, sout;
 
-    int i, j;
-    short a, b;
+    int i, j, k;
 
     gettimeofday (start, NULL);
 
@@ -464,18 +471,14 @@ main(int argc, char* argv[])
 	sout = 0;
       }
 
-    read_buffer = (float *) malloc (grain16 * sizeof (float));
-
-    fgetpos (input_file, &in_begin_pos);
     for (j = 0; j < niter; ++j)
       {
-	fsetpos (input_file, &in_begin_pos);
-	while (grain16 == fread (read_buffer, sizeof(float), grain16, input_file))
+	for (k = 0; k < in_samples; k += grain16)
 	  {
 	    for (i = 0; i < grain8; i++)
 	      {
-		float v1 = read_buffer[2*i];
-		float v2 = read_buffer[2*i + 1];
+		float v1 = data_in[k + 2*i];
+		float v2 = data_in[k + 2*i + 1];
 
 #pragma omp task firstprivate (v1, v2, fm_qd_conf_p) output (fm_qd_buffer << fm_qd_buffer_sv/*, fm_qd_buffer_dup*/) input (serializer[0] >> sin) output (serializer[0] << sout)
 		{
@@ -499,36 +502,38 @@ main(int argc, char* argv[])
 	    //#pragma omp tick (fm_qd_buffer >> grain8)
 
 #pragma omp task input (band_11 >> band_11_v[grain8], band_12 >> band_12_v[grain8]) output (resume_1 << resume_1_v[grain8])
-	      for (i = 0; i < grain8; i++)
-		subctract (band_11_v[i], band_12_v[i], &resume_1_v[i]);
+	    for (i = 0; i < grain8; i++)
+	      subctract (band_11_v[i], band_12_v[i], &resume_1_v[i]);
 #pragma omp task input (band_21 >> band_21_v[grain8], band_22 >> band_22_v[grain8]) output (resume_2 << resume_2_v[grain8])
-	      for (i = 0; i < grain8; i++)
-		subctract (band_21_v[i], band_22_v[i], &resume_2_v[i]);
+	    for (i = 0; i < grain8; i++)
+	      subctract (band_21_v[i], band_22_v[i], &resume_2_v[i]);
 #pragma omp task input (resume_1 >> resume_1_v[grain8], resume_2 >> resume_2_v[grain8]) output (ffd_buffer << ffd_buffer_v[grain8])
-	      for (i = 0; i < grain8; i++)
-		multiply_square (resume_1_v[i], resume_2_v[i], &ffd_buffer_v[i]);
+	    for (i = 0; i < grain8; i++)
+	      multiply_square (resume_1_v[i], resume_2_v[i], &ffd_buffer_v[i]);
 
 
 
 #pragma omp task input (fm_qd_buffer >> fm_qd_buffer_dup_v[grain8]) output (band_2 << band_2_v[grain]) firstprivate (lp_2_conf_p) input (serializer[8] >> sin) output (serializer[8] << sout)
-	      for (i = 0; i < grain; i++)
-		ntaps_filter_ffd (lp_2_conf_p, 8, &fm_qd_buffer_dup_v[8*i], &band_2_v[i]);
+	    for (i = 0; i < grain; i++)
+	      ntaps_filter_ffd (lp_2_conf_p, 8, &fm_qd_buffer_dup_v[8*i], &band_2_v[i]);
 #pragma omp task input (ffd_buffer >> ffd_buffer_v[grain8]) output (band_3 << band_3_v[grain]) firstprivate (lp_3_conf_p) input (serializer[9] >> sin) output (serializer[9] << sout)
-	      for (i = 0; i < grain; i++)
-		ntaps_filter_ffd (lp_3_conf_p, 8, &ffd_buffer_v[8*i], &band_3_v[i]);
+	    for (i = 0; i < grain; i++)
+	      ntaps_filter_ffd (lp_3_conf_p, 8, &ffd_buffer_v[8*i], &band_3_v[i]);
 #pragma omp task input (band_2 >> band_2_v[grain], band_3 >> band_3_v[grain]) output (output1 << output1_v[grain], output2 << output2_v[grain])
-	      for (i = 0; i < grain; i++)
-		stereo_sum (band_2_v[i], band_3_v[i], &output1_v[i], &output2_v[i]);
+	    for (i = 0; i < grain; i++)
+	      stereo_sum (band_2_v[i], band_3_v[i], &output1_v[i], &output2_v[i]);
 
 #pragma omp task input (output1 >> output1_v[grain], output2 >> output2_v[grain]) firstprivate (output_file, text_file) input (serializer[11] >> sin) output (serializer[11] << sout)
-	      for (i = 0; i < grain; i++)
-		{
-		  a = dac_cast_trunc_and_normalize_to_short (output1_v[i]);
-		  b = dac_cast_trunc_and_normalize_to_short (output2_v[i]);
-		  fwrite (&a, sizeof(short), 1, output_file);
-		  fwrite (&b, sizeof(short), 1, output_file);
-		  fprintf (text_file, "%-10.5f %-10.5f\n", output1_v[i], output2_v[i]);
-		}
+	    for (i = 0; i < grain; i++)
+	      {
+		short a, b;
+		a = dac_cast_trunc_and_normalize_to_short (output1_v[i]);
+		b = dac_cast_trunc_and_normalize_to_short (output2_v[i]);
+		data_out_raw[(k >> 3) + 2*i] = a;
+		data_out_raw[(k >> 3) + 2*i + 1] = b;
+		data_out_flt[(k >> 3) + 2*i] = output1_v[i];
+		data_out_flt[(k >> 3) + 2*i + 1] = output2_v[i];
+	      }
 	  }
       }
 
@@ -537,16 +542,34 @@ main(int argc, char* argv[])
 #pragma omp tick (serializer[i])
       }
 
-
 #pragma omp taskwait
+
+    gettimeofday (end, NULL);
+
+    printf ("%.5f\n", tdiff (end, start));
   }
-  gettimeofday (end, NULL);
 
-  printf ("%.5f\n", tdiff (end, start));
+  int written = 0;
+  while (written < out_samples * sizeof (short))
+    written += write (output_file, data_out_raw + written, out_samples * sizeof (short) - written);
 
-  fclose (input_file);
-  fclose (output_file);
-  fclose (text_file);
+#if _WITH_OUTPUT
+  /* Over-allocate space for output text, with 32 chars per sample.  */
+  char *text_output = malloc (out_samples * 32 * sizeof (char));
+  int text_out_chars = 0;
+  int i;
+
+  for (i = 0; i < out_samples; i += 2)
+    text_out_chars += sprintf (text_output + text_out_chars, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
+
+  written = 0;
+  while (written < text_out_chars)
+    written += write (text_file, text_output + written, text_out_chars - written);
+#endif
+
+  close (input_file);
+  close (output_file);
+  close (text_file);
 
   return 0;
 }
