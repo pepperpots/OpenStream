@@ -33,8 +33,6 @@ tdiff (struct timeval *end, struct timeval *start)
 #define FM_LIMIT     (65536/2)-1
 
 
-
-
 /* *********************************************** complex operations   */
 
 typedef struct
@@ -392,12 +390,12 @@ read_opts(int argc, char* argv[],
 int
 main(int argc, char* argv[])
 {
-  int input_file = 0;
-  int output_file = 0;
-  int text_file = 0;
+  FILE *input_file = NULL;
+  FILE *output_file = NULL;
+  FILE *text_file = NULL;
 
-  int in_samples = 1 << 16;
-  int out_samples = 1 << 13;
+  int in_samples = 1 << 19;
+  int out_samples = 1 << 17;
 
   ntaps_filter_conf lp_2_conf;
   ntaps_filter_conf lp_11_conf, lp_12_conf;
@@ -410,11 +408,8 @@ main(int argc, char* argv[])
   float inout_ratio;
 
   int niter = 1;
-  int grain = 1;
-  int grain8 = 8;
-  int grain16 = 16;
+  int grain = 4;
   int option;
-  float *read_buffer;
 
   float band_2;
   float band_3;
@@ -436,13 +431,13 @@ main(int argc, char* argv[])
       switch(option)
 	{
 	case 'i':
-	  input_file = open (optarg, O_RDONLY);
+	  input_file = fopen (optarg, "r");
 	  break;
 	case 'o':
-	  output_file = open (optarg, O_WRONLY);
+	  output_file = fopen (optarg, "w");
 	  break;
 	case 't':
-	  text_file = open (optarg, O_WRONLY);
+	  text_file = fopen (optarg, "w");
 	  break;
 	case 'f':
 	  final_audio_frequency = atoi(optarg);
@@ -451,9 +446,7 @@ main(int argc, char* argv[])
 	  niter = atoi(optarg);
 	  break;
 	case 'g':
-	  grain = atoi (optarg);
-	  grain8 = 8 * grain;
-	  grain16 = 16 * grain;
+	  grain = 1 << atoi (optarg);
 	  break;
 	case 'h':
 	  printf("Usage: %s [option]...\n\n"
@@ -480,19 +473,22 @@ main(int argc, char* argv[])
       exit(1);
     }
 
-  if (input_file == 0)
-    input_file = open ("input.dat", O_RDONLY);
-  if (output_file == 0)
+  int grain8 = 8 * grain;
+  int grain16 = 16 * grain;
+
+  if (input_file == NULL)
+    input_file = fopen ("input.dat", "r");
+  if (output_file == NULL)
     {
       char output_filename[4096];
       sprintf (output_filename, "%s.raw", argv[0]);
-      output_file = open (output_filename, O_WRONLY);
+      output_file = fopen (output_filename, "w");
     }
-  if (text_file == 0)
+  if (text_file == NULL)
     {
       char text_filename[4096];
       sprintf (text_filename, "%s.txt", argv[0]);
-      text_file = open (text_filename, O_WRONLY);
+      text_file = fopen (text_filename, "w");
     }
 
   inout_ratio = ((int) input_rate)/final_audio_frequency;
@@ -507,7 +503,7 @@ main(int argc, char* argv[])
   float *data_in = malloc (in_samples * sizeof (float));
   float *data_out_raw = malloc (out_samples * sizeof (short));
   float *data_out_flt = malloc (out_samples * sizeof (float));
-  read (input_file, data_in, in_samples * sizeof (float));
+  fread (data_in, sizeof (float), in_samples, input_file);
 
 
   {
@@ -558,27 +554,18 @@ main(int argc, char* argv[])
 
   printf ("%.5f\n", tdiff (end, start));
 
-  int written = 0;
-  while (written < out_samples * sizeof (short))
-    written += write (output_file, data_out_raw + written, out_samples * sizeof (short) - written);
+  fwrite (data_out_raw, sizeof (short), out_samples, output_file);
 
 #if _WITH_OUTPUT
-  /* Over-allocate space for output text, with 32 chars per sample.  */
-  char *text_output = malloc (out_samples * 32 * sizeof (char));
-  int text_out_chars = 0;
   int i;
 
   for (i = 0; i < out_samples; i += 2)
-    text_out_chars += sprintf (text_output + text_out_chars, "%-10.5f %-10.5f\n", data_out_flt[i], data_out_flt[i + 1]);
-
-  written = 0;
-  while (written < text_out_chars)
-    written += write (text_file, text_output + written, text_out_chars - written);
+    fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
 
-  close (input_file);
-  close (output_file);
-  close (text_file);
+  fclose (input_file);
+  fclose (output_file);
+  fclose (text_file);
 
   return 0;
 }

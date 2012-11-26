@@ -18,7 +18,7 @@ examples/fibo/stream_fibo
 examples/fibo/stream_fibo_single_stream
 examples/fibo/stream_recursive_fibo
 examples/fmradio/fmradio_seq
-examples/fmradio/stream_fmradio
+examples/fmradio/stream_fmradio_df
 examples/seidel/openmp_loop_seidel
 examples/seidel/openmp_task_seidel
 examples/seidel/seidel
