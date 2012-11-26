@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
+
 #include "common.h"
 
 #include <time.h>
@@ -14,6 +16,8 @@
 #define  IM_SPEC_ALREADY
 
 struct timeval tv1,tv2;
+
+extern int     workFactor, blockSize100k;
 
 #define Bool unsigned char
 /* Prototypes for stuff in bzip2.c */
@@ -267,14 +271,23 @@ int main (int argc, char *argv[]) {
     char *input_name="input.combined";
     unsigned char *validate_array;
     FILE *fd;
+    int option;
     seedi = 10;
 
-    if (argc > 1) input_name=argv[1];
-    if (argc > 2) input_size=atoi(argv[2]);
-    if (argc > 3) 
-	compressed_size=atoi(argv[3]);
-    else
-	compressed_size=input_size;
+    while ((option = getopt(argc,argv,"i:s:b:")) != -1)
+      {
+	switch (option)
+	  {
+	  case 'i':
+	    input_name = optarg;break;
+	  case 's':
+	    input_size = atoi(optarg);break;
+	  case 'b':
+	    blockSize100k = atoi(optarg);break;
+	  }
+      }
+
+    compressed_size=input_size;
 
     spec_fd[0].limit=input_size*MB;
     spec_fd[1].limit=compressed_size*MB;
@@ -313,7 +326,7 @@ int main (int argc, char *argv[]) {
 	spec_compress(0,1, level);
 
       gettimeofday(&tv2,NULL);
-      printf ("[bzip2-serial] with compress %dMB data in %f seconds\n", input_size, tdiff(&tv2,&tv1));
+      printf ("[bzip2-serial] with compress %dMB data with block size %d*100K, in %f seconds\n", input_size, blockSize100k, tdiff(&tv2,&tv1));
       debug1(3, "Compressed data %d bytes in length\n", spec_fd[1].len);
 
 #ifdef DEBUG_DUMP
@@ -365,7 +378,6 @@ int main (int argc, char *argv[]) {
 extern unsigned char smallMode;
 extern int     verbosity;
 extern int     bsStream;
-extern int     workFactor, blockSize100k;
 void spec_initbufs() {
    smallMode               = 0;
    verbosity               = 0;

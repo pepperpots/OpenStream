@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include "common.h"
 #include <time.h>
 #include <sys/time.h>
@@ -11,6 +12,7 @@
 #define SPEC_BZIP
 
 struct timeval tv1,tv2;
+extern int     workFactor, blockSize100k;
 
 #define  IM_SPEC_ALREADY
 
@@ -32,7 +34,6 @@ int spec_reset(int fd);
 int spec_write(int fd, unsigned char *buf, int size);
 int spec_putc(unsigned char ch, int fd);
 int debug_time();
-extern int     workFactor, blockSize100k;
 
 //#define DEBUG 0
 
@@ -267,14 +268,23 @@ int main (int argc, char *argv[]) {
     char *input_name="input.combined";
     unsigned char *validate_array;
     FILE *fd;
+    int option;
     seedi = 10;
 
-    if (argc > 1) input_name=argv[1];
-    if (argc > 2) input_size=atoi(argv[2]);
-    if (argc > 3) 
-	compressed_size=atoi(argv[3]);
-    else
-	compressed_size=input_size;
+    while ((option = getopt(argc,argv,"i:s:b:")) != -1)
+      {
+	switch (option)
+	  {
+	  case 'i':
+	    input_name = optarg;break;
+	  case 's':
+	    input_size = atoi(optarg);break;
+	  case 'b':
+	    blockSize100k = atoi(optarg);break;
+	  }
+      }
+
+    compressed_size=input_size;
 
     spec_fd[0].limit=input_size*MB;
     spec_fd[1].limit=compressed_size*MB;
@@ -320,7 +330,7 @@ int main (int argc, char *argv[]) {
 {    
 
   gettimeofday (&tv2,NULL);
-  printf ("[bzip2-parallel] with compress %dMB data in %f seconds\n", input_size, tdiff(&tv2,&tv1));
+  printf ("[bzip2-stream] with compress %dMB data with block size %d*100K, in %f seconds\n", input_size, blockSize100k, tdiff(&tv2,&tv1));
 
   debug (1,"finishing task...\n");
   debug1(3, "Compressed data %d bytes in length\n", spec_fd_p[1].len);
