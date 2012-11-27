@@ -296,17 +296,15 @@ ntaps_filter_ffd(ntaps_filter_conf* conf
   for (i= 0; i < conf->decimation; i++)
     {
       conf->history[conf->next]= input[i];
-      conf->next= (conf->next + 1) % conf->taps;
+      conf->next++;
+      if (conf->next == conf->taps) conf->next = 0;
     }
 
   sum= 0.0;
-  for (i= 0; i < conf->taps; i++)
-    {
-      sum= sum
-	+ conf->history[(conf->next + i) % conf->taps]
-	* conf->coeff[conf->taps - i - 1];
-    }
-
+  for (i = 0; i < conf->taps - conf->next; ++i)
+    sum += conf->history[conf->next + i] * conf->coeff[conf->taps - i - 1];
+  for (i = 0; i < conf->next; ++i)
+    sum += conf->history[i] * conf->coeff[conf->next - i - 1];
   *result= sum;
 }
 
