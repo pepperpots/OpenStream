@@ -16,7 +16,7 @@
 
 #include <getopt.h>
 
-#define _WITH_OUTPUT 1
+#define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>
@@ -554,11 +554,10 @@ main(int argc, char* argv[])
 
   printf ("%.5f\n", tdiff (end, start));
 
-  fwrite (data_out_raw, sizeof (short), out_samples, output_file);
-
 #if _WITH_OUTPUT
   int i;
 
+  fwrite (data_out_raw, sizeof (short), out_samples, output_file);
   for (i = 0; i < out_samples; i += 2)
     fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
