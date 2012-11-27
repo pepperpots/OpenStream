@@ -12,7 +12,7 @@
 #define SPEC_BZIP
 
 struct timeval tv1,tv2;
-extern int     workFactor, blockSize100k;
+extern int workFactor, blockSize100k, granularity;
 
 #define  IM_SPEC_ALREADY
 
@@ -262,94 +262,109 @@ int spec_putc(unsigned char ch, int fd) {
 #define MB (1<<20)
 
 #ifdef SPEC_CPU2000
-int main (int argc, char *argv[]) {
-    int i, level;
-    int input_size=INPUT_SIZE, compressed_size;
-    char *input_name="input.combined";
-    unsigned char *validate_array;
-    FILE *fd;
-    int option;
-    seedi = 10;
+int main (int argc, char *argv[])
+{
+  struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
+  struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
+  int i, level;
+  int input_size=INPUT_SIZE, compressed_size;
+  char *input_name="input.combined";
+  unsigned char *validate_array;
+  FILE *fd;
+  int option;
+  seedi = 10;
 
-    while ((option = getopt(argc,argv,"i:s:b:")) != -1)
-      {
-	switch (option)
-	  {
-	  case 'i':
-	    input_name = optarg;break;
-	  case 's':
-	    input_size = atoi(optarg);break;
-	  case 'b':
-	    blockSize100k = atoi(optarg);break;
-	  }
-      }
-
-    compressed_size=input_size;
-
-    spec_fd[0].limit=input_size*MB;
-    spec_fd[1].limit=compressed_size*MB;
-    spec_fd[2].limit=input_size*MB;
-    spec_init();
-
-    debug(2, "Loading Input Data\n");
-    spec_load(0, input_name, input_size*MB);
-    debug1(3, "Input data %d bytes in length\n", spec_fd[0].len);
-
-    validate_array = (unsigned char *)malloc(input_size*MB/1024);
-    if (validate_array == NULL) {
-	printf ("main: Error mallocing memory!\n");
-	exit (1);
-    }
-    /* Save off one byte every ~1k for validation */
-    for (i = 0; i*VALIDATE_SKIP < input_size*MB; i++) {
-	validate_array[i] = spec_fd[0].buf[i*VALIDATE_SKIP];
-    }
-
-
-#ifdef DEBUG_DUMP
-    fd = open ("out.uncompressed", O_RDWR|O_CREAT, 0644);
-    write(fd, spec_fd[0].buf, spec_fd[0].len);
-    close(fd);
-#endif
-
-    spec_initbufs();
-
-    struct spec_fd_t *spec_fd_p = spec_fd;
-       int outerstream __attribute__ ((stream));
-       int outer_in;
-       level = 7;
-	debug1(2, "Compressing Input Data, level %d\n", level);
-
-	blockSize100k           = level;
-
-	gettimeofday (&tv1, NULL);
-
-	compressStream ( 0, 1, outerstream);
-	
-#pragma omp task input (outerstream >> outer_in) firstprivate (spec_fd_p, level)
-{    
-
-  gettimeofday (&tv2,NULL);
-  printf ("[bzip2-stream] with compress %dMB data with block size %d*100K, in %f seconds\n", input_size, blockSize100k, tdiff(&tv2,&tv1));
-
-  debug (1,"finishing task...\n");
-  debug1(3, "Compressed data %d bytes in length\n", spec_fd_p[1].len);
-
-#ifdef DEBUG_DUMP
+  while ((option = getopt (argc, argv, "i:s:g:")) != -1)
+    {
+      switch (option)
 	{
-	    char buf[256];
-	    sprintf(buf, "out.compress.%d", level);
-	    fd = open (buf, O_RDWR|O_CREAT, 0644);
-	    write(fd, spec_fd_p[1].buf, spec_fd_p[1].len);
-	    close(fd);
+	case 'i':
+	  input_name = optarg;
+	  break;
+	case 's':
+	  input_size = atoi(optarg);
+	  break;
+	case 'g':
+	  granularity = 1 << atoi (optarg);
+	  break;
+	case '?':
+	  fprintf(stderr, "Run %s -h for usage.\n", argv[0]);
+	  exit(1);
+	  break;
 	}
+    }
+
+  if (optind != argc)
+    {
+      fprintf(stderr, "Too many arguments. Run %s -h for usage.\n", argv[0]);
+      exit(1);
+    }
+
+  compressed_size = input_size;
+
+  spec_fd[0].limit=input_size*MB;
+  spec_fd[1].limit=compressed_size*MB;
+  spec_fd[2].limit=input_size*MB;
+  spec_init();
+
+  debug(2, "Loading Input Data\n");
+  spec_load(0, input_name, input_size*MB);
+  debug1(3, "Input data %d bytes in length\n", spec_fd[0].len);
+
+  validate_array = (unsigned char *)malloc(input_size*MB/1024);
+  if (validate_array == NULL) {
+    printf ("main: Error mallocing memory!\n");
+    exit (1);
+  }
+  /* Save off one byte every ~1k for validation */
+  for (i = 0; i*VALIDATE_SKIP < input_size*MB; i++) {
+    validate_array[i] = spec_fd[0].buf[i*VALIDATE_SKIP];
+  }
+
+
+#ifdef DEBUG_DUMP
+  fd = open ("out.uncompressed", O_RDWR|O_CREAT, 0644);
+  write(fd, spec_fd[0].buf, spec_fd[0].len);
+  close(fd);
 #endif
 
-	spec_reset(1);
-	spec_rewind(0);
-}
+  spec_initbufs();
 
-    return 0;
+  struct spec_fd_t *spec_fd_p = spec_fd;
+  int outerstream __attribute__ ((stream));
+  int outer_in;
+  debug1(2, "Compressing Input Data, level %d\n", level);
+
+  blockSize100k = level = 7;
+  gettimeofday (start, NULL);
+
+  compressStream ( 0, 1, outerstream);
+
+#pragma omp task input (outerstream >> outer_in) firstprivate (spec_fd_p, level)
+  {
+    debug (1,"finishing task...\n");
+    debug1(3, "Compressed data %d bytes in length\n", spec_fd_p[1].len);
+
+    /* Get execution time.  At this point, we know all compression tasks have completed.  */
+    gettimeofday (end, NULL);
+    printf ("%.5f\n", tdiff (end, start));
+
+
+#ifdef DEBUG_DUMP
+    {
+      char buf[256];
+      sprintf(buf, "out.compress.stream.%d", level);
+      fd = open (buf, O_RDWR|O_CREAT, 0644);
+      write(fd, spec_fd_p[1].buf, spec_fd_p[1].len);
+      close(fd);
+    }
+#endif
+
+    spec_reset(1);
+    spec_rewind(0);
+  }
+
+  return 0;
 }
 
 #if defined(SPEC_BZIP)

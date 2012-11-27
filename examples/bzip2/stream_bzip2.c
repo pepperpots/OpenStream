@@ -332,7 +332,7 @@ void dump_block (const char *, UChar *, Int32, Int32);
 #define False  0
 
 /* Prototypes for stuff in bzip2.c */
-void compressStream ( int stream, int zStream, int outterstream );
+void compressStream ( int stream, int zStream, int outterstream __attribute__((stream_ref)));
 /* Prototypes for stuff in spec.c */
 void spec_initbufs();
 void spec_compress(int in, int out, int level);
@@ -525,6 +525,8 @@ Int32  blockSize100k;
 #else
 int  blockSize100k;
 #endif
+
+int granularity = 1;
 
 #define SIZE100K 100000
 
@@ -2222,60 +2224,64 @@ void loadAndRLEsource ( FILE* src, Bool inUse[256], UChar *block, Int32* last_p)
 
 /*---------------------------------------------*/
 #ifdef SPEC_CPU2000
-void compressStream ( int stream, int zStream, int outerstream )
+void compressStream ( int stream, int zStream, int outerstream __attribute__((stream_ref)))
 #else
-void compressStream ( FILE *stream, FILE *zStream, int outerstream)
+void compressStream ( FILE *stream, FILE *zStream, int outerstream __attribute__((stream_ref)))
 #endif
 {
-   IntNative  retVal;
-   UInt32     blockCRC, combinedCRC;
-   Int32      blockNo;
-   Bool       blockRandomised;
+  IntNative  retVal;
+  UInt32     blockCRC, combinedCRC;
+  Int32      blockNo;
+  int i;
 
-   blockNo  = 0;
-   bytesIn  = 0;
-   bytesOut = 0;
-   nBlocksRandomised = 0;
+  blockNo  = 0;
+  bytesIn  = 0;
+  bytesOut = 0;
+  nBlocksRandomised = 0;
 
-   SET_BINARY_MODE(stream);
-   SET_BINARY_MODE(zStream);
+  SET_BINARY_MODE(stream);
+  SET_BINARY_MODE(zStream);
 
-   ERROR_IF_NOT_ZERO ( ferror(stream) );
-   ERROR_IF_NOT_ZERO ( ferror(zStream) );
+  ERROR_IF_NOT_ZERO ( ferror(stream) );
+  ERROR_IF_NOT_ZERO ( ferror(zStream) );
 
-   bsSetStream ( zStream, True );
+  bsSetStream ( zStream, True );
 
-   /*--- Write `magic' bytes B and Z,
-         then h indicating file-format == huffmanised,
-         followed by a digit indicating blockSize100k.
-   ---*/
-   bsPutUChar ( 'B' );
-   bsPutUChar ( 'Z' );
-   bsPutUChar ( 'h' );
-   bsPutUChar ( '0' + blockSize100k );
+  /*--- Write `magic' bytes B and Z,
+    then h indicating file-format == huffmanised,
+    followed by a digit indicating blockSize100k.
+    ---*/
+  bsPutUChar ( 'B' );
+  bsPutUChar ( 'Z' );
+  bsPutUChar ( 'h' );
+  bsPutUChar ( '0' + blockSize100k );
 
-   combinedCRC = 0;
+  combinedCRC = 0;
 
-   if (verbosity >= 2) fprintf ( stderr, "\n" );
+  if (verbosity >= 2) fprintf ( stderr, "\n" );
 
-   #define N_STREAM 100
-   int serializer  __attribute__ ((stream));
-   int streams1[N_STREAM] __attribute__ ((stream));
-   int streams2[N_STREAM] __attribute__ ((stream));
-   int streams3[N_STREAM] __attribute__ ((stream));
+  Bool blockRandomised __attribute__ ((stream));
+  int streams2 __attribute__ ((stream));
 
-   int x_in, x_out, y_in, y_out, z_in, z_out, outer_out, ser_in, ser_out;
+  UChar *block_stream __attribute__((stream));
+  Int32 last_stream __attribute__((stream));
+  Int32 *zptr_stream __attribute__((stream));
+  Int32 *origPtr_p_stream __attribute__((stream));
+  Bool *inUse_p_stream __attribute__((stream));
+  UInt32 blockCRC_stream __attribute__((stream));
 
-#pragma omp task output (serializer)
-   {
-     debug ("====>task 0 running\n");
-     serializer = 0;
-   }
+  UChar *block_stream_out __attribute__((stream));
+  Int32 last_stream_out __attribute__((stream));
+  Int32 *zptr_stream_out __attribute__((stream));
+  Int32 *origPtr_p_stream_out __attribute__((stream));
+  Bool *inUse_p_stream_out __attribute__((stream));
 
-   while (True) {
 
-      blockNo++;
+  /* Load data from file.  I/O should not be measured in execution
+     time.  */
 
+  while (True)
+    {
       globalCrc = 0xffffffffUL;      //initialiseCRC ();  //inline
 
       Int32 last;
@@ -2285,7 +2291,6 @@ void compressStream ( FILE *stream, FILE *zStream, int outerstream)
       Int32 mi;
       for (mi = 0; mi < n; mi++) zptr[mi]=0;
 
-      UInt16 *szptr   = (UInt16 *)zptr;
       block++;
 
       Bool *inUse_p = malloc (256*sizeof(Bool));
@@ -2297,6 +2302,8 @@ void compressStream ( FILE *stream, FILE *zStream, int outerstream)
       ERROR_IF_NOT_ZERO ( ferror(stream) );
       if (last == -1) break;
 
+      blockNo++;
+
       debug1 ("last:%d\n",last);
       dump_block ("block.point1.df", block, last, blockNo);
 
@@ -2306,121 +2313,183 @@ void compressStream ( FILE *stream, FILE *zStream, int outerstream)
       combinedCRC ^= blockCRC;
 
       if (verbosity >= 2)
-         fprintf ( stderr, "    block %d: crc = 0x%8x, combined CRC = 0x%8x, size = %d",
-                           blockNo, blockCRC, combinedCRC, last+1 );
+	fprintf ( stderr, "    block %d: crc = 0x%8x, combined CRC = 0x%8x, size = %d",
+		  blockNo, blockCRC, combinedCRC, last+1 );
 
-#pragma omp task output (streams1[blockNo] << x_out)	\
-  firstprivate (block, last, zptr, origPtr_p, inUse_p)
-{
-      debug1 ("====>task 1 running with block num:%d\n", blockNo);
-      /*-- sort the block and establish posn of original string --*/
+#pragma omp task firstprivate (block, last, zptr, origPtr_p, inUse_p, blockCRC)	\
+  output (block_stream, last_stream, zptr_stream, origPtr_p_stream, inUse_p_stream, blockCRC_stream)
+      {
+	block_stream = block;
+	last_stream = last;
+	zptr_stream = zptr;
+	origPtr_p_stream = origPtr_p;
+	inUse_p_stream = inUse_p;
+	blockCRC_stream = blockCRC;
+      }
+    }
 
-      debug1 ("before:origPtr:%d\n", *origPtr_p);
-      blockRandomised = doReversibleTransformation (block, last, zptr, origPtr_p, inUse_p);
-      debug1 ("after:origPtr:%d\n", *origPtr_p);
+  for (i = 0; i < blockNo; i += granularity)
+    {
+      /* Compute the number of blocks left.  We process by batches of
+	 at most GRANULARITY blocks per task (last task gets a
+	 possibly incomplete batch).  */
+      int grain = (granularity < (blockNo - i)) ? granularity : (blockNo - i);
 
-      dump_array ("point1.df", zptr, blockNo);
+      /* Define views based on the dynamic grain value.  */
+      UChar *block_stream_g_in[grain];
+      Int32 last_stream_g_in[grain];
+      Int32 *zptr_stream_g_in[grain];
+      Int32 *origPtr_p_stream_g_in[grain];
+      Bool *inUse_p_stream_g_in[grain];
 
-      x_out = blockRandomised;
-}
+      UChar *block_stream_g_out[grain];
+      Int32 last_stream_g_out[grain];
+      Int32 *zptr_stream_g_out[grain];
+      Int32 *origPtr_p_stream_g_out[grain];
+      Bool *inUse_p_stream_g_out[grain];
+      Bool blockRandomised_g_out[grain];
 
-      /*-- Finally, block's contents proper. --*/
-#pragma omp task input (serializer >> ser_in, streams1[blockNo] >> y_in) output (serializer << ser_out, streams2[blockNo] << y_out) \
-  firstprivate (block, last, szptr, origPtr_p, inUse_p)
-{ 
-      Int32 mtfFreq[MAX_ALPHA_SIZE];
-      Int32 nMTF;
-      Int32 nInUse;
+#pragma omp task input (block_stream >> block_stream_g_in[grain], last_stream >> last_stream_g_in[grain]) \
+  input (zptr_stream >> zptr_stream_g_in[grain], origPtr_p_stream >> origPtr_p_stream_g_in[grain]) \
+  input (inUse_p_stream >> inUse_p_stream_g_in[grain])			\
+  output (blockRandomised << blockRandomised_g_out[grain], block_stream_out << block_stream_g_out[grain]) \
+  output (last_stream_out << last_stream_g_out[grain], zptr_stream_out << zptr_stream_g_out[grain]) \
+  output (origPtr_p_stream_out << origPtr_p_stream_g_out[grain], inUse_p_stream_out << inUse_p_stream_g_out[grain])
+      {
+	int j;
 
-      ser_out = ser_in;
-      y_out = y_in;
+	for (j = 0; j < grain; ++j)
+	  {
+	    debug1 ("====>task 1 running with block num:%d\n", blockNo);
+	    /*-- sort the block and establish posn of original string --*/
 
-      debug1 ("====>task 2 running with block num:%d\n", blockNo);
-      debug ("generateMTFValues start\n");
+	    debug1 ("before:origPtr:%d\n", *origPtr_p_stream);
+	    blockRandomised_g_out[j] =
+	      doReversibleTransformation (block_stream_g_in[j], last_stream_g_in[j], zptr_stream_g_in[j],
+					  origPtr_p_stream_g_in[j], inUse_p_stream_g_in[j]);
+	    debug1 ("after:origPtr:%d\n", *origPtr_p_stream);
 
-      dump_array ("point2.df", zptr, blockNo);
+	    dump_array ("point1.df", zptr_stream, blockNo);
 
-      debug1 ("--->nInUse_p:0x%x\n", &nInUse);
-      generateMTFValues(block, last, szptr, inUse_p, &nInUse, mtfFreq, &nMTF);
-      debug ("generateMTFValues end\n");
+	    block_stream_g_out[j] = block_stream_g_in[j];
+	    last_stream_g_out[j] = last_stream_g_in[j];
+	    zptr_stream_g_out[j] = zptr_stream_g_in[j];
+	    origPtr_p_stream_g_out[j] = origPtr_p_stream_g_in[j];
+	    inUse_p_stream_g_out[j] = inUse_p_stream_g_in[j];
+	  }
+      }
+    }
 
-      /*--block header
-      --*/
-      bsPutUChar ( 0x31 ); bsPutUChar ( 0x41 );
-      bsPutUChar ( 0x59 ); bsPutUChar ( 0x26 );
-      bsPutUChar ( 0x53 ); bsPutUChar ( 0x59 );
+  UChar *block_stream_out_v[blockNo];
+  Int32 last_stream_out_v[blockNo];
+  Int32 *zptr_stream_out_v[blockNo];
+  Int32 *origPtr_p_stream_out_v[blockNo];
+  Bool *inUse_p_stream_out_v[blockNo];
+  Bool blockRandomised_v[blockNo];
+  UInt32 blockCRC_v[blockNo];
 
-      /*-- Now the block's CRC, so it is in a known place. --*/
-      bsPutUInt32 ( blockCRC );
+  /*-- Finally, block's contents proper. --*/
+#pragma omp task input (blockRandomised >> blockRandomised_v[blockNo], blockCRC_stream >> blockCRC_v[blockNo]) \
+  input (block_stream_out >> block_stream_out_v[blockNo], last_stream_out >> last_stream_out_v[blockNo]) \
+  input (zptr_stream_out >> zptr_stream_out_v[blockNo], origPtr_p_stream_out >> origPtr_p_stream_out_v[blockNo]) \
+  input (inUse_p_stream_out >> inUse_p_stream_out_v[blockNo]) \
+  output (outerstream) firstprivate (stream, zStream, combinedCRC)
+  {
+    for (i = 0; i < blockNo; ++i)
+      {
+	Int32 mtfFreq[MAX_ALPHA_SIZE];
+	Int32 nMTF;
+	Int32 nInUse;
 
-      /*-- Now a single bit indicating randomisation. --*/
-      if (y_in) {
-         bsW(1,1); nBlocksRandomised++;
-      } else
-         bsW(1,0);
+	debug1 ("====>task 2 running with block num:%d\n", blockNo);
+	debug ("generateMTFValues start\n");
 
-      bsPutIntVS ( 24, *origPtr_p );      
+	dump_array ("point2.df", zptr_stream_out_v[i], blockNo);
 
-      debug1 ("===>zptr:0x%x\n",zptr);
-      dump_array ("point3.df", zptr, blockNo);
-      
-      sendMTFValues(szptr, mtfFreq, &nMTF, nInUse, inUse_p, last);
-      debug ("moveToFrontCodeAndSend end\n");
+	debug1 ("--->nInUse_p:0x%x\n", &nInUse);
+	generateMTFValues (block_stream_out_v[i], last_stream_out_v[i],
+			   (UInt16 *) zptr_stream_out_v[i], inUse_p_stream_out_v[i],
+			   &nInUse, mtfFreq, &nMTF);
+	debug ("generateMTFValues end\n");
 
-      ERROR_IF_NOT_ZERO ( ferror(zStream) );
-   }
-}
+	/*--block header
+	  --*/
+	bsPutUChar ( 0x31 ); bsPutUChar ( 0x41 );
+	bsPutUChar ( 0x59 ); bsPutUChar ( 0x26 );
+	bsPutUChar ( 0x53 ); bsPutUChar ( 0x59 );
 
-#pragma omp task input (streams2[blockNo-1] >> z_in) output(outerstream << outer_out) firstprivate (stream, zStream)
-{
-  debug1 ("====>task3 running with blockNo: %d\n",blockNo);
-   if (verbosity >= 2 && nBlocksRandomised > 0)
+	/*-- Now the block's CRC, so it is in a known place. --*/
+	bsPutUInt32 ( blockCRC_v[i] );
+
+	/*-- Now a single bit indicating randomisation. --*/
+	if (blockRandomised_v[i])
+	  {
+	    bsW (1,1);
+	    nBlocksRandomised++;
+	  }
+	else
+	  bsW (1,0);
+
+	bsPutIntVS ( 24, *origPtr_p_stream_out_v[i] );
+
+	debug1 ("===>zptr:0x%x\n",zptr_stream_out_v[i]);
+	dump_array ("point3.df", zptr_stream_out_v[i], blockNo);
+
+	sendMTFValues ((UInt16 *) zptr_stream_out_v[i], mtfFreq, &nMTF, nInUse,
+		       inUse_p_stream_out_v[i], last_stream_out_v[i]);
+	debug ("moveToFrontCodeAndSend end\n");
+
+	ERROR_IF_NOT_ZERO ( ferror(zStream) );
+      }
+
+    debug1 ("====>task3 running with blockNo: %d\n",blockNo);
+    if (verbosity >= 2 && nBlocksRandomised > 0)
       fprintf ( stderr, "    %d block%s needed randomisation\n", 
-                        nBlocksRandomised,
-                        nBlocksRandomised == 1 ? "" : "s" );
+		nBlocksRandomised,
+		nBlocksRandomised == 1 ? "" : "s" );
 
-   /*--
+    /*--
       Now another magic 48-bit number, 0x177245385090, to
       indicate the end of the last block.  (sqrt(pi), if
       you want to know.  I did want to use e, but it contains
       too much repetition -- 27 18 28 18 28 46 -- for me
       to feel statistically comfortable.  Call me paranoid.)
-   --*/
+      --*/
 
-   bsPutUChar ( 0x17 ); bsPutUChar ( 0x72 );
-   bsPutUChar ( 0x45 ); bsPutUChar ( 0x38 );
-   bsPutUChar ( 0x50 ); bsPutUChar ( 0x90 );
+    bsPutUChar ( 0x17 ); bsPutUChar ( 0x72 );
+    bsPutUChar ( 0x45 ); bsPutUChar ( 0x38 );
+    bsPutUChar ( 0x50 ); bsPutUChar ( 0x90 );
 
-   bsPutUInt32 ( combinedCRC );
-   if (verbosity >= 2)
+    bsPutUInt32 ( combinedCRC );
+    if (verbosity >= 2)
       fprintf ( stderr, "    final combined CRC = 0x%x\n   ", combinedCRC );
 
-   /*-- Close the files in an utterly paranoid way. --*/
-   bsFinishedWithStream ();
+    /*-- Close the files in an utterly paranoid way. --*/
+    bsFinishedWithStream ();
 
-   ERROR_IF_NOT_ZERO ( ferror(zStream) );
-   retVal = fflush ( zStream );
-   ERROR_IF_EOF ( retVal );
-   retVal = fclose ( zStream );
-   ERROR_IF_EOF ( retVal );
+    ERROR_IF_NOT_ZERO ( ferror(zStream) );
+    retVal = fflush ( zStream );
+    ERROR_IF_EOF ( retVal );
+    retVal = fclose ( zStream );
+    ERROR_IF_EOF ( retVal );
 
-   ERROR_IF_NOT_ZERO ( ferror(stream) );
-   retVal = fclose ( stream );
-   ERROR_IF_EOF ( retVal );
+    ERROR_IF_NOT_ZERO ( ferror(stream) );
+    retVal = fclose ( stream );
+    ERROR_IF_EOF ( retVal );
 
-   if (bytesIn == 0) bytesIn = 1;
-   if (bytesOut == 0) bytesOut = 1;
+    if (bytesIn == 0) bytesIn = 1;
+    if (bytesOut == 0) bytesOut = 1;
 
-   if (verbosity >= 1)
+    if (verbosity >= 1)
       fprintf ( stderr, "%6.3f:1, %6.3f bits/byte, "
-                        "%5.2f%% saved, %d in, %d out.\n",
+		"%5.2f%% saved, %d in, %d out.\n",
                 (float)bytesIn / (float)bytesOut,
                 (8.0 * (float)bytesOut) / (float)bytesIn,
                 100.0 * (1.0 - (float)bytesOut / (float)bytesIn),
                 bytesIn,
                 bytesOut
-              );
- }
+		);
+  }
 }
 
 /*---------------------------------------------------*/

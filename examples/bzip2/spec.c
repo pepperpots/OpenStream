@@ -265,113 +265,117 @@ int spec_putc(unsigned char ch, int fd) {
 #define MB (1<<20)
 
 #ifdef SPEC_CPU2000
-int main (int argc, char *argv[]) {
-    int i, level;
-    int input_size=INPUT_SIZE, compressed_size;
-    char *input_name="input.combined";
-    unsigned char *validate_array;
-    FILE *fd;
-    int option;
-    seedi = 10;
+int main (int argc, char *argv[])
+{
+  struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
+  struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
+  int i, level;
+  int input_size=INPUT_SIZE, compressed_size;
+  char *input_name="input.combined";
+  unsigned char *validate_array;
+  FILE *fd;
+  int option;
+  seedi = 10;
 
-    while ((option = getopt(argc,argv,"i:s:b:")) != -1)
-      {
-	switch (option)
-	  {
-	  case 'i':
-	    input_name = optarg;break;
-	  case 's':
-	    input_size = atoi(optarg);break;
-	  case 'b':
-	    blockSize100k = atoi(optarg);break;
-	  }
-      }
+  while ((option = getopt(argc,argv,"i:s:")) != -1)
+    {
+      switch (option)
+	{
+	case 'i':
+	  input_name = optarg;break;
+	case 's':
+	  input_size = atoi(optarg);break;
+	}
+    }
 
-    compressed_size=input_size;
+  compressed_size=input_size;
 
-    spec_fd[0].limit=input_size*MB;
-    spec_fd[1].limit=compressed_size*MB;
-    spec_fd[2].limit=input_size*MB;
-    spec_init();
+  spec_fd[0].limit=input_size*MB;
+  spec_fd[1].limit=compressed_size*MB;
+  spec_fd[2].limit=input_size*MB;
+  spec_init();
+
+  //debug_time();
+  debug(2, "Loading Input Data\n");
+  spec_load(0, input_name, input_size*MB);
+  debug1(3, "Input data %d bytes in length\n", spec_fd[0].len);
+
+  validate_array = (unsigned char *)malloc(input_size*MB/1024);
+  if (validate_array == NULL) {
+    printf ("main: Error mallocing memory!\n");
+    exit (1);
+  }
+  /* Save off one byte every ~1k for validation */
+  for (i = 0; i*VALIDATE_SKIP < input_size*MB; i++) {
+    validate_array[i] = spec_fd[0].buf[i*VALIDATE_SKIP];
+  }
+
+
+#ifdef DEBUG_DUMP
+  fd = open ("out.uncompressed", O_RDWR|O_CREAT, 0644);
+  write(fd, spec_fd[0].buf, spec_fd[0].len);
+  close(fd);
+#endif
+
+  spec_initbufs();
+
+  for (level=7; level <= 7; level += 2) {
+
+    debug1(2, "Compressing Input Data, level %d\n", level);
+
+    gettimeofday (start, NULL);
+
+    spec_compress(0,1, level);
+
+    /* Get execution time.  At this point, we know all compression tasks have completed.  */
+    gettimeofday (end, NULL);
+    printf ("%.5f\n", tdiff (end, start));
+
+    debug1(3, "Compressed data %d bytes in length\n", spec_fd[1].len);
+
+#ifdef DEBUG_DUMP
+    {
+      char buf[256];
+      sprintf(buf, "out.compress.%d", level);
+      fd = open (buf, O_RDWR|O_CREAT, 0644);
+      write(fd, spec_fd[1].buf, spec_fd[1].len);
+      close(fd);
+    }
+#endif
+
+    spec_reset(0);
+    spec_rewind(1);
 
     //debug_time();
-    debug(2, "Loading Input Data\n");
-    spec_load(0, input_name, input_size*MB);
-    debug1(3, "Input data %d bytes in length\n", spec_fd[0].len);
+    debug(2, "Uncompressing Data\n");
+    spec_uncompress(1,0, level);
+    //debug_time();
+    debug1(3, "Uncompressed data %d bytes in length\n", spec_fd[0].len);
 
-    validate_array = (unsigned char *)malloc(input_size*MB/1024);
-    if (validate_array == NULL) {
-	printf ("main: Error mallocing memory!\n");
-	exit (1);
+#ifdef DEBUG_DUMP
+    {
+      char buf[256];
+      sprintf(buf, "out.uncompress.%d", level);
+      fd = open (buf, O_RDWR|O_CREAT, 0644);
+      write(fd, spec_fd[0].buf, spec_fd[0].len);
+      close(fd);
     }
-    /* Save off one byte every ~1k for validation */
+#endif
+
     for (i = 0; i*VALIDATE_SKIP < input_size*MB; i++) {
-	validate_array[i] = spec_fd[0].buf[i*VALIDATE_SKIP];
+      if (validate_array[i] != spec_fd[0].buf[i*VALIDATE_SKIP]) {
+	printf ("Tested %dMB buffer: Miscompared!!\n", input_size);
+	exit (1);
+      }
     }
+    //debug_time();
+    debug(3, "Uncompressed data compared correctly\n");
+    spec_reset(1);
+    spec_rewind(0);
+  }
+  debug1(3,"Tested %dMB buffer: OK!\n", input_size);
 
-
-#ifdef DEBUG_DUMP
-    fd = open ("out.uncompressed", O_RDWR|O_CREAT, 0644);
-    write(fd, spec_fd[0].buf, spec_fd[0].len);
-    close(fd);
-#endif
-
-    spec_initbufs();
-
-    for (level=7; level <= 7; level += 2) {
-      /* Timer start. */
-      gettimeofday(&tv1,NULL);
-	debug1(2, "Compressing Input Data, level %d\n", level);
-
-	spec_compress(0,1, level);
-
-      gettimeofday(&tv2,NULL);
-      printf ("[bzip2-serial] with compress %dMB data with block size %d*100K, in %f seconds\n", input_size, blockSize100k, tdiff(&tv2,&tv1));
-      debug1(3, "Compressed data %d bytes in length\n", spec_fd[1].len);
-
-#ifdef DEBUG_DUMP
-	{
-	    char buf[256];
-	    sprintf(buf, "out.compress.%d", level);
-	    fd = open (buf, O_RDWR|O_CREAT, 0644);
-	    write(fd, spec_fd[1].buf, spec_fd[1].len);
-	    close(fd);
-	}
-#endif
-
-	spec_reset(0);
-	spec_rewind(1);
-
-	//debug_time();
-	debug(2, "Uncompressing Data\n");
-	spec_uncompress(1,0, level);
-	//debug_time();
-	debug1(3, "Uncompressed data %d bytes in length\n", spec_fd[0].len);
-
-#ifdef DEBUG_DUMP
-	{
-	    char buf[256];
-	    sprintf(buf, "out.uncompress.%d", level);
-	    fd = open (buf, O_RDWR|O_CREAT, 0644);
-	    write(fd, spec_fd[0].buf, spec_fd[0].len);
-	    close(fd);
-	}
-#endif
-
-	for (i = 0; i*VALIDATE_SKIP < input_size*MB; i++) {
-	    if (validate_array[i] != spec_fd[0].buf[i*VALIDATE_SKIP]) {
-		printf ("Tested %dMB buffer: Miscompared!!\n", input_size);
-		exit (1);
-	    }
-	}
-	//debug_time();
-	debug(3, "Uncompressed data compared correctly\n");
-	spec_reset(1);
-	spec_rewind(0);
-    }
-    debug1(3,"Tested %dMB buffer: OK!\n", input_size);
-
-    return 0;
+  return 0;
 }
 
 #if defined(SPEC_BZIP)
