@@ -2363,13 +2363,13 @@ void compressStream ( FILE *stream, FILE *zStream, int outerstream __attribute__
 	    debug1 ("====>task 1 running with block num:%d\n", blockNo);
 	    /*-- sort the block and establish posn of original string --*/
 
-	    debug1 ("before:origPtr:%d\n", *origPtr_p_stream);
+	    debug1 ("before:origPtr:%d\n", *origPtr_p_stream_g_in[j]);
 	    blockRandomised_g_out[j] =
 	      doReversibleTransformation (block_stream_g_in[j], last_stream_g_in[j], zptr_stream_g_in[j],
 					  origPtr_p_stream_g_in[j], inUse_p_stream_g_in[j]);
-	    debug1 ("after:origPtr:%d\n", *origPtr_p_stream);
+	    debug1 ("after:origPtr:%d\n", *origPtr_p_stream_g_in[j]);
 
-	    dump_array ("point1.df", zptr_stream, blockNo);
+	    dump_array ("point1.df", zptr_stream_g_out[j], blockNo);
 
 	    block_stream_g_out[j] = block_stream_g_in[j];
 	    last_stream_g_out[j] = last_stream_g_in[j];
