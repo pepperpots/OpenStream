@@ -702,11 +702,32 @@ worker_thread (void)
 
       if (fp == NULL)
 	{
-	  // Cheap alternative to nrand48
-	  rands = rands * 1103515245 + 12345;
-	  steal_from = rands % num_workers;
-	  if (__builtin_expect (steal_from != cthread->worker_id, 1))
-	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	  /* If this thread is on the last core and no other thread
+	     shares an L2 cache with it, then skip*/
+	  if(!(cthread->worker_id != (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0)) {
+		  /* First, try to steal from somebody on the same L2 cache */
+		  steal_from = cthread->worker_id + 1 - (cthread->worker_id % 2);
+		  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	  }
+
+	  /* If this thread is on the last core and no other thread
+	     shares an L3 cache with it, then skip*/
+	  if(fp == NULL && !(cthread->worker_id != (unsigned int)num_workers-1 && cthread->worker_id % 8 == 0)) {
+		  /* Next: try to steal from somebody on the same L3 cache */
+		  do {
+			  rands = rands * 1103515245 + 12345;
+			  steal_from = (cthread->worker_id / 8)*8 + (rands % 8);
+		  } while(steal_from == cthread->worker_id || steal_from > (unsigned int)num_workers-1);
+		  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	  }
+
+	  if(fp == NULL) {
+		  // Cheap alternative to nrand48
+		  rands = rands * 1103515245 + 12345;
+		  steal_from = rands % num_workers;
+		  if (__builtin_expect (steal_from != cthread->worker_id, 1))
+			  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	  }
 
 #ifdef WQUEUE_PROFILE
 	  if(fp == NULL) {
