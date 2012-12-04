@@ -185,6 +185,15 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   int _papi_eset[16];
   long long counters[16][_papi_num_events];
 #endif
+
+#ifdef WQUEUE_PROFILE
+  unsigned long long steals_fails;
+  unsigned long long steals_owncached;
+  unsigned long long steals_ownqueue;
+  unsigned long long steals_samel2;
+  unsigned long long steals_samel3;
+  unsigned long long steals_remote;
+#endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
 /***************************************************************************/
@@ -315,6 +324,43 @@ wstream_df_taskwait ()
 /***************************************************************************/
 /***************************************************************************/
 
+
+#ifdef WQUEUE_PROFILE
+void
+init_wqueue_counters (void)
+{
+	current_thread->steals_owncached = 0;
+	current_thread->steals_ownqueue = 0;
+	current_thread->steals_samel2 = 0;
+	current_thread->steals_samel3 = 0;
+	current_thread->steals_remote = 0;
+	current_thread->steals_fails = 0;
+}
+
+void
+dump_wqueue_counters (wstream_df_thread_p th)
+{
+	printf ("Thread %d: steals_owncached = %lld\n",
+		th->worker_id,
+		th->steals_owncached);
+	printf ("Thread %d: steals_ownqueue = %lld\n",
+		th->worker_id,
+		th->steals_ownqueue);
+	printf ("Thread %d: steals_samel2 = %lld\n",
+		th->worker_id,
+		th->steals_samel2);
+	printf ("Thread %d: steals_samel3 = %lld\n",
+		th->worker_id,
+		th->steals_samel3);
+	printf ("Thread %d: steals_remote = %lld\n",
+		th->worker_id,
+		th->steals_remote);
+	printf ("Thread %d: steals_fails = %lld\n",
+		th->worker_id,
+		th->steals_fails);
+
+}
+#endif
 
 #ifdef _PAPI_PROFILE
 void
@@ -640,10 +686,19 @@ worker_thread (void)
       wstream_df_frame_p fp = cthread->own_next_cached_thread;
       __compiler_fence;
 
-      if (fp == NULL)
+      if (fp == NULL) {
 	fp = (wstream_df_frame_p)  (cdeque_take (&cthread->work_deque));
-      else
+#ifdef WQUEUE_PROFILE
+	if (fp != NULL) {
+	  cthread->steals_ownqueue++;
+	}
+#endif
+      } else {
 	cthread->own_next_cached_thread = NULL;
+#ifdef WQUEUE_PROFILE
+	cthread->steals_owncached++;
+#endif
+      }
 
       if (fp == NULL)
 	{
@@ -652,6 +707,19 @@ worker_thread (void)
 	  steal_from = rands % num_workers;
 	  if (__builtin_expect (steal_from != cthread->worker_id, 1))
 	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+
+#ifdef WQUEUE_PROFILE
+	  if(fp == NULL) {
+		  cthread->steals_fails++;
+	  } else {
+		  if(cthread->worker_id / 2 == steal_from / 2)
+			  cthread->steals_samel2++;
+		  else if(cthread->worker_id / 8 == steal_from / 8)
+			  cthread->steals_samel3++;
+		  else
+			  cthread->steals_remote++;
+	  }
+#endif
 	}
 
       if (fp != NULL)
@@ -695,6 +763,11 @@ wstream_df_worker_thread_fn (void *data)
       wstream_init_alloc();
     }
   current_thread = ((wstream_df_thread_p) data);
+
+#ifdef WQUEUE_PROFILE
+      init_wqueue_counters ();
+#endif
+
   worker_thread ();
   return NULL;
 }
@@ -981,6 +1054,15 @@ void post_main()
 	int worker_id = wstream_df_worker_threads[i].worker_id;
 	printf ("worker %d executed %d tasks\n", worker_id, executed_tasks);
       }
+  }
+#endif
+
+#ifdef WQUEUE_PROFILE
+  {
+	  int i;
+
+	  for (i = 0; i < num_workers; ++i)
+		  dump_wqueue_counters(&wstream_df_worker_threads[i]);
   }
 #endif
 }
