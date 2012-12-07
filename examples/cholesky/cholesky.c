@@ -5,6 +5,7 @@
 #include <math.h>
 #include <cblas.h>
 #include <getopt.h>
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
@@ -41,6 +42,9 @@ main(int argc, char *argv[])
   double * data;
   int nfo;
   unsigned char lower = 'L';
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:r:i:o:h")) != -1)
     {
@@ -127,7 +131,9 @@ main(int argc, char *argv[])
       memcpy (seq_data, data, size * sizeof (double));
 
       gettimeofday (&sstart[iter], NULL);
+      PROFILER_NOTIFY_RECORD(&sync);
       dpotrf_(&lower, &N, seq_data, &N, &nfo);
+      PROFILER_NOTIFY_PAUSE(&sync);
       gettimeofday (&send[iter], NULL);
 
       free (seq_data);
@@ -140,6 +146,8 @@ main(int argc, char *argv[])
     }
 
   printf ("%.5f \n", seq_time);
+
+  PROFILER_NOTIFY_FINISH(&sync);
 }
 
 

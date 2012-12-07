@@ -35,6 +35,7 @@ extern int errno;
 
 #include <sys/time.h>
 #include <unistd.h>
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {

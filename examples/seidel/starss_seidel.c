@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
@@ -29,6 +30,10 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
+
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -100,6 +105,8 @@ main (int argc, char **argv)
     /************ begin kernel *************/
     /***************************************/
     gettimeofday (&start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
+
     for (iter = 0; iter < numiters; iter++)
       for (i = padding + 1; i < N - 1 + padding; i += block_size)
 	for (j = padding + 1; j < N - 1 + padding; j += block_size)
@@ -119,6 +126,7 @@ main (int argc, char **argv)
 
 #pragma omp taskwait
 
+    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (&end, NULL);
     /***************************************/
     /************  end kernel  *************/
@@ -139,5 +147,7 @@ main (int argc, char **argv)
 	    fprintf (res_file, "\n");
 	  }
       }
+
+    PROFILER_NOTIFY_FINISH(&sync);
   }
 }

@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <getopt.h>
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 #define _CHECK_DIFFS 0
@@ -507,6 +508,10 @@ int main(int argc, char* argv[])
 
   int volatile res = 0;
 
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
+
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:")) != -1)
     {
       switch(option)
@@ -542,7 +547,9 @@ int main(int argc, char* argv[])
    D_print_mat("reference A", origA);
 
    gettimeofday (start, NULL);
+   PROFILER_NOTIFY_RECORD(&sync);
    LU (A);
+   PROFILER_NOTIFY_PAUSE(&sync);
 #pragma omp taskwait
    gettimeofday (end, NULL);
    printf ("%.5f\n", tdiff (end, start));
@@ -561,5 +568,7 @@ int main(int argc, char* argv[])
        D_print_mat("LxU", A);
        compare_mat (origA, A);
      }
+
+   PROFILER_NOTIFY_FINISH(&sync);
 }
 

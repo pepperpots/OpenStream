@@ -20,6 +20,8 @@
 
 #include <sys/time.h>
 #include <unistd.h>
+#include "../common/sync.h"
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {
@@ -431,6 +433,10 @@ main(int argc, char* argv[])
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
+
   while ((option = getopt(argc, argv, "i:o:t:f:n:g:h")) != -1)
     {
       switch(option)
@@ -517,6 +523,7 @@ main(int argc, char* argv[])
     int i, j, k;
 
     gettimeofday (start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
 
     for (j = 0; j < niter; ++j)
       {
@@ -554,6 +561,7 @@ main(int argc, char* argv[])
       }
   }
 
+  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (end, NULL);
 
   printf ("%.5f\n", tdiff (end, start));
@@ -579,6 +587,7 @@ main(int argc, char* argv[])
   close (input_file);
   close (output_file);
   close (text_file);
+  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

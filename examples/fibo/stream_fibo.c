@@ -9,6 +9,8 @@
 
 #include <sys/time.h>
 #include <unistd.h>
+#include "../common/sync.h"
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {
@@ -53,6 +55,7 @@ stream_fibo (int n, int cutoff, int sout __attribute__ ((stream)))
     }
 }
 
+struct profiler_sync sync;
 
 int
 main (int argc, char **argv)
@@ -65,6 +68,8 @@ main (int argc, char **argv)
   int result;
 
   int stream __attribute__ ((stream));
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:c:h")) != -1)
     {
@@ -100,15 +105,19 @@ main (int argc, char **argv)
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
   gettimeofday (start, NULL);
+  PROFILER_NOTIFY_RECORD(&sync);
   stream_fibo (n, cutoff, stream);
 
 #pragma omp task input (stream >> result) firstprivate (start, end)
   {
+    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (end, NULL);
 
     printf ("%.5f\n", tdiff (end, start));
 
     if (_WITH_OUTPUT)
       printf ("[stream] Fibo (%d, %d) = %d\n", n, cutoff, result);
+
+    PROFILER_NOTIFY_FINISH(&sync);
   }
 }

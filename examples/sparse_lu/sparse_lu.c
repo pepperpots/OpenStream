@@ -12,6 +12,8 @@
 
 #include <sys/time.h>
 #include <unistd.h>
+#include "../common/sync.h"
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {
@@ -390,6 +392,10 @@ main (int argc, char* argv[])
 
   int volatile res = 0;
 
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
+
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
       switch(option)
@@ -454,7 +460,9 @@ main (int argc, char* argv[])
   generate_block_sparse_matrix (num_blocks, block_size, data);
 
   gettimeofday (start, NULL);
+  PROFILER_NOTIFY_RECORD(&sync);
   sequential_factorize (num_blocks, block_size, data);
+  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (end, NULL);
 
   double seq_time = tdiff (end, start);
@@ -477,5 +485,7 @@ main (int argc, char* argv[])
       sparse_matmult (num_blocks, block_size, l_mat, u_mat, data);
       matrix_diff (num_blocks, block_size, bckp_data, data);
     }
+
+  PROFILER_NOTIFY_FINISH(&sync);
 }
 
