@@ -28,6 +28,7 @@
 #include <math.h>
 #include <errno.h>
 #include <getopt.h>
+#include <string.h>
 
 extern int errno;
 
@@ -195,8 +196,6 @@ compstripe (register double **new, register double **old, int lb, int ub)
 void
 divide (int lb, int ub, double **new, double **old, int mode, int timestep)
 {
-  int r;
-
 #pragma omp task
   {
     if (ub - lb > leafmaxcol)
@@ -327,8 +326,7 @@ read_heatparams (char *filefn)
 int
 main (int argc, char *argv[])
 {
-  int ret, benchmark, help;
-  char filename[100];
+  int ret, benchmark;
 
   nx = 512;
   ny = 512;
@@ -340,7 +338,6 @@ main (int argc, char *argv[])
   tu = 0.0;
   to = 0.0000001;
   leafmaxcol = 10;
-  filename[0]=0;
 
   if (argc != 2 || strcmp(argv[1], "-h") == 0) {
     fprintf (stderr, "Usage: %s <benchID>\n\n"
@@ -363,7 +360,6 @@ main (int argc, char *argv[])
       tu = 0.0;
       to = 0.0000001;
       leafmaxcol = 10;
-      filename[0]=0;
       break;
     case 2:      /* standard benchmark options*/
       nx = 4096;
@@ -376,7 +372,6 @@ main (int argc, char *argv[])
       tu = 0.0;
       to = 0.0000001;
       leafmaxcol = 10;
-      filename[0]=0;
       break;
     case 3:      /* long benchmark options -- a lot of work*/
       nx = 4096;
@@ -389,12 +384,9 @@ main (int argc, char *argv[])
       tu = 0.0;
       to = 0.0000001;
       leafmaxcol = 1;
-      filename[0]=0;
       break;
     }
   }
-
-  //if (filename[0]) read_heatparams(filename);
 
   dx = (xo - xu) / (nx - 1);
   dy = (yo - yu) / (ny - 1);
