@@ -9,7 +9,7 @@
 #include <string.h>
 
 #define _WITH_SPEEDUPS 0
-#define _CHECK_STREAM 1
+#define _CHECK_STREAM 0
 #define _CHECK_SEQUENTIAL 0
 #define _WITH_OUTPUT 0
 

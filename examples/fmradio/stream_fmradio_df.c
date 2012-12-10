@@ -16,7 +16,7 @@
 
 #include <getopt.h>
 
-#define _WITH_OUTPUT 1
+#define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>
@@ -31,8 +31,6 @@ tdiff (struct timeval *end, struct timeval *start)
 #define KSMPS 1024
 #define FM_MAX       5
 #define FM_LIMIT     (65536/2)-1
-
-
 
 
 /* *********************************************** complex operations   */
@@ -113,19 +111,8 @@ stream_to_file(stream_t* input, FILE* file)
 
 /* *********************************************** fm_quad_demod        */
 
-typedef struct {
-  float history[2];
-} fm_quad_demod_filter;
-
 void
-fm_quad_demod_init(fm_quad_demod_filter* filter)
-{
-  filter->history[0]= 0;
-  filter->history[1]= 0;
-}
-
-void
-fm_quad_demod(fm_quad_demod_filter* filter, float i1, float i2, float* result)
+fm_quad_demod(float *in_raw, float* result)
 {
   complex x_N;
   complex x_N_1;
@@ -140,16 +127,13 @@ fm_quad_demod(fm_quad_demod_filter* filter, float i1, float i2, float* result)
    */
 
   /* read two complex data */
-  x_N.real = i2; x_N.imag = i1;
-  x_N_1.real = filter->history[1]; x_N_1.imag = filter->history[0];
+  x_N.real = in_raw[3]; x_N.imag = in_raw[2];
+  x_N_1.real = in_raw[1]; x_N_1.imag = in_raw[0];
 
   /* compute */
   complex_conj(& x_N_1, & x_N_1_conj);
   complex_mul(& x_N_1_conj, & x_N, & y_N);
   demod = d_gain * complex_arg(& y_N);
-
-  filter->history[0]= i1;
-  filter->history[1]= i2;
 
   *result= demod;
 }
@@ -324,30 +308,128 @@ multiply_square (float i1, float i2, float* result)
   *result = GAIN_LMR * i1 * i2 * i2;
 }
 
+
+
+void
+stream_ntaps_filter_ffd (ntaps_filter_conf* conf, int size, int decimation,
+			 float in_stream __attribute__((stream_ref)),
+			 float out_stream __attribute__((stream_ref)),
+			 int serializer __attribute__((stream_ref)))
+{
+  float temp_stream __attribute__((stream));
+  int temp_view_size = conf->taps + size;
+  float temp_view[temp_view_size];
+  int out_size = size/decimation;
+  float in_view[size], out_view[out_size];
+  int sin, sout, i, j;
+
+  /* Get a data chunk, merge with history, then send full
+     data input to work task.  */
+#pragma omp task peek (in_stream >> in_view[size]) output (temp_stream << temp_view[temp_view_size]) firstprivate (conf) input (serializer >> sin) output (serializer << sout)
+  {
+    /* Copy current history plus new data to output
+       window.  Split the copy according to wrap-around in
+       history buffer.  */
+    memcpy (&temp_view[0], &conf->history[conf->next], (conf->taps - conf->next) * sizeof (float));
+    memcpy (&temp_view[conf->taps - conf->next], &conf->history[0], conf->next * sizeof (float));
+    memcpy (&temp_view[conf->taps], &in_view[0], size * sizeof (float));
+    /* Update the history.  */
+    for (i = 0; i < size; ++i)
+      {
+	conf->history[conf->next] = in_view[i];
+	conf->next++;
+	if (conf->next == conf->taps) conf->next = 0;
+      }
+  }
+
+#pragma omp task input (temp_stream >> temp_view[temp_view_size]) output (out_stream << out_view[out_size]) firstprivate (conf)
+  for (i = 0; i < out_size; ++i)
+    {
+      float sum = 0.0;
+
+      for (j = 0; j < conf->taps; ++j)
+	sum += temp_view[i*decimation + j + decimation] * conf->coeff[conf->taps - j - 1];
+
+      out_view[i] = sum;
+    }
+}
+
+void
+stream_source_raw_data (float *data_in, int in_samples, int grain8, int grain16, int iter, int pos,
+			float in_raw __attribute__((stream_ref)),
+			int serializer __attribute__((stream_ref)))
+{
+  float in_raw_v[grain16+2];
+  int sin, sout, i;
+
+  /* Special cases for the initialization of the data
+     stream: the sequential version will use two 0.0 input
+     elements in the very first data samples, then reusing
+     the previous two.  We reproduce this feature here.  */
+
+
+  /* 0.0 case.  */
+  if (iter == 0 && pos == 0)
+#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2]) input (serializer >> sin) output (serializer << sout)
+    {
+      /* Peeled first iteration.  */
+      in_raw_v[0] = 0.0;
+      in_raw_v[1] = 0.0;
+
+      /* Shifted input from data array.  */
+      for (i = 1; i <= grain8; i++)
+	{
+	  in_raw_v[2*i] = data_in[2*i - 2];
+	  in_raw_v[2*i + 1] = data_in[2*i - 1];
+	}
+    }
+  /* wrap-around history case.  */
+  else if (iter != 0 && pos == 0)
+#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2]) input (serializer >> sin) output (serializer << sout)
+    {
+      /* Peeled first iteration.  */
+      in_raw_v[0] = data_in[in_samples - 2];
+      in_raw_v[1] = data_in[in_samples - 1];
+
+      /* Shifted input from data array.  */
+      for (i = 1; i <= grain8; i++)
+	{
+	  in_raw_v[2*i] = data_in[2*i - 2];
+	  in_raw_v[2*i + 1] = data_in[2*i - 1];
+	}
+    }
+  /* Default case.  */
+  else /* Importantly: pos != 0  */
+#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2]) input (serializer >> sin) output (serializer << sout)
+    for (i = 0; i <= grain8; i++)
+      {
+	in_raw_v[2*i] = data_in[pos + 2*i - 2];
+	in_raw_v[2*i + 1] = data_in[pos + 2*i - 1];
+      }
+}
+
 /* *********************************************** main                 */
 
 int
 main(int argc, char* argv[])
 {
-  int input_file = 0;
-  int output_file = 0;
-  int text_file = 0;
+  FILE *input_file = NULL;
+  FILE *output_file = NULL;
+  FILE *text_file = NULL;
 
-  int in_samples = 800000;
-  int out_samples = 100000;
+  int in_samples = 1 << 19;
+  int out_samples = 1 << 17;
 
   ntaps_filter_conf lp_2_conf;
   ntaps_filter_conf lp_11_conf, lp_12_conf;
   ntaps_filter_conf lp_21_conf, lp_22_conf;
   ntaps_filter_conf lp_3_conf;
-  fm_quad_demod_filter fm_qd_conf;
   ntaps_filter_conf *lp_2_conf_p = &lp_2_conf;
   ntaps_filter_conf *lp_11_conf_p = &lp_11_conf;
   ntaps_filter_conf *lp_12_conf_p = &lp_12_conf;
   ntaps_filter_conf *lp_21_conf_p = &lp_21_conf;
   ntaps_filter_conf *lp_22_conf_p = &lp_22_conf;
   ntaps_filter_conf *lp_3_conf_p = &lp_3_conf;
-  fm_quad_demod_filter *fm_qd_conf_p = &fm_qd_conf;
 
   int final_audio_frequency = 64*KSMPS;
   float input_rate = 512 * KSMPS;
@@ -365,13 +447,13 @@ main(int argc, char* argv[])
       switch(option)
 	{
 	case 'i':
-	  input_file = open (optarg, O_RDONLY);
+	  input_file = fopen (optarg, "r");
 	  break;
 	case 'o':
-	  output_file = open (optarg, O_WRONLY);
+	  output_file = fopen (optarg, "w");
 	  break;
 	case 't':
-	  text_file = open (optarg, O_WRONLY);
+	  text_file = fopen (optarg, "w");
 	  break;
 	case 'f':
 	  final_audio_frequency = atoi(optarg);
@@ -410,19 +492,19 @@ main(int argc, char* argv[])
   int grain8 = 8 * grain;
   int grain16 = 16 * grain;
 
-  if (input_file == 0)
-    input_file = open ("input.dat", O_RDONLY);
-  if (output_file == 0)
+  if (input_file == NULL)
+    input_file = fopen ("input.dat", "r");
+  if (output_file == NULL)
     {
       char output_filename[4096];
       sprintf (output_filename, "%s.raw", argv[0]);
-      output_file = open (output_filename, O_WRONLY);
+      output_file = fopen (output_filename, "w");
     }
-  if (text_file == 0)
+  if (text_file == NULL)
     {
       char text_filename[4096];
       sprintf (text_filename, "%s.txt", argv[0]);
-      text_file = open (text_filename, O_WRONLY);
+      text_file = fopen (text_filename, "w");
     }
 
   inout_ratio = ((int) input_rate)/final_audio_frequency;
@@ -432,12 +514,11 @@ main(int argc, char* argv[])
   ntaps_filter_ffd_init (lp_21_conf_p, 21000, 2000, 1,   1,           input_rate, WIN_HANNING);
   ntaps_filter_ffd_init (lp_22_conf_p, 17000, 2000, 1,   1,           input_rate, WIN_HANNING);
   ntaps_filter_ffd_init (lp_3_conf_p,  15000, 4000, 1.0, inout_ratio, input_rate, WIN_HANNING);
-  fm_quad_demod_init (fm_qd_conf_p);
 
   float *data_in = malloc (in_samples * sizeof (float));
   float *data_out_raw = malloc (out_samples * sizeof (short));
   float *data_out_flt = malloc (out_samples * sizeof (float));
-  read (input_file, data_in, in_samples * sizeof (float));
+  fread (data_in, sizeof (float), in_samples, input_file);
 
 
   {
@@ -453,53 +534,39 @@ main(int argc, char* argv[])
     float output1 __attribute__((stream)), output1_v[grain];
     float output2 __attribute__((stream)), output2_v[grain];
 
-    float fm_qd_buffer __attribute__((stream)), fm_qd_buffer_v[grain8], fm_qd_buffer_sv;
-    float fm_qd_buffer_dup __attribute__((stream)), fm_qd_buffer_dup_v[grain8];
-    float ffd_buffer __attribute__((stream)), ffd_buffer_v[grain8];
-    int serializer[12] __attribute__((stream));
+    float in_raw __attribute__((stream)), in_raw_v[grain16+2];
 
-    float view[8];
+    float fm_qd_buffer __attribute__((stream)), fm_qd_buffer_v[grain8];
+    float ffd_buffer __attribute__((stream)), ffd_buffer_v[grain8];
+
+    int serializer[7] __attribute__((stream));
+
     int sin, sout;
 
     int i, j, k;
 
     gettimeofday (start, NULL);
 
-    for (int i = 0; i < 12; ++i)
-      {
+    for (i = 0; i < 7; ++i)
 #pragma omp task output (serializer[i] << sout)
-	sout = 0;
-      }
+      sout = 0;
+
 
     for (j = 0; j < niter; ++j)
       {
 	for (k = 0; k < in_samples; k += grain16)
 	  {
-	    for (i = 0; i < grain8; i++)
-	      {
-		float v1 = data_in[k + 2*i];
-		float v2 = data_in[k + 2*i + 1];
+	    stream_source_raw_data (data_in, in_samples, grain8, grain16, j, k, in_raw, serializer[0]);
 
-#pragma omp task firstprivate (v1, v2, fm_qd_conf_p) output (fm_qd_buffer << fm_qd_buffer_sv/*, fm_qd_buffer_dup*/) input (serializer[0] >> sin) output (serializer[0] << sout)
-		{
-		  fm_quad_demod (fm_qd_conf_p, v1, v2, &fm_qd_buffer_sv);
-		  //fm_qd_buffer_dup = fm_qd_buffer;
-		}
-	      }
+#pragma omp task input (in_raw >> in_raw_v[grain16+2]) output (fm_qd_buffer << fm_qd_buffer_v[grain8])
+	    for (i = 0; i < grain8; i++)
+	      fm_quad_demod (&in_raw_v[2*i], &fm_qd_buffer_v[i]);
 
-#pragma omp task peek (fm_qd_buffer >> fm_qd_buffer_v[grain8]) output (band_11 << band_11_v[grain8]) firstprivate (lp_11_conf_p) input (serializer[1] >> sin) output (serializer[1] << sout)
-	    for (i = 0; i < grain8; i++)
-	      ntaps_filter_ffd (lp_11_conf_p, 1, &fm_qd_buffer_v[i], &band_11_v[i]);
-#pragma omp task peek (fm_qd_buffer >> fm_qd_buffer_v[grain8]) output (band_12 << band_12_v[grain8]) firstprivate (lp_12_conf_p) input (serializer[2] >> sin) output (serializer[2] << sout)
-	    for (i = 0; i < grain8; i++)
-	      ntaps_filter_ffd (lp_12_conf_p, 1, &fm_qd_buffer_v[i], &band_12_v[i]);
-#pragma omp task peek (fm_qd_buffer >> fm_qd_buffer_v[grain8]) output (band_21 << band_21_v[grain8]) firstprivate (lp_21_conf_p) input (serializer[4] >> sin) output (serializer[4] << sout)
-	    for (i = 0; i < grain8; i++)
-	      ntaps_filter_ffd (lp_21_conf_p, 1, &fm_qd_buffer_v[i], &band_21_v[i]);
-#pragma omp task peek (fm_qd_buffer >> fm_qd_buffer_v[grain8]) output (band_22 << band_22_v[grain8]) firstprivate (lp_22_conf_p) input (serializer[5] >> sin) output (serializer[5] << sout)
-	    for (i = 0; i < grain8; i++)
-	      ntaps_filter_ffd (lp_22_conf_p, 1, &fm_qd_buffer_v[i], &band_22_v[i]);
-	    //#pragma omp tick (fm_qd_buffer >> grain8)
+
+	    stream_ntaps_filter_ffd (lp_11_conf_p, grain8, 1, fm_qd_buffer, band_11, serializer[1]);
+	    stream_ntaps_filter_ffd (lp_12_conf_p, grain8, 1, fm_qd_buffer, band_12, serializer[2]);
+	    stream_ntaps_filter_ffd (lp_21_conf_p, grain8, 1, fm_qd_buffer, band_21, serializer[3]);
+	    stream_ntaps_filter_ffd (lp_22_conf_p, grain8, 1, fm_qd_buffer, band_22, serializer[4]);
 
 #pragma omp task input (band_11 >> band_11_v[grain8], band_12 >> band_12_v[grain8]) output (resume_1 << resume_1_v[grain8])
 	    for (i = 0; i < grain8; i++)
@@ -512,18 +579,17 @@ main(int argc, char* argv[])
 	      multiply_square (resume_1_v[i], resume_2_v[i], &ffd_buffer_v[i]);
 
 
+	    stream_ntaps_filter_ffd (lp_2_conf_p, grain8, 8, fm_qd_buffer, band_2, serializer[5]);
+#pragma omp tick (fm_qd_buffer >> grain8)
+	    stream_ntaps_filter_ffd (lp_3_conf_p, grain8, 8, ffd_buffer, band_3, serializer[6]);
+#pragma omp tick (ffd_buffer >> grain8)
 
-#pragma omp task input (fm_qd_buffer >> fm_qd_buffer_dup_v[grain8]) output (band_2 << band_2_v[grain]) firstprivate (lp_2_conf_p) input (serializer[8] >> sin) output (serializer[8] << sout)
-	    for (i = 0; i < grain; i++)
-	      ntaps_filter_ffd (lp_2_conf_p, 8, &fm_qd_buffer_dup_v[8*i], &band_2_v[i]);
-#pragma omp task input (ffd_buffer >> ffd_buffer_v[grain8]) output (band_3 << band_3_v[grain]) firstprivate (lp_3_conf_p) input (serializer[9] >> sin) output (serializer[9] << sout)
-	    for (i = 0; i < grain; i++)
-	      ntaps_filter_ffd (lp_3_conf_p, 8, &ffd_buffer_v[8*i], &band_3_v[i]);
+
 #pragma omp task input (band_2 >> band_2_v[grain], band_3 >> band_3_v[grain]) output (output1 << output1_v[grain], output2 << output2_v[grain])
 	    for (i = 0; i < grain; i++)
 	      stereo_sum (band_2_v[i], band_3_v[i], &output1_v[i], &output2_v[i]);
 
-#pragma omp task input (output1 >> output1_v[grain], output2 >> output2_v[grain]) firstprivate (output_file, text_file) input (serializer[11] >> sin) output (serializer[11] << sout)
+#pragma omp task input (output1 >> output1_v[grain], output2 >> output2_v[grain])
 	    for (i = 0; i < grain; i++)
 	      {
 		short a, b;
@@ -537,39 +603,28 @@ main(int argc, char* argv[])
 	  }
       }
 
-    for (i = 0; i < 12; ++i)
+    for (i = 0; i < 7; ++i)
       {
 #pragma omp tick (serializer[i])
       }
 
 #pragma omp taskwait
-
     gettimeofday (end, NULL);
 
     printf ("%.5f\n", tdiff (end, start));
   }
 
-  int written = 0;
-  while (written < out_samples * sizeof (short))
-    written += write (output_file, data_out_raw + written, out_samples * sizeof (short) - written);
-
 #if _WITH_OUTPUT
-  /* Over-allocate space for output text, with 32 chars per sample.  */
-  char *text_output = malloc (out_samples * 32 * sizeof (char));
-  int text_out_chars = 0;
   int i;
 
+  fwrite (data_out_raw, sizeof (short), out_samples, output_file);
   for (i = 0; i < out_samples; i += 2)
-    text_out_chars += sprintf (text_output + text_out_chars, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
-
-  written = 0;
-  while (written < text_out_chars)
-    written += write (text_file, text_output + written, text_out_chars - written);
+    fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
 
-  close (input_file);
-  close (output_file);
-  close (text_file);
+  fclose (input_file);
+  fclose (output_file);
+  fclose (text_file);
 
   return 0;
 }

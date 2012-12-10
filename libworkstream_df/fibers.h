@@ -151,10 +151,13 @@ ws_prepcontext (ws_ctx_p ctx, void *sp, size_t ssz, void *fn)
 {
   if (getcontext (ctx) == -1)
     wstream_df_fatal ("Cannot get context.");
-  ctx->uc_stack.ss_sp = sp;
-  ctx->uc_stack.ss_size = ssz;
-  ctx->uc_link = NULL;
-  makecontext (ctx, fn, 0);
+  if (sp != NULL && fn != NULL)
+    {
+      ctx->uc_stack.ss_sp = sp;
+      ctx->uc_stack.ss_size = ssz;
+      ctx->uc_link = NULL;
+      makecontext (ctx, fn, 0);
+    }
 }
 
 static inline int

@@ -57,18 +57,22 @@ main (int argc, char **argv)
   int cutoff = 10;
   int result;
 
-  while ((option = getopt(argc, argv, "n:h")) != -1)
+  while ((option = getopt(argc, argv, "n:c:h")) != -1)
     {
       switch(option)
 	{
 	case 'n':
 	  n = atoi(optarg);
 	  break;
+	case 'c':
+	  cutoff = atoi(optarg);
+	  break;
 	case 'h':
 	  printf("Usage: %s [option]...\n\n"
 		 "Options:\n"
-		 "  -n <number>                  Calculate fibonacci number <number>, default is %d\n",
-		 argv[0], n);
+		 "  -n <number>                  Calculate fibonacci number <number>, default is %d\n"
+		 "  -c <cutoff>                  Start generating tasks at n = <cutoff>, default is %d\n",
+		 argv[0], n, cutoff);
 	  exit(0);
 	  break;
 	case '?':
