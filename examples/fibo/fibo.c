@@ -30,7 +30,6 @@ int
 main (int argc, char **argv)
 {
   int option;
-  int i, j, iter;
   int n = 15;
 
   int result;
