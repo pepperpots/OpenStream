@@ -414,7 +414,6 @@ main(int argc, char* argv[])
   int grain8 = 8;
   int grain16 = 16;
   int option;
-  float *read_buffer;
 
   float band_2;
   float band_3;
@@ -426,7 +425,6 @@ main(int argc, char* argv[])
   float resume_2;
 
   float output1, output2;
-  short output_short[2];
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
