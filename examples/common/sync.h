@@ -61,10 +61,11 @@ int detach_sync_shm(struct profiler_sync* sync);
 
 #define PROFILER_NOTIFY_FINISH(sync)					\
 	do {								\
-		if(detach_sync_shm(sync))				\
+		if(detach_sync_shm(sync)) {				\
 			fputs("Could not detach shared memory segment"	\
 			      " for profiler notification\n", stderr);	\
-		exit(1);						\
+			exit(1);					\
+		}							\
 	} while(0)
 
 #define PROFILER_STATUS(sync, st)			\
