@@ -39,8 +39,6 @@ main (int argc, char **argv)
 
   FILE *res_file = NULL;
 
-  int volatile res = 0;
-
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
       switch(option)
