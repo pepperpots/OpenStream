@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200112L
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -10,6 +12,11 @@
 
 #include <sys/time.h>
 #include <unistd.h>
+
+/* Missing declarations from liblapack */
+int dlarnv_(long *idist, long *iseed, int *n, double *x);
+void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {
@@ -27,13 +34,12 @@ int
 main(int argc, char *argv[])
 {
   int option;
-  int i, j, iter;
+  int i, iter;
   int size;
 
   int N = 4096;
 
   int numiters = 10;
-  int block_size = 256;
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
