@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -12,6 +13,11 @@
 
 #include <sys/time.h>
 #include <unistd.h>
+
+/* Missing declarations from liblapack */
+int dlarnv_(long *idist, long *iseed, int *n, double *x);
+void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {
@@ -207,7 +213,7 @@ static void
 blockify (int block_size, int blocks, int N,
 	  double *data, double *blocked_data[blocks][blocks])
 {
-  int ii, i, jj, j;
+  int ii, i, jj;
 
   for (ii = 0; ii < blocks; ++ii)
     for (jj = 0; jj < blocks; ++jj)
@@ -221,7 +227,7 @@ int
 main(int argc, char *argv[])
 {
   int option;
-  int i, j, iter;
+  int i, iter;
   int N = 4096;
 
   int numiters = 10;
@@ -390,8 +396,6 @@ main(int argc, char *argv[])
       }
     }
 
-  unsigned char lower = 'L';
-  int nfo;
   double stream_time = 0, seq_time = 0;
 
   for (iter = 0; iter < numiters; ++iter)
