@@ -33,6 +33,7 @@ static const char *ident __attribute__((__unused__))
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 #define REAL float
 
