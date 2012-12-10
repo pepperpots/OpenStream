@@ -10,6 +10,10 @@
 
 #include <sys/time.h>
 #include <unistd.h>
+
+/* Missing declarations from liblapack */
+int clarnv_(long *idist, long *iseed, int *n, complex *x);
+
 double
 tdiff (struct timeval *end, struct timeval *start)
 {
