@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -379,18 +380,13 @@ main (int argc, char* argv[])
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
   int option;
-  int i, j, iter;
   int N = 64;
 
-  int numiters = 10;
   int block_size = 8;
 
   FILE *res_file = NULL;
-  FILE *in_file = NULL;
 
-  int volatile res = 0;
-
-  while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
+  while ((option = getopt(argc, argv, "n:s:b:o:h")) != -1)
     {
       switch(option)
 	{
@@ -403,12 +399,6 @@ main (int argc, char* argv[])
 	case 'b':
 	  block_size = 1 << atoi (optarg);
 	  break;
-	case 'r':
-	  numiters = atoi (optarg);
-	  break;
-	case 'i':
-	  in_file = fopen(optarg, "r");
-	  break;
 	case 'o':
 	  res_file = fopen(optarg, "w");
 	  break;
@@ -418,8 +408,6 @@ main (int argc, char* argv[])
 		  "  -n <size>                    Number of colums of the square matrix, default is %d\n"
 		  "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		  "  -b <block size power>        Set the block size 1 << <block size power>\n"
-		  "  -r <number of iterations>    Number of repetitions of the execution\n"
-		  "  -i <input file>              Read matrix data from an input file\n"
 		  "  -o <output file>             Write matrix data to an output file\n",
 		  argv[0], N);
 	  exit(0);
