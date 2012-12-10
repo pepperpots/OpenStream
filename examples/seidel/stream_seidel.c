@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -113,8 +114,6 @@ main (int argc, char **argv)
   int block_size = 8;
 
   FILE *res_file = NULL;
-
-  int volatile res = 0;
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
