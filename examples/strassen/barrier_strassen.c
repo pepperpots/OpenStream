@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <string.h>
 #include "../common/common.h"
 
 #define SizeAtWhichDivideAndConquerIsMoreEfficient 16
