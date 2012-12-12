@@ -7,6 +7,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SPEC_CPU2000
 #define SPEC_BZIP

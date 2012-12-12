@@ -3,7 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
-
+#include <unistd.h>
 #include "common.h"
 
 #include <time.h>
