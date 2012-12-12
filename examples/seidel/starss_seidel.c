@@ -3,18 +3,10 @@
 #include <math.h>
 #include <complex.h>
 #include <getopt.h>
-#include <sys/time.h>
 #include <unistd.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 int
 main (int argc, char **argv)

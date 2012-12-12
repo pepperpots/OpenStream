@@ -3,21 +3,13 @@
 #include <math.h>
 #include <complex.h>
 #include <fftw3.h>
-
 #include <getopt.h>
 #include <string.h>
-#include <sys/time.h>
 #include <unistd.h>
+#include "../common/common.h"
 
 /* Missing declarations from liblapack */
 int clarnv_(long *idist, long *iseed, int *n, complex *x);
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 static inline void
 reorder_block (int size_out, fftw_complex *in, fftw_complex *out1, fftw_complex *out2)

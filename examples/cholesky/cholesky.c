@@ -7,22 +7,15 @@
 #include <math.h>
 #include <cblas.h>
 #include <getopt.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
 
 /* Missing declarations from liblapack */
 int dlarnv_(long *idist, long *iseed, int *n, double *x);
 void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 static inline bool
 double_equal (double a, double b)

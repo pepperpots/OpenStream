@@ -6,12 +6,12 @@ LDFLAGS = -L$(LIB_DIR) -lm
 
 all: $(TESTS)
 
-fmradio_seq: fmradio_seq.c
+fmradio_seq: fmradio_seq.c ../common/common.c
 	$(GCC) $(CFLAGS) $^ -o $@ -fno-inline $(LDFLAGS) # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_%: LDFLAGS += $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 stream_%: CFLAGS += -fopenmp
-stream_%: stream_%.c
+stream_%: stream_%.c ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lwstream_df
 
 clean:

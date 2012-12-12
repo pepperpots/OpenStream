@@ -10,29 +10,29 @@ endif
 
 all: $(TESTS)
 
-seidel: seidel.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) seidel.c -o seidel -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
+seidel: seidel.c ../common/common.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
-stream_seidel: stream_seidel.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) stream_seidel.c -o stream_seidel -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+stream_seidel: stream_seidel.c ../common/common.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-topsort-deps_stream_seidel: topsort-deps_stream_seidel.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) topsort-deps_stream_seidel.c -o topsort-deps_stream_seidel -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+topsort_deps_stream_seidel: topsort_deps_stream_seidel.c ../common/common.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-starss_to_stream_seidel: starss_to_stream_seidel.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) starss_to_stream_seidel.c -o starss_to_stream_seidel -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+starss_to_stream_seidel: starss_to_stream_seidel.c ../common/common.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-starss_seidel: starss_seidel.c
-	$(MCC) --ompss starss_seidel.c -o starss_seidel  -O3 -g
+starss_seidel: starss_seidel.c ../common/common.c
+	$(MCC) --ompss $^ -o $@  -O3 -g
 
-openmp_task_seidel: openmp_task_seidel.c
-	$(PLAIN_GCC) $< -o $@ -fopenmp -O3 -ffast-math -std=c99
+openmp_task_seidel: openmp_task_seidel.c ../common/common.c
+	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99
 
-openmp_loop_seidel: openmp_loop_seidel.c
-	$(PLAIN_GCC) $< -o $@ -fopenmp -O3 -ffast-math -std=c99
+openmp_loop_seidel: openmp_loop_seidel.c ../common/common.c
+	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS_X86) $(MEM_CST_TESTS_ARM)
 
-cilk_seidel: cilk_seidel.cilk
-	$(CILKC) -O2 cilk_seidel.cilk -o cilk_seidel
+cilk_seidel: cilk_seidel.cilk ../common/common.c
+	$(CILKC) -O2 $^ -o $@

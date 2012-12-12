@@ -29,20 +29,13 @@
 #include <errno.h>
 #include <getopt.h>
 #include <string.h>
+#include "../common/common.h"
 
 extern int errno;
 
 #define _WITH_OUTPUT 1
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 #define f(x,y)     (sin(x)*sin(y))
 #define randa(x,t) (0.0)

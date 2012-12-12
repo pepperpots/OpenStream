@@ -34,19 +34,13 @@ static const char *ident __attribute__((__unused__))
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include "../common/common.h"
 
 #define REAL float
 
 #define _WITH_OUTPUT 1
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 #if _CUTOFF
 #  define __cutoff_ _CUTOFF
