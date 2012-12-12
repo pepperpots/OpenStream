@@ -555,5 +555,7 @@ int main(int argc, char* argv[])
        D_print_mat("LxU", A);
        compare_mat (origA, A);
      }
+
+  return 0;
 }
 

@@ -257,4 +257,6 @@ main (int argc, char *argv[])
   }
 
   if (in_file != NULL) fclose (in_file);
+
+  return 0;
 }

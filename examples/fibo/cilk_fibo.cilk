@@ -58,4 +58,6 @@ main (int argc, char **argv)
 
   if (_WITH_OUTPUT)
     printf ("[Cilk] Fibo (%d, %d) = %d\n", size, cutoff, result);
+
+  return 0;
 }

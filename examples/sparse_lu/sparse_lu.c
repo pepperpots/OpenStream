@@ -453,5 +453,7 @@ main (int argc, char* argv[])
       sparse_matmult (num_blocks, block_size, l_mat, u_mat, data);
       matrix_diff (num_blocks, block_size, bckp_data, data);
     }
+
+  return 0;
 }
 

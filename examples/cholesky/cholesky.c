@@ -132,6 +132,8 @@ main(int argc, char *argv[])
     }
 
   printf ("%.5f \n", seq_time);
+
+  return 0;
 }
 
 

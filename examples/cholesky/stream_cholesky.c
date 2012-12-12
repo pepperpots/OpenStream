@@ -397,6 +397,8 @@ main(int argc, char *argv[])
     {
       printf ("%.5f \n", stream_time);
     }
+
+  return 0;
 }
 
 

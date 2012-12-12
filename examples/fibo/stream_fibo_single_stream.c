@@ -96,4 +96,6 @@ main (int argc, char **argv)
     if (_WITH_OUTPUT)
       printf ("[single stream] Fibo (%d, %d) = %d\n", n, cutoff, result);
   }
+
+  return 0;
 }

@@ -214,4 +214,6 @@ main (int argc, char *argv[])
 
   if (_WITH_OUTPUT)
     printf("Best value is %d\n\n", sol);
+
+  return 0;
 }

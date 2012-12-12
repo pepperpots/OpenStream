@@ -119,4 +119,6 @@ int main (int argc, char *argv[])
   fftw_free(in); fftw_free(out);
 
   if (res_file != NULL) fclose (res_file);
+
+  return 0;
 }

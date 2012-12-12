@@ -104,4 +104,6 @@ main (int argc, char **argv)
 		n, cutoff, result, tdiff (end, start));
       }
   }
+
+  return 0;
 }

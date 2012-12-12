@@ -62,4 +62,6 @@ main (int argc, char **argv)
 
   if (_WITH_OUTPUT)
     printf ("Fibo (%d) = %d\n", n, result);
+
+  return 0;
 }
