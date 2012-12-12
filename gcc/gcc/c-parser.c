@@ -8886,6 +8886,7 @@ c_parser_omp_stream_clause (c_parser *parser,
       omp_clause = build_omp_clause (clause_loc, kind);
       OMP_CLAUSE_STREAM_ID (omp_clause) = stream_id;
       OMP_CLAUSE_STREAM_SUB (omp_clause) = stream_idx;
+      TREE_NO_WARNING (stream_id) = 1;
 
       if (c_parser_next_token_is (parser, CPP_LSHIFT)
 	  || c_parser_next_token_is (parser, CPP_RSHIFT))
@@ -8914,6 +8915,7 @@ c_parser_omp_stream_clause (c_parser *parser,
 	  OMP_CLAUSE_VIEW_ID (omp_clause) = view_id;
 	  OMP_CLAUSE_BURST_SIZE (omp_clause) = view_idx;
 	  OMP_CLAUSE_VIEW_ARRAY_SIZE (omp_clause) = view_array_right;
+	  TREE_NO_WARNING (view_id) = 1;
 
 	  /* FIXME-apop: clarify whether implicit streams are OK.  For
 	     now we allow those, but emit a warning.  */
@@ -8974,6 +8976,7 @@ c_parser_omp_stream_clause (c_parser *parser,
 	  OMP_CLAUSE_BURST_SIZE (omp_clause) = (kind == OMP_CLAUSE_PEEK) ?
 	    integer_zero_node : integer_one_node;
 
+	  TREE_NO_WARNING (view_decl) = 1;
 	}
 
       /* If this is a peek clause, then just treat it as an input
