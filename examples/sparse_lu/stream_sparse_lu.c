@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <math.h>
 #include <getopt.h>
@@ -15,12 +14,6 @@
 #define _WITH_OUTPUT 0
 
 #include <unistd.h>
-
-static inline bool
-double_equal (double a, double b)
-{
-  return (abs (a - b) < 1e-7);
-}
 
 static inline void *
 allocate_block (int block_size)

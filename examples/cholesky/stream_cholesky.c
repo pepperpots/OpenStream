@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <math.h>
 #include <cblas.h>
 #include <getopt.h>
@@ -17,13 +16,6 @@
 /* Missing declarations from liblapack */
 int dlarnv_(long *idist, long *iseed, int *n, double *x);
 void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
-
-static inline bool
-double_equal (double a, double b)
-{
-  return (abs (a - b) < 1e-7);
-}
-
 
 void
 stream_dpotrf (int block_size, int blocks,
