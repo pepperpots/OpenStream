@@ -7,7 +7,7 @@
 #include "common.h"
 
 #include <time.h>
-#include <sys/time.h>
+#include "../common/common.h"
 #include <string.h>
 
 #define SPEC_CPU2000
