@@ -11,19 +11,19 @@ endif
 all: $(TESTS)
 
 seidel: seidel.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o seidel -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_seidel: stream_seidel.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o stream_seidel -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o  $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 topsort_deps_stream_seidel: topsort_deps_stream_seidel.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o topsort-deps_stream_seidel -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o  $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 starss_to_stream_seidel: starss_to_stream_seidel.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o starss_to_stream_seidel -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o  $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 starss_seidel: starss_seidel.c ../common/sync.c
-	$(MCC) --ompss $^ -o starss_seidel  -O3 -g
+	$(MCC) --ompss $^ -o  $@  -O3 -g
 
 openmp_task_seidel: openmp_task_seidel.c ../common/sync.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99
@@ -35,4 +35,4 @@ clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS_X86) $(MEM_CST_TESTS_ARM)
 
 cilk_seidel: cilk_seidel.cilk
-	$(CILKC) -O2 cilk_seidel.cilk -o cilk_seidel
+	$(CILKC) -O2 $^ -o $@
