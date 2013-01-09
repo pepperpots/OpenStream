@@ -1,21 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-
 #include <getopt.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-#include "../common/sync.h"
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 int
 fibo (int n)
@@ -55,7 +46,6 @@ int
 main (int argc, char **argv)
 {
   int option;
-  int i, j, iter;
   int n = 15;
 
   int cutoff = 10;
@@ -114,4 +104,6 @@ main (int argc, char **argv)
 
     PROFILER_NOTIFY_FINISH(&sync);
   }
+
+  return 0;
 }

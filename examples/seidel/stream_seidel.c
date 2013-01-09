@@ -1,22 +1,15 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <complex.h>
-
 #include <getopt.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-#include "../common/sync.h"
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 /* Simple ad hoc dependence resolver for Seidel.  */
 static inline void
@@ -147,7 +140,7 @@ main (int argc, char **argv)
 		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		 "  -b <block size power>        Set the block size 1 << <block size power>, default is %d\n"
 		 "  -r <iterations>              Number of iterations\n"
-		 "  -o <output file>             Write data to output file, default is openmp_task_seidel.out\n",
+		 "  -o <output file>             Write data to output file, default is stream_seidel.out\n",
 		 argv[0], N, block_size);
 	  exit(0);
 	  break;

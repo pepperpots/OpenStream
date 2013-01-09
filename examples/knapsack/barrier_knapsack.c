@@ -23,21 +23,14 @@
 #include <limits.h>
 #include <getopt.h>
 #include <string.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 1
 
 /* every item in the knapsack has a weight and a value */
 #define MAX_ITEMS 256
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 struct item
 {
@@ -221,4 +214,6 @@ main (int argc, char *argv[])
 
   if (_WITH_OUTPUT)
     printf("Best value is %d\n\n", sol);
+
+  return 0;
 }

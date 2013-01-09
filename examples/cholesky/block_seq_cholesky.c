@@ -7,10 +7,9 @@
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
-#include "../common/sync.h"
 
-#define _SPEEDUPS 0
-#define _VERIFY 0
+#define _SPEEDUPS 1
+#define _VERIFY 1
 
 #include <unistd.h>
 
@@ -20,10 +19,7 @@ void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 void
 stream_dpotrf (int block_size, int blocks,
-	       double *blocked_data[blocks][blocks],
-	       int streams[] __attribute__((stream)),
-	       int Rstreams[] __attribute__((stream)),
-	       int counters[])
+	       double *blocked_data[blocks][blocks])
 {
   int i, j, k;
 
@@ -33,143 +29,35 @@ stream_dpotrf (int block_size, int blocks,
 	{
 	  for (i = j + 1; i < blocks; ++i)
 	    {
-	      int readers = counters[i*blocks + j];
-	      int w_0, w_1, w_2, w_3, w_4, w_5;
-
-	      counters[i*blocks + k] += 1;
-	      counters[j*blocks + k] += 1;
-
-	      if (readers == 0)
-		{
-#pragma omp task peek (streams[i*blocks + k] >> w_0, streams[j*blocks + k] >> w_1) \
-  output (Rstreams[i*blocks + k] << w_2, Rstreams[j*blocks + k] << w_3)	\
-  input (streams[i*blocks + j] >> w_4) output (streams[i*blocks + j] << w_5)
-		  {
 		    cblas_dgemm (CblasColMajor, CblasNoTrans, CblasTrans,
 				 block_size, block_size, block_size,
 				 -1.0, blocked_data[i][k], block_size,
 				 blocked_data[j][k], block_size,
 				 1.0, blocked_data[i][j], block_size);
-		  }
-		}
-	      else
-		{
-		  int Rwin[readers];
-		  counters[i*blocks + j] = 0;
-
-#pragma omp task peek (streams[i*blocks + k] >> w_0, streams[j*blocks + k] >> w_1) \
-  output (Rstreams[i*blocks + k] << w_2, Rstreams[j*blocks + k] << w_3)	\
-  input (streams[i*blocks + j] >> w_4) output (streams[i*blocks + j] << w_5) \
-  input (Rstreams[i*blocks + j] >> Rwin[readers])
-		  {
-		    cblas_dgemm (CblasColMajor, CblasNoTrans, CblasTrans,
-				 block_size, block_size, block_size,
-				 -1.0, blocked_data[i][k], block_size,
-				 blocked_data[j][k], block_size,
-				 1.0, blocked_data[i][j], block_size);
-		  }
-		}
 	    }
 	}
 
       for (i = 0; i < j; ++i)
 	{
-	  int readers = counters[j*blocks + j];
-	  int w_0, w_1, w_2, w_3;
-
-	  counters[j*blocks + i] += 1;
-
-	  if (readers == 0)
-	    {
-#pragma omp task peek (streams[j*blocks + i] >> w_0) output (Rstreams[j*blocks + i] << w_1) \
-  input (streams[j*blocks + j] >> w_2) output (streams[j*blocks + j] << w_3)
-	      {
 		cblas_dsyrk (CblasColMajor, CblasLower, CblasNoTrans,
 			     block_size, block_size,
 			     -1.0, blocked_data[j][i], block_size,
 			     1.0, blocked_data[j][j], block_size);
-	      }
-	    }
-	  else
-	    {
-	      int Rwin[readers];
-	      counters[j*blocks + j] = 0;
-
-#pragma omp task peek (streams[j*blocks + i] >> w_0) output (Rstreams[j*blocks + i] << w_1) \
-  input (streams[j*blocks + j] >> w_2) output (streams[j*blocks + j] << w_3) \
-  input (Rstreams[j*blocks + j] >> Rwin[readers])
-	      {
-		cblas_dsyrk (CblasColMajor, CblasLower, CblasNoTrans,
-			     block_size, block_size,
-			     -1.0, blocked_data[j][i], block_size,
-			     1.0, blocked_data[j][j], block_size);
-	      }
-	    }
 	}
 
       {
-	int readers = counters[j*blocks + j];
-	int w_0, w_1;
-
-	if (readers == 0)
-	  {
-#pragma omp task input (streams[j*blocks + j] >> w_0) output (streams[j*blocks + j] << w_1)
-	    {
 	      unsigned char lower = 'L';
 	      int n = block_size;
 	      int nfo;
 	      dpotrf_(&lower, &n, blocked_data[j][j], &n, &nfo);
-	    }
-	  }
-	else
-	  {
-	    int Rwin[readers];
-	    counters[j*blocks + j] = 0;
-
-#pragma omp task input (streams[j*blocks + j] >> w_0) output (streams[j*blocks + j] << w_1) \
-  input (Rstreams[j*blocks + j] >> Rwin[readers])
-	    {
-	      unsigned char lower = 'L';
-	      int n = block_size;
-	      int nfo;
-	      dpotrf_(&lower, &n, blocked_data[j][j], &n, &nfo);
-	    }
-	  }
       }
 
       for (i = j + 1; i < blocks; ++i)
 	{
-	  int readers = counters[i*blocks + j];
-	  int w_0, w_1, w_2, w_3;
-
-	  counters[j*blocks + j] += 1;
-
-	  if (readers == 0)
-	    {
-#pragma omp task peek (streams[j*blocks + j] >> w_0) output (Rstreams[j*blocks + j] << w_1) \
-  input (streams[i*blocks + j] >> w_2) output (streams[i*blocks + j] << w_3)
-	      {
 		cblas_dtrsm (CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 			     block_size, block_size,
 			     1.0, blocked_data[j][j], block_size,
 			     blocked_data[i][j], block_size);
-	      }
-	    }
-	  else
-	    {
-	      int Rwin[readers];
-	      counters[i*blocks + j] = 0;
-
-#pragma omp task peek (streams[j*blocks + j] >> w_0) output (Rstreams[j*blocks + j] << w_1) \
-  input (streams[i*blocks + j] >> w_2) output (streams[i*blocks + j] << w_3) \
-  input (Rstreams[i*blocks + j] >> Rwin[readers])
-	      {
-		cblas_dtrsm (CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
-			     block_size, block_size,
-			     1.0, blocked_data[j][j], block_size,
-			     blocked_data[i][j], block_size);
-	      }
-	    }
 	}
     }
 }
@@ -221,10 +109,6 @@ main(int argc, char *argv[])
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
-
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
@@ -329,34 +213,11 @@ main(int argc, char *argv[])
 
   for (iter = 0; iter < numiters; ++iter)
     {
-      int Rstreams[num_blocks] __attribute__((stream));
-      int streams[num_blocks] __attribute__((stream));
-      int counters[num_blocks];
-
-      for (i = 0; i < num_blocks; ++i)
-	{
-	  int x;
-	  counters[i] = 0;
-
-#pragma omp task output (streams[i] << x)
-	  x = 0;
-	}
       blockify (block_size, blocks, N, data, (void *)blocked_data);
 
       /* Only effectively can start once the previous task completes.  */
       gettimeofday (&start[iter], NULL);
-      PROFILER_NOTIFY_RECORD(&sync);
-      stream_dpotrf (block_size, blocks, (void *)blocked_data, streams, Rstreams, counters);
-
-      for (i = 0; i < num_blocks; ++i)
-	{
-	  int x;
-#pragma omp tick (streams[i] >> 1)
-#pragma omp tick (Rstreams[i] >> counters[i])
-	}
-
-#pragma omp taskwait
-      PROFILER_NOTIFY_PAUSE(&sync);
+      stream_dpotrf (block_size, blocks, (void *)blocked_data);
       gettimeofday (&end[iter], NULL);
 
 
@@ -404,8 +265,6 @@ main(int argc, char *argv[])
     {
       printf ("%.5f \n", stream_time);
     }
-
-  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

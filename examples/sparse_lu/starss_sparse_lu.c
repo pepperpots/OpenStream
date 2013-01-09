@@ -35,18 +35,12 @@
 #include <math.h>
 #include <getopt.h>
 #include "../common/sync.h"
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 #define _CHECK_DIFFS 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 #ifndef NB
 # define NB 128
@@ -570,5 +564,6 @@ int main(int argc, char* argv[])
      }
 
    PROFILER_NOTIFY_FINISH(&sync);
+   return 0;
 }
 
