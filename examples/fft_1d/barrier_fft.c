@@ -23,15 +23,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
-
-#include <sys/time.h>
+#include "../common/common.h"
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 /* Definitions and operations for complex numbers */
 

@@ -10,14 +10,14 @@ endif
 
 all: $(TESTS)
 
-sparse_lu: sparse_lu.c
-	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) sparse_lu.c -o sparse_lu -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
+sparse_lu: sparse_lu.c ../common/common.c
+	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
-stream_sparse_lu: stream_sparse_lu.c
-	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) stream_sparse_lu.c -o stream_sparse_lu  -fno-inline -fopenmp $(LD_RPATH_FLAGS) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
+stream_sparse_lu: stream_sparse_lu.c ../common/common.c
+	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline -fopenmp $(LD_RPATH_FLAGS) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
 
-starss_sparse_lu: starss_sparse_lu.c
-	$(MCC) $(DFLAGS) --ompss starss_sparse_lu.c -o starss_sparse_lu  -O3 -g
+starss_sparse_lu: starss_sparse_lu.c ../common/common.c
+	$(MCC) $(DFLAGS) --ompss s$^ -o $@ -O3 -g
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt
@@ -25,6 +25,5 @@ clean:
 run:
 	./run.sh 10 8 5
 
-cilk_sparse_lu: cilk_sparse_lu.cilk
-	$(CILKC) -O2 cilk_sparse_lu.cilk -o cilk_sparse_lu
-
+cilk_sparse_lu: cilk_sparse_lu.cilk ../common/common.c
+	$(CILKC) -O2 $^ -o $@

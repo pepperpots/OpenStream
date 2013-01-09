@@ -3,17 +3,13 @@
 #include <math.h>
 #include <complex.h>
 #include <fftw3.h>
-
 #include <getopt.h>
-
-#include <sys/time.h>
+#include <string.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
+#include "../common/common.h"
+
+/* Missing declarations from liblapack */
+int clarnv_(long *idist, long *iseed, int *n, complex *x);
 
 static inline void
 reorder_block (int size_out, fftw_complex *in, fftw_complex *out1, fftw_complex *out2)
@@ -46,7 +42,7 @@ main (int argc, char *argv[])
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
   const double TWOPI = 6.2831853071795864769252867665590057683943388;
-  int i, j, k, l, m, option, it;
+  int i, j, k, option, it;
   fftw_complex **twids;
 
   int radix = 0;
@@ -261,4 +257,6 @@ main (int argc, char *argv[])
   }
 
   if (in_file != NULL) fclose (in_file);
+
+  return 0;
 }

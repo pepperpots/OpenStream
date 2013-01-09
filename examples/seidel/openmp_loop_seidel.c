@@ -3,18 +3,12 @@
 #include <math.h>
 #include <complex.h>
 #include <getopt.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 void
 gauss_seidel (int N, double a[N][N], int block_size)
@@ -139,4 +133,6 @@ main (int argc, char **argv)
 	  }
       }
   }
+
+  return 0;
 }

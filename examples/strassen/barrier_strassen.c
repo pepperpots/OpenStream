@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <string.h>
+#include "../common/common.h"
 
 #define SizeAtWhichDivideAndConquerIsMoreEfficient 16
 #define SizeAtWhichNaiveAlgorithmIsMoreEfficient 16
@@ -37,14 +39,7 @@
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 /* The real numbers we are using --- either double or float */
 typedef double REAL;

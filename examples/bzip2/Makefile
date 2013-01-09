@@ -6,10 +6,10 @@ LDFLAGS = -L${LIB_DIR} -lm -lc -rdynamic -Wl,-rpath,$(LIB_DIR) # Do not link all
 
 all: $(TESTS)
 
-bzip2:bzip2.c spec.c common.h
+bzip2:bzip2.c spec.c common.h ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-stream_bzip2: stream_spec.c stream_bzip2.c common.h
+stream_bzip2: stream_spec.c stream_bzip2.c common.h ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -Wl,-rpath,$(LIBWSTREAM_DF_LIB_DIR) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
 
 clean:

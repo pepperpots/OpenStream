@@ -13,20 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-
 #include <getopt.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 #define KSMPS 1024
 #define FM_MAX       5
@@ -419,7 +412,6 @@ main(int argc, char* argv[])
   float resume_2;
 
   float output1, output2;
-  short output_short[2];
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));

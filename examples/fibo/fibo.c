@@ -2,21 +2,12 @@
 #include <stdlib.h>
 #include <math.h>
 #include <complex.h>
-
 #include <getopt.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
-
 int
 fibo (int n)
 {
@@ -30,7 +21,6 @@ int
 main (int argc, char **argv)
 {
   int option;
-  int i, j, iter;
   int n = 15;
 
   int result;
@@ -72,4 +62,6 @@ main (int argc, char **argv)
 
   if (_WITH_OUTPUT)
     printf ("Fibo (%d) = %d\n", n, result);
+
+  return 0;
 }
