@@ -680,4 +680,6 @@ main (int argc, char* argv[])
 
     PROFILER_NOTIFY_FINISH(&sync);
   }
+
+  return 0;
 }
