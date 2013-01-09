@@ -27,6 +27,7 @@ examples/seidel/openmp_task_seidel
 examples/seidel/seidel
 examples/seidel/starss_to_stream_seidel
 examples/seidel/stream_seidel
+examples/seidel/stream_seidel_df
 examples/seidel/topsort_deps_stream_seidel
 examples/sparse_lu/sparse_lu
 examples/sparse_lu/stream_sparse_lu
