@@ -53,7 +53,7 @@ main (int argc, char **argv)
 		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		 "  -b <block size power>        Set the block size 1 << <block size power>, default is %d\n"
 		 "  -r <iterations>              Number of iterations\n"
-		 "  -o <output file>             Write data to output file, default is openmp_task_seidel.out\n",
+		 "  -o <output file>             Write data to output file, default is ompss_seidel.out\n",
 		 argv[0], N, block_size);
 	  exit(0);
 	  break;
