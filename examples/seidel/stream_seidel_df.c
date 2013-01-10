@@ -693,8 +693,11 @@ int main(int argc, char** argv)
 	#pragma omp taskwait
 
 	PROFILER_NOTIFY_PAUSE(&sync);
-	PROFILER_NOTIFY_FINISH(&sync);
+
 	gettimeofday(&end, NULL);
+
+	PROFILER_NOTIFY_FINISH(&sync);
+
 	printf("%.5f\n", tdiff(&end, &start));
 
 	#if _WITH_OUTPUT
