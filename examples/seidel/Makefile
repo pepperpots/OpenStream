@@ -1,7 +1,7 @@
 include ../Makefile.config
 
 TESTS = seidel stream_seidel topsort_deps_stream_seidel starss_to_stream_seidel openmp_task_seidel openmp_loop_seidel stream_seidel_df
-CFLAGS =  -Wall -g -std=c99 -O3  -ffast-math  #-fdump-tree-all #-Werror
+CFLAGS =  -Wall -g -std=c99 -O3  -ffast-math $(PROFILER_CFLAGS)  #-fdump-tree-all #-Werror
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc # Do not link all test cases with Wstream_Df as it launches worker threads even in seq. comp. for now.
 
 ifneq ($(MCC),)

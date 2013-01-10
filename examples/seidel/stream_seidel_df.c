@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
@@ -312,6 +313,8 @@ void dump_matrix(FILE* fp, int N, double* matrix)
 	fprintf(fp, "\n");
 }
 
+struct profiler_sync sync;
+
 int main(int argc, char** argv)
 {
 	int N = (1 << 13);
@@ -367,6 +370,8 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
+	PROFILER_NOTIFY_PREPARE(&sync);
+
 	double* matrix = malloc(N*N*sizeof(double));
 
 	int blocks_x = N / block_size;
@@ -405,6 +410,7 @@ int main(int argc, char** argv)
 	matrix[(N-24)*N+(N-24)] = 500.0;
 
 	gettimeofday(&start, NULL);
+	PROFILER_NOTIFY_RECORD(&sync);
 
 	/* Create tasks that initialize the streams and those that
 	 * read the final value from the streams.
@@ -696,6 +702,8 @@ int main(int argc, char** argv)
 	/* Wait for all the tasks to finish */
 	#pragma omp taskwait
 
+	PROFILER_NOTIFY_PAUSE(&sync);
+	PROFILER_NOTIFY_FINISH(&sync);
 	gettimeofday(&end, NULL);
 	printf("%.5f\n", tdiff(&end, &start));
 
