@@ -64,83 +64,132 @@ void gauss_seidel_df(int block_size, double* left_in, double* top_in,
 	 * as well.
 	 */
 
-	/* Top row */
-	for(int x = 1; x < block_size-1; x++) {
-		int y = 0;
-		double top_val = top_in ? top_in[x] : 0.0;
-		double left_val = center_in[y*block_size + (x-1)];
-		double right_val = center_in[y*block_size + (x + 1)];
-		double bottom_val = center_in[(y+1)*block_size + x];
-		double center_val = center_in[y*block_size+x];
-		double new_val = (top_val + left_val + right_val +
-				  bottom_val + center_val) * 0.2;
+	/* /\* Top row *\/ */
+	/* for(int x = 1; x < block_size-1; x++) { */
+	/* 	int y = 0; */
+	/* 	double top_val = top_in ? top_in[x] : 0.0; */
+	/* 	double left_val = center_in[y*block_size + (x-1)]; */
+	/* 	double right_val = center_in[y*block_size + (x + 1)]; */
+	/* 	double bottom_val = center_in[(y+1)*block_size + x]; */
+	/* 	double center_val = center_in[y*block_size+x]; */
+	/* 	double new_val = (top_val + left_val + right_val + */
+	/* 			  bottom_val + center_val) * 0.2; */
 
-		center_out[y*block_size+x] = new_val;
+	/* 	center_out[y*block_size+x] = new_val; */
 
-		if(top_out)
-			top_out[x] = new_val;
-	}
+	/* 	if(top_out) */
+	/* 		top_out[x] = new_val; */
+	/* } */
 
-	/* Bottom row */
-	for(int x = 1; x < block_size-1; x++) {
-		int y = block_size-1;
-		double top_val = center_in[(y-1)*block_size + x];
-		double left_val = center_in[y*block_size + (x-1)];
-		double right_val = center_in[y*block_size + (x + 1)];
-		double bottom_val = bottom_in ? bottom_in[x] : 0.0;
-		double center_val = center_in[y*block_size+x];
-		double new_val = (top_val + left_val + right_val +
-				  bottom_val + center_val) * 0.2;
+	/* /\* Bottom row *\/ */
+	/* for(int x = 1; x < block_size-1; x++) { */
+	/* 	int y = block_size-1; */
+	/* 	double top_val = center_in[(y-1)*block_size + x]; */
+	/* 	double left_val = center_in[y*block_size + (x-1)]; */
+	/* 	double right_val = center_in[y*block_size + (x + 1)]; */
+	/* 	double bottom_val = bottom_in ? bottom_in[x] : 0.0; */
+	/* 	double center_val = center_in[y*block_size+x]; */
+	/* 	double new_val = (top_val + left_val + right_val + */
+	/* 			  bottom_val + center_val) * 0.2; */
 
-		center_out[y*block_size+x] = new_val;
+	/* 	center_out[y*block_size+x] = new_val; */
 
-		if(bottom_out)
-			bottom_out[x] = new_val;
-	}
+	/* 	if(bottom_out) */
+	/* 		bottom_out[x] = new_val; */
+	/* } */
 
-	/* Left column */
-	for(int y = 1; y < block_size-1; y++) {
-		int x = 0;
-		double top_val = center_in[(y-1)*block_size + x];
-		double left_val = left_in ? left_in[y] : 0.0;
-		double right_val = center_in[y*block_size + (x + 1)];
-		double bottom_val = center_in[(y+1)*block_size + x];
-		double center_val = center_in[y*block_size+x];
-		double new_val = (top_val + left_val + right_val +
-				  bottom_val + center_val) * 0.2;
+	/* /\* Left column *\/ */
+	/* for(int y = 1; y < block_size-1; y++) { */
+	/* 	int x = 0; */
+	/* 	double top_val = center_in[(y-1)*block_size + x]; */
+	/* 	double left_val = left_in ? left_in[y] : 0.0; */
+	/* 	double right_val = center_in[y*block_size + (x + 1)]; */
+	/* 	double bottom_val = center_in[(y+1)*block_size + x]; */
+	/* 	double center_val = center_in[y*block_size+x]; */
+	/* 	double new_val = (top_val + left_val + right_val + */
+	/* 			  bottom_val + center_val) * 0.2; */
 
-		center_out[y*block_size+x] = new_val;
+	/* 	center_out[y*block_size+x] = new_val; */
 
-		if(left_out)
-			left_out[y] = new_val;
-	}
+	/* 	if(left_out) */
+	/* 		left_out[y] = new_val; */
+	/* } */
 
-	/* Right column */
-	for(int y = 1; y < block_size-1; y++) {
-		int x = block_size-1;
-		double top_val = center_in[(y-1)*block_size + x];
-		double left_val = center_in[y*block_size + (x-1)];
-		double right_val = right_in ? right_in[y] : 0.0;
-		double bottom_val = center_in[(y+1)*block_size + x];
-		double center_val = center_in[y*block_size+x];
-		double new_val = (top_val + left_val + right_val +
-				  bottom_val + center_val) * 0.2;
+	/* /\* Right column *\/ */
+	/* for(int y = 1; y < block_size-1; y++) { */
+	/* 	int x = block_size-1; */
+	/* 	double top_val = center_in[(y-1)*block_size + x]; */
+	/* 	double left_val = center_in[y*block_size + (x-1)]; */
+	/* 	double right_val = right_in ? right_in[y] : 0.0; */
+	/* 	double bottom_val = center_in[(y+1)*block_size + x]; */
+	/* 	double center_val = center_in[y*block_size+x]; */
+	/* 	double new_val = (top_val + left_val + right_val + */
+	/* 			  bottom_val + center_val) * 0.2; */
 
-		center_out[y*block_size+x] = new_val;
+	/* 	center_out[y*block_size+x] = new_val; */
 
-		if(right_out)
-			right_out[y] = new_val;
-	}
+	/* 	if(right_out) */
+	/* 		right_out[y] = new_val; */
+	/* } */
+
+	/* /\* Corners (upper left, upper right, lower left, lower right) *\/ */
+	/* for(int x = 0; x < block_size; x += block_size-1) { */
+	/* 	for(int y = 0; y < block_size; y += block_size-1) { */
+	/* 		double top_val = (y == 0) */
+	/* 			? (top_in ? top_in[x] : 0.0) */
+	/* 			: center_in[(y-1)*block_size + x]; */
+	/* 		double left_val = (x == 0) */
+	/* 			? (left_in ? left_in[y] : 0.0) */
+	/* 			: center_in[y*block_size + (x-1)]; */
+	/* 		double right_val = (x == block_size-1) */
+	/* 			? (right_in ? right_in[y] : 0.0) */
+	/* 			: center_in[y*block_size + (x + 1)]; */
+	/* 		double bottom_val = (y == block_size-1) */
+	/* 			? (bottom_in ? bottom_in[x] : 0.0) */
+	/* 			: center_in[(y+1)*block_size + x]; */
+	/* 		double center_val = center_in[y*block_size+x]; */
+	/* 		double new_val = (top_val + left_val + right_val + */
+	/* 				  bottom_val + center_val) * 0.2; */
+
+	/* 		if(x == block_size-1 && right_out) */
+	/* 			right_out[y] = new_val; */
+	/* 		if(x == 0 && left_out) */
+	/* 			left_out[y] = new_val; */
+	/* 		if(y == block_size-1 && bottom_out) */
+	/* 			bottom_out[x] = new_val; */
+	/* 		if(y == 0 && top_out) */
+	/* 			top_out[x] = new_val; */
+
+	/* 		center_out[y*block_size+x] = new_val; */
+	/* 	} */
+	/* } */
+
+	/* /\* Center blocks only depending on center values of the */
+	/*  * previous iteration */
+	/*  *\/ */
+	/* for(int y = 1; y < block_size-1; y++) { */
+	/* 	for(int x = 1; x < block_size-1; x++) { */
+	/* 		double top_val = center_in[(y-1)*block_size + x]; */
+	/* 		double left_val = center_in[y*block_size + (x-1)]; */
+	/* 		double right_val = center_in[y*block_size + (x + 1)]; */
+	/* 		double bottom_val = center_in[(y+1)*block_size + x]; */
+	/* 		double center_val = center_in[y*block_size+x]; */
+	/* 		double new_val = (top_val + left_val + right_val + */
+	/* 				  bottom_val + center_val) * 0.2; */
+
+	/* 		center_out[y*block_size+x] = new_val; */
+	/* 	} */
+	/* } */
 
 	/* Corners (upper left, upper right, lower left, lower right) */
-	for(int x = 0; x < block_size; x += block_size-1) {
-		for(int y = 0; y < block_size; y += block_size-1) {
+	for(int y = 0; y < block_size; y++) {
+		for(int x = 0; x < block_size; x++) {
 			double top_val = (y == 0)
 				? (top_in ? top_in[x] : 0.0)
-				: center_in[(y-1)*block_size + x];
+				: center_out[(y-1)*block_size + x];
 			double left_val = (x == 0)
 				? (left_in ? left_in[y] : 0.0)
-				: center_in[y*block_size + (x-1)];
+				: center_out[y*block_size + (x-1)];
 			double right_val = (x == block_size-1)
 				? (right_in ? right_in[y] : 0.0)
 				: center_in[y*block_size + (x + 1)];
@@ -159,23 +208,6 @@ void gauss_seidel_df(int block_size, double* left_in, double* top_in,
 				bottom_out[x] = new_val;
 			if(y == 0 && top_out)
 				top_out[x] = new_val;
-
-			center_out[y*block_size+x] = new_val;
-		}
-	}
-
-	/* Center blocks only depending on center values of the
-	 * previous iteration
-	 */
-	for(int y = 1; y < block_size-1; y++) {
-		for(int x = 1; x < block_size-1; x++) {
-			double top_val = center_in[(y-1)*block_size + x];
-			double left_val = center_in[y*block_size + (x-1)];
-			double right_val = center_in[y*block_size + (x + 1)];
-			double bottom_val = center_in[(y+1)*block_size + x];
-			double center_val = center_in[y*block_size+x];
-			double new_val = (top_val + left_val + right_val +
-					  bottom_val + center_val) * 0.2;
 
 			center_out[y*block_size+x] = new_val;
 		}
@@ -262,19 +294,29 @@ void gauss_seidel_df_finish(double* matrix, int id_x, int id_y, int N,
  */
 void dump_matrix(FILE* fp, int N, double* matrix)
 {
+	for(int x = 0; x < N+2; x++)
+		fprintf(fp, "%f \t", 0.0);
+	fprintf(fp, "\n");
+
 	for(int y = 0; y < N; y++) {
+		fprintf(fp, "%f \t", 0.0);
 		for(int x = 0; x < N; x++)
 			fprintf(fp, "%f \t", matrix[y*N+x]);
+		fprintf(fp, "%f \t", 0.0);
 
 		fprintf(fp, "\n");
 	}
+
+	for(int x = 0; x < N+2; x++)
+		fprintf(fp, "%f \t", 0.0);
+	fprintf(fp, "\n");
 }
 
 int main(int argc, char** argv)
 {
-	int N = (1 << 12);
+	int N = (1 << 13);
 	int block_size = (1 << 8);
-	int numiters = 100;
+	int numiters = 60;
 
 	struct timeval start;
 	struct timeval end;
@@ -359,8 +401,8 @@ int main(int argc, char** argv)
 		res_file = fopen("stream_seidel_df.out", "w");
 
 	/* Init matrix: M[25,25] = M[N-25,N-25] = 500.0 */
-	matrix[25*N+25] = 500.0;
-	matrix[(N-25)*N+(N-25)] = 500.0;
+	matrix[24*N+24] = 500.0;
+	matrix[(N-24)*N+(N-24)] = 500.0;
 
 	gettimeofday(&start, NULL);
 
@@ -375,111 +417,93 @@ int main(int argc, char** argv)
 
 			/* Upper left corner */
 			if(id_y == 0 && id_x == 0) {
-				#pragma omp task output(sbottom[id] << bottom_out[block_size],\
-							sright[id] << right_out[block_size],  \
-							scenter[id] << center_out[block_size*block_size])
+				#pragma omp task output(scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     NULL, NULL, bottom_out, right_out, center_out);
+							     NULL, NULL, NULL, NULL, center_out);
 				}
 
-				#pragma omp task input(sbottom[numiters*blocks+id] >> bottom_in[block_size], \
-						       sright [numiters*blocks+id] >> right_in[block_size],  \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
+				#pragma omp task input(scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       NULL, NULL, bottom_in, right_in, center_in);
+							       NULL, NULL, NULL, NULL, center_in);
 				}
 			} else if(id_y == 0 && id_x < blocks_x-1) {
 				/* Upper row, but not in a corner  */
-				#pragma omp task output(sbottom[id] << bottom_out[block_size], \
-							sright[id] << right_out[block_size],   \
-							sleft[id] << left_out[block_size],     \
+				#pragma omp task output(sleft[id] << left_out[block_size],     \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, NULL, bottom_out, right_out, center_out);
+							     left_out, NULL, NULL, NULL, center_out);
 				}
 
-				#pragma omp task input(sbottom[numiters*blocks+id] >> bottom_in[block_size], \
-						       sleft  [numiters*blocks+id] >> left_in[block_size],   \
-						       sright [numiters*blocks+id] >> right_in[block_size],  \
+				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, NULL, bottom_in, right_in, center_in);
+							       left_in, NULL, NULL, NULL, center_in);
 				}
 			} else if(id_y == 0 && id_x == blocks_x-1) {
 				/* Upper right corner */
-				#pragma omp task output(sbottom[id] << bottom_out[block_size], \
-							sleft[id] << left_out[block_size],     \
+				#pragma omp task output(sleft[id] << left_out[block_size],     \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, NULL, bottom_out, NULL, center_out);
+							     left_out, NULL, NULL, NULL, center_out);
 				}
 
-				#pragma omp task input(sbottom[numiters*blocks+id] >> bottom_in[block_size], \
-						       sleft  [numiters*blocks+id] >> left_in[block_size],   \
+				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, NULL, bottom_in, NULL, center_in);
+							       left_in, NULL, NULL, NULL, center_in);
 				}
 			} else if(id_x == 0 && id_y < blocks_y-1) {
 				/* Left row, but not in a corner*/
-				#pragma omp task output(sbottom[id] << bottom_out[block_size], \
-							sright[id] << right_out[block_size],   \
-							stop[id] << top_out[block_size],       \
+				#pragma omp task output(stop[id] << top_out[block_size],       \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     NULL, top_out, bottom_out, right_out, center_out);
+							     NULL, top_out, NULL, NULL, center_out);
 				}
 
-				#pragma omp task input(sbottom[numiters*blocks+id] >> bottom_in[block_size], \
-						       stop   [numiters*blocks+id] >> top_in[block_size],    \
-						       sright [numiters*blocks+id] >> right_in[block_size],  \
+				#pragma omp task input(stop   [numiters*blocks+id] >> top_in[block_size],    \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       NULL, top_in, bottom_in, right_in, center_in);
+							       NULL, top_in, NULL, NULL, center_in);
 				}
 			} else if(id_x == 0 && id_y == blocks_y-1) {
 				/* Lower left corner */
-				#pragma omp task output(sright[id] << right_out[block_size], \
-							stop[id] << top_out[block_size],     \
+				#pragma omp task output(stop[id] << top_out[block_size],     \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     NULL, top_out, NULL, right_out, center_out);
+							     NULL, top_out, NULL, NULL, center_out);
 				}
 
 				#pragma omp task input(stop   [numiters*blocks+id] >> top_in[block_size],   \
-						       sright [numiters*blocks+id] >> right_in[block_size], \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       NULL, top_in, NULL, right_in, center_in);
+							       NULL, top_in, NULL, NULL, center_in);
 				}
 			} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
 				/* Lower row, but not in a corner */
 				#pragma omp task output(sleft[id] << left_out[block_size],   \
-							sright[id] << right_out[block_size], \
 							stop[id] << top_out[block_size],     \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, NULL, right_out, center_out);
+							     left_out, top_out, NULL, NULL, center_out);
 				}
 
 				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],  \
 						       stop   [numiters*blocks+id] >> top_in[block_size],   \
-						       sright [numiters*blocks+id] >> right_in[block_size], \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, NULL, right_in, center_in);
+							       left_in, top_in, NULL, NULL, center_in);
 				}
 			} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
 				/* Lower right corner */
@@ -501,42 +525,36 @@ int main(int argc, char** argv)
 			} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
 				/* Right row, but not in a corner */
 				#pragma omp task output(sleft  [id] << left_out[block_size],   \
-							sbottom[id] << bottom_out[block_size], \
 							stop   [id] << top_out[block_size],    \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, bottom_out, NULL, center_out);
+							     left_out, top_out, NULL, NULL, center_out);
 				}
 
 				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
 						       stop   [numiters*blocks+id] >> top_in[block_size],    \
-						       sbottom[numiters*blocks+id] >> bottom_in[block_size], \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, bottom_in, NULL, center_in);
+							       left_in, top_in, NULL, NULL, center_in);
 				}
 			} else {
 				/* Block in the center */
 				#pragma omp task output(sleft[id] << left_out[block_size],     \
-							sbottom[id] << bottom_out[block_size], \
 							stop[id] << top_out[block_size],       \
-							sright[id] << right_out[block_size],   \
 							scenter[id] << center_out[block_size*block_size])
 				{
 					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, bottom_out, right_out, center_out);
+							     left_out, top_out, NULL, NULL, center_out);
 				}
 
 				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
 						       stop   [numiters*blocks+id] >> top_in[block_size],    \
-						       sright [numiters*blocks+id] >> right_in[block_size],  \
-						       sbottom[numiters*blocks+id] >> bottom_in[block_size], \
 						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
 				{
 					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, bottom_in, right_in, center_in);
+							       left_in, top_in, NULL, NULL, center_in);
 				}
 			}
 		}
@@ -557,8 +575,7 @@ int main(int argc, char** argv)
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(sbottom[(it+1)*blocks+id] << bottom_out[block_size],                            \
 						       sright [(it+1)*blocks+id] << right_out[block_size],                             \
-						       scenter[(it+1)*blocks+id] << center_out[block_size*block_size])                 \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks+id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, NULL, NULL, bottom_in, right_in, center_in,
 								 NULL, NULL, bottom_out, right_out, center_out);
@@ -566,14 +583,13 @@ int main(int argc, char** argv)
 				} else if(id_y == 0 && id_x < blocks_x-1) {
 					/* Block in the top row, but not in a corner */
 					#pragma omp task input(stop   [it*blocks + (id+blocks_x)] >> bottom_in[block_size],            \
-							       sright [it*blocks + (id-1)       ] >> left_in[block_size],              \
+							       sright [(it+1)*blocks + (id-1)   ] >> left_in[block_size], \
 							       sleft  [it*blocks + (id+1)       ] >> right_in[block_size],             \
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(sbottom[(it+1)*blocks+id] << bottom_out[block_size],                            \
 						       sleft  [(it+1)*blocks+id] << left_out[block_size],                              \
 						       sright [(it+1)*blocks+id] << right_out[block_size],                             \
-						       scenter[(it+1)*blocks+id] << center_out[block_size*block_size])                 \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks+id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, left_in, NULL, bottom_in, right_in, center_in,
 								left_out, NULL, bottom_out, right_out, center_out);
@@ -581,100 +597,93 @@ int main(int argc, char** argv)
 				} else if(id_y == 0 && id_x == blocks_x-1) {
 					/* Upper right corner */
 					#pragma omp task input(stop   [it*blocks + (id+blocks_x)] >> bottom_in[block_size],            \
-							       sright [it*blocks + (id-1)       ] >> left_in[block_size],              \
+							       sright [(it+1)*blocks + (id-1)   ] >> left_in[block_size], \
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(sbottom[(it+1)*blocks + id] << bottom_out[block_size],                          \
 						       sleft  [(it+1)*blocks + id] << left_out[block_size],                            \
-						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])               \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, left_in, NULL, bottom_in, NULL, center_in,
 								left_out, NULL, bottom_out, NULL, center_out);
 					}
 				} else if(id_x == 0 && id_y < blocks_y-1) {
 					/* Block in the leftmost column, but not in a corner */
-					#pragma omp task input(sbottom[it*blocks + (id-blocks_x)] >> top_in[block_size],               \
+						#pragma omp task input(sbottom[(it+1)*blocks + (id-blocks_x)] >> top_in[block_size], \
 							       stop   [it*blocks + (id+blocks_x)] >> bottom_in[block_size],            \
 							       sleft  [it*blocks + (id+1)       ] >> right_in[block_size],             \
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(stop   [(it+1)*blocks + id] << top_out[block_size],                             \
 						       sbottom[(it+1)*blocks + id] << bottom_out[block_size],                          \
 						       sright [(it+1)*blocks + id] << right_out[block_size],                           \
-						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])               \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, NULL, top_in, bottom_in, right_in, center_in,
 								NULL, top_out, bottom_out, right_out, center_out);
 					}
 				} else if(id_x == 0 && id_y == blocks_y-1) {
 					/* Lower left corner */
-					#pragma omp task input(sbottom[it*blocks + (id-blocks_x)] >> top_in[block_size],               \
+						#pragma omp task input(sbottom[(it+1)*blocks + (id-blocks_x)] >> top_in[block_size], \
 							       sleft  [it*blocks + (id+1)       ] >> right_in[block_size],             \
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(stop   [(it+1)*blocks + id] << top_out[block_size],                             \
 						       sright [(it+1)*blocks + id] << right_out[block_size],                           \
-						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])               \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, NULL, top_in, NULL, right_in,
 								center_in, NULL, top_out, NULL, right_out, center_out);
 					}
 				} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
 					/* Block in the lowest row, but not in a corner */
-					#pragma omp task input(sbottom[it*blocks + (id-blocks_x)] >> top_in[block_size],               \
-							       sright [it*blocks + (id-1)       ] >> left_in[block_size],              \
+						#pragma omp task input(sbottom[(it+1)*blocks + (id-blocks_x)] >> top_in[block_size], \
+							       sright [(it+1)*blocks + (id-1)   ] >> left_in[block_size], \
 							       sleft  [it*blocks + (id+1)       ] >> right_in[block_size],             \
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(stop   [(it+1)*blocks + id] << top_out[block_size],                             \
 						       sleft  [(it+1)*blocks + id] << left_out[block_size],                            \
 						       sright [(it+1)*blocks + id] << right_out[block_size],                           \
-						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])               \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, left_in, top_in, NULL, right_in, center_in,
 								left_out, top_out, NULL, right_out, center_out);
 					}
 				} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
 					/* Lower right corner */
-					#pragma omp task input(sbottom[it*blocks + (id-blocks_x)] >> top_in[block_size],               \
-							       sright [it*blocks + (id-1)       ] >> left_in[block_size],              \
-							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
+						#pragma omp task input(sbottom[(it+1)*blocks + (id-blocks_x)] >> top_in[block_size], \
+								       sright [(it+1)*blocks + (id-1)       ] >> left_in[block_size], \
+								       scenter[it*blocks + id               ] >> center_in[block_size*block_size]) \
 						output(stop[(it+1)*blocks+id] << top_out[block_size],                                  \
 						       sleft[(it+1)*blocks+id] << left_out[block_size],                                \
-						       scenter[(it+1)*blocks+id] << center_out[block_size*block_size])                 \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks+id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, left_in, top_in, NULL, NULL, center_in,
 								left_out, top_out, NULL, NULL, center_out);
 					}
 				} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
 					/* Block in the rightmost column, but not in a corner */
-					#pragma omp task input(sbottom[it*blocks + (id-blocks_x)] >> top_in[block_size],               \
+					#pragma omp task input(sbottom[(it+1)*blocks + (id-blocks_x)] >> top_in[block_size], \
 							       stop   [it*blocks + (id+blocks_x)] >> bottom_in[block_size],            \
-							       sright [it*blocks + (id-1)       ] >> left_in[block_size],              \
+							       sright [(it+1)*blocks + (id-1)   ] >> left_in[block_size], \
 							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
 						output(stop   [(it+1)*blocks + id] << top_out[block_size],                             \
 						       sbottom[(it+1)*blocks + id] << bottom_out[block_size],                          \
 						       sleft  [(it+1)*blocks + id] << left_out[block_size],                            \
-						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])               \
-						firstprivate(id_x, id_y)
+						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, left_in, top_in, bottom_in, NULL, center_in,
 								left_out, top_out, bottom_out, NULL, center_out);
 					}
 				} else {
 					/* Block somewhere in the center, not touching any border*/
-					#pragma omp task input(sbottom[it*blocks + (id-blocks_x)] >> top_in[block_size],               \
-							       stop   [it*blocks + (id+blocks_x)] >> bottom_in[block_size],            \
-							       sright [it*blocks + (id-1)       ] >> left_in[block_size],              \
-							       sleft  [it*blocks + (id+1)       ] >> right_in[block_size],             \
-							       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
-						output(stop   [(it+1)*blocks + id] << top_out[block_size],                             \
-						       sbottom[(it+1)*blocks + id] << bottom_out[block_size],                          \
-						       sleft  [(it+1)*blocks + id] << left_out[block_size],                            \
-						       sright [(it+1)*blocks + id] << right_out[block_size],                           \
-						       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])               \
-						firstprivate(id_x, id_y)
+						#pragma omp task input(sbottom[(it+1)*blocks + (id-blocks_x)] >> top_in[block_size], \
+								       stop   [it*blocks + (id+blocks_x)] >> bottom_in[block_size], \
+								       sright [(it+1)*blocks + (id-1)       ] >> left_in[block_size], \
+								       sleft  [it*blocks + (id+1)       ] >> right_in[block_size], \
+								       scenter[it*blocks + id           ] >> center_in[block_size*block_size]) \
+							output(stop   [(it+1)*blocks + id] << top_out[block_size], \
+							       sbottom[(it+1)*blocks + id] << bottom_out[block_size], \
+							       sleft  [(it+1)*blocks + id] << left_out[block_size], \
+							       sright [(it+1)*blocks + id] << right_out[block_size], \
+							       scenter[(it+1)*blocks + id] << center_out[block_size*block_size])
 					{
 						gauss_seidel_df(block_size, left_in, top_in, bottom_in, right_in, center_in,
 								left_out, top_out, bottom_out, right_out, center_out);
