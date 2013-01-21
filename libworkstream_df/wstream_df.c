@@ -111,6 +111,10 @@ struct barrier;
 
 #define MAX_CPUS 64
 
+#ifdef MATRIX_PROFILE
+unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+#endif
+
 typedef struct wstream_df_frame
 {
   int synchronization_counter;
@@ -789,6 +793,10 @@ worker_thread (void)
 				  cthread->bytes_l3 += fp->bytes_cpu[i];
 			  else
 				  cthread->bytes_rem += fp->bytes_cpu[i];
+
+#ifdef MATRIX_PROFILE
+			  transfer_matrix[cthread->worker_id][i] += fp->bytes_cpu[i];
+#endif
 		  }
 	  }
 #endif
@@ -1029,6 +1037,12 @@ void pre_main()
 
   wstream_init_alloc();
 
+#ifdef WQUEUE_PROFILE
+#ifdef MATRIX_PROFILE
+  memset(transfer_matrix, 0, sizeof(transfer_matrix));
+#endif
+#endif
+
 #ifdef _PAPI_PROFILE
   int retval = PAPI_library_init(PAPI_VER_CURRENT);
   if (retval != PAPI_VER_CURRENT)
@@ -1148,6 +1162,19 @@ void post_main()
 		 bytes_l2, 100.0*(double)bytes_l2/(double)bytes_total,
 		 bytes_l3, 100.0*(double)bytes_l3/(double)bytes_total,
 		 bytes_rem, 100.0*(double)bytes_rem/(double)bytes_total);
+
+#ifdef MATRIX_PROFILE
+	  FILE* matrix_fp = fopen(MATRIX_PROFILE, "w+");
+	  assert(matrix_fp);
+	  int j;
+	  for (i = 0; i < num_workers; ++i) {
+		  for (j = 0; j < num_workers; ++j) {
+			  fprintf(matrix_fp, "10%lld ", transfer_matrix[i][j]);
+		  }
+		  fprintf(matrix_fp, "\n");
+	  }
+	  fclose(matrix_fp);
+#endif
   }
 #endif
 }
