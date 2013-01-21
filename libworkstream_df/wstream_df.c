@@ -109,12 +109,15 @@ wstream_df_list_head (wstream_df_list_p list)
 
 struct barrier;
 
+#define MAX_CPUS 64
+
 typedef struct wstream_df_frame
 {
   int synchronization_counter;
   int size;
   void (*work_fn) (void *);
   struct barrier *own_barrier;
+  int bytes_cpu[MAX_CPUS];
 
   /* Variable size struct */
   //char buf [];
@@ -193,6 +196,10 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned long long steals_samel2;
   unsigned long long steals_samel3;
   unsigned long long steals_remote;
+  unsigned long long bytes_l1;
+  unsigned long long bytes_l2;
+  unsigned long long bytes_l3;
+  unsigned long long bytes_rem;
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
@@ -358,6 +365,18 @@ dump_wqueue_counters (wstream_df_thread_p th)
 	printf ("Thread %d: steals_fails = %lld\n",
 		th->worker_id,
 		th->steals_fails);
+	printf ("Thread %d: bytes_l1 = %lld\n",
+		th->worker_id,
+		th->bytes_l1);
+	printf ("Thread %d: bytes_l2 = %lld\n",
+		th->worker_id,
+		th->bytes_l2);
+	printf ("Thread %d: bytes_l3 = %lld\n",
+		th->worker_id,
+		th->bytes_l3);
+	printf ("Thread %d: bytes_rem = %lld\n",
+		th->worker_id,
+		th->bytes_rem);
 
 }
 #endif
@@ -448,6 +467,8 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
 
+  memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
+
   if (has_lp)
     {
       barrier_p temp_bar = cbar;
@@ -470,9 +491,17 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
 /* Decrease the synchronization counter by N.  */
 static inline void
-tdecrease_n (void *data, size_t n)
+tdecrease_n (void *data, size_t n, bool is_write)
 {
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
+
+#ifdef WQUEUE_PROFILE
+  if(is_write) {
+	  wstream_df_thread_p cthread = current_thread;
+	  fp->bytes_cpu[cthread->worker_id] += n;
+  }
+#endif
+
   int sc = 0;
 
   if (fp->synchronization_counter != (int) n)
@@ -496,16 +525,16 @@ tdecrease_n (void *data, size_t n)
    the current code generation.  Kept for compatibility with the T*
    ISA.  */
 void
-__builtin_ia32_tdecrease (void *data)
+__builtin_ia32_tdecrease (void *data, bool is_write)
 {
-  tdecrease_n (data, 1);
+	tdecrease_n (data, 1, is_write);
 }
 
 /* Decrease the synchronization counter by N.  */
 void
-__builtin_ia32_tdecrease_n (void *data, size_t n)
+__builtin_ia32_tdecrease_n (void *data, size_t n, bool is_write)
 {
-  tdecrease_n (data, n);
+	tdecrease_n (data, n, is_write);
 }
 
 /* Destroy the current thread */
@@ -609,7 +638,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	      view->reached_position += prod_view->burst;
 	      /* TDEC the producer by 1 to notify it that its
 		 consumers for that view have arrived.  */
-	      tdecrease_n (prod_fp, 1);
+	      tdecrease_n (prod_fp, 1, 0);
 	    }
 	  /* If there is not enough data scheduled to be produced, store
 	     the task on the consumer queue for further matching.  */
@@ -629,7 +658,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	  view->sibling = cons_view->sibling;
 	  view->reached_position = cons_view->reached_position;
 	  cons_view->reached_position += view->burst;
-	  tdecrease_n (prod_fp, 1);
+	  tdecrease_n (prod_fp, 1, 1);
 
 	  if (cons_view->reached_position == cons_view->burst)
 	    wstream_df_list_pop (cons_queue);
@@ -746,8 +775,23 @@ worker_thread (void)
       if (fp != NULL)
 	{
 	  current_barrier = NULL;
-
 	  _PAPI_P3B;
+
+#ifdef WQUEUE_PROFILE
+	  unsigned int i;
+	  for(i = 0; i < MAX_CPUS; i++) {
+		  if(fp->bytes_cpu[i]) {
+			  if(cthread->worker_id == i)
+				  cthread->bytes_l1 += fp->bytes_cpu[i];
+			  else if(cthread->worker_id / 2 == i / 2)
+				  cthread->bytes_l2 += fp->bytes_cpu[i];
+			  else if(cthread->worker_id / 8 == i / 8)
+				  cthread->bytes_l3 += fp->bytes_cpu[i];
+			  else
+				  cthread->bytes_rem += fp->bytes_cpu[i];
+		  }
+	  }
+#endif
 	  fp->work_fn (fp);
 	  _PAPI_P3E;
 
@@ -1081,9 +1125,29 @@ void post_main()
 #ifdef WQUEUE_PROFILE
   {
 	  int i;
+	  unsigned long long bytes_l1 = 0;
+	  unsigned long long bytes_l2 = 0;
+	  unsigned long long bytes_l3 = 0;
+	  unsigned long long bytes_rem = 0;
+	  unsigned long long bytes_total = 0;
 
-	  for (i = 0; i < num_workers; ++i)
+	  for (i = 0; i < num_workers; ++i) {
 		  dump_wqueue_counters(&wstream_df_worker_threads[i]);
+		  bytes_l1 += wstream_df_worker_threads[i].bytes_l1;
+		  bytes_l2 += wstream_df_worker_threads[i].bytes_l2;
+		  bytes_l3 += wstream_df_worker_threads[i].bytes_l3;
+		  bytes_rem += wstream_df_worker_threads[i].bytes_rem;
+	  }
+	  bytes_total = bytes_l1 + bytes_l2 + bytes_l3 + bytes_rem;
+
+	  printf("Overall bytes_l1 = %lld (%f %%)\n"
+		 "Overall bytes_l2 = %lld (%f %%)\n"
+		 "Overall bytes_l3 = %lld (%f %%)\n"
+		 "Overall bytes_rem = %lld (%f %%)\n",
+		 bytes_l1, 100.0*(double)bytes_l1/(double)bytes_total,
+		 bytes_l2, 100.0*(double)bytes_l2/(double)bytes_total,
+		 bytes_l3, 100.0*(double)bytes_l3/(double)bytes_total,
+		 bytes_rem, 100.0*(double)bytes_rem/(double)bytes_total);
   }
 #endif
 }
@@ -1283,7 +1347,7 @@ broadcast (void *v)
   while ((cons_view = cons_view->sibling) != NULL)
     {
       memcpy (((char *)cons_view->data) + offset, base_addr, burst);
-      tdecrease_n ((void *) cons_view->owner, burst);
+      tdecrease_n ((void *) cons_view->owner, burst, 1);
     }
 }
 
@@ -1295,7 +1359,7 @@ __builtin_ia32_broadcast (void *v)
 
 /* Decrease the synchronization counter by N.  */
 void
-__builtin_ia32_tdecrease_n_vec (size_t num, void *data, size_t n)
+__builtin_ia32_tdecrease_n_vec (size_t num, void *data, size_t n, bool is_write)
 {
   unsigned int i;
 
@@ -1306,8 +1370,8 @@ __builtin_ia32_tdecrease_n_vec (size_t num, void *data, size_t n)
       wstream_df_frame_p fp = (wstream_df_frame_p) view->owner;
 
       if (view->sibling)
-	broadcast ((void *) view);
-      tdecrease_n ((void *) fp, n);
+	      broadcast ((void *) view);
+      tdecrease_n ((void *) fp, n, is_write);
     }
 }
 

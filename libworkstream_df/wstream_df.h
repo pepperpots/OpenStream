@@ -14,10 +14,10 @@
 /* Create a new thread, with frame pointer size, and sync counter */
 extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool);
 /* Decrease the synchronization counter by one */
-extern void __builtin_ia32_tdecrease (void *);
+extern void __builtin_ia32_tdecrease (void *, bool);
 /* Decrease the synchronization counter by one */
-extern void __builtin_ia32_tdecrease_n (void *, size_t);
-extern void __builtin_ia32_tdecrease_n_vec (size_t, void *, size_t);
+extern void __builtin_ia32_tdecrease_n (void *, size_t, bool);
+extern void __builtin_ia32_tdecrease_n_vec (size_t, void *, size_t, bool);
 /* Destroy (free) the current thread */
 extern void __builtin_ia32_tend (void *);
 
