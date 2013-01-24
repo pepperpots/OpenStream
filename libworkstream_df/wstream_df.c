@@ -224,6 +224,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned long long bytes_l2;
   unsigned long long bytes_l3;
   unsigned long long bytes_rem;
+  unsigned long long tasks_executed;
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
@@ -366,6 +367,7 @@ init_wqueue_counters (void)
 	current_thread->steals_samel3 = 0;
 	current_thread->steals_remote = 0;
 	current_thread->steals_fails = 0;
+	current_thread->tasks_executed = 0;
 
 #ifdef ALLOW_PUSHES
 	current_thread->steals_pushed = 0;
@@ -379,6 +381,9 @@ init_wqueue_counters (void)
 void
 dump_wqueue_counters (wstream_df_thread_p th)
 {
+	printf ("Thread %d: tasks_executed = %lld\n",
+		th->worker_id,
+		th->tasks_executed);
 	printf ("Thread %d: steals_owncached = %lld\n",
 		th->worker_id,
 		th->steals_owncached);
@@ -928,7 +933,9 @@ worker_thread (void)
 		  }
 	  }
 #endif
+
 	  fp->work_fn (fp);
+	  cthread->tasks_executed++;
 	  _PAPI_P3E;
 
 	  __compiler_fence;
