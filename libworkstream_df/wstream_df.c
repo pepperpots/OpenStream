@@ -9,6 +9,15 @@
 
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
+
+#define NUM_STEAL_ATTEMPTS_L2 10
+#define NUM_STEAL_ATTEMPTS_L3 10
+#define NUM_STEAL_ATTEMPTS_REMOTE 1
+
+#define NUM_PUSH_SLOTS 32
+#define NUM_PUSH_ATTEMPTS 16
+#define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
+
 #define _PHARAON_MODE
 
 #include "papi-defs.h"
@@ -186,6 +195,10 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   cdeque_t work_deque __attribute__((aligned (64)));
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
+#if ALLOW_PUSHES
+  wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)));
+#endif
+
   barrier_p swap_barrier;
   void *current_stack; // BUG in swap/get context: stack is not set
 #ifdef _PAPI_PROFILE
@@ -200,6 +213,13 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned long long steals_samel2;
   unsigned long long steals_samel3;
   unsigned long long steals_remote;
+#ifdef ALLOW_PUSHES
+  unsigned long long steals_pushed;
+  unsigned long long pushes_samel2;
+  unsigned long long pushes_samel3;
+  unsigned long long pushes_remote;
+  unsigned long long pushes_fails;
+#endif
   unsigned long long bytes_l1;
   unsigned long long bytes_l2;
   unsigned long long bytes_l3;
@@ -346,6 +366,14 @@ init_wqueue_counters (void)
 	current_thread->steals_samel3 = 0;
 	current_thread->steals_remote = 0;
 	current_thread->steals_fails = 0;
+
+#ifdef ALLOW_PUSHES
+	current_thread->steals_pushed = 0;
+	current_thread->pushes_samel2 = 0;
+	current_thread->pushes_samel3 = 0;
+	current_thread->pushes_remote = 0;
+	current_thread->pushes_fails = 0;
+#endif
 }
 
 void
@@ -369,6 +397,25 @@ dump_wqueue_counters (wstream_df_thread_p th)
 	printf ("Thread %d: steals_fails = %lld\n",
 		th->worker_id,
 		th->steals_fails);
+
+#ifdef ALLOW_PUSHES
+	printf ("Thread %d: pushes_samel2 = %lld\n",
+		th->worker_id,
+		th->pushes_samel2);
+	printf ("Thread %d: pushes_samel3 = %lld\n",
+		th->worker_id,
+		th->pushes_samel3);
+	printf ("Thread %d: pushes_remote = %lld\n",
+		th->worker_id,
+		th->pushes_remote);
+	printf ("Thread %d: pushes_fails = %lld\n",
+		th->worker_id,
+		th->pushes_fails);
+	printf ("Thread %d: steals_pushed = %lld\n",
+		th->worker_id,
+		th->steals_pushed);
+#endif
+
 	printf ("Thread %d: bytes_l1 = %lld\n",
 		th->worker_id,
 		th->bytes_l1);
@@ -498,12 +545,16 @@ static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
+  int i, j;
+  wstream_df_thread_p cthread = current_thread;
+  unsigned int max_worker;
+  long long max_data = 0;
+  unsigned int rands = 77777 + cthread->worker_id * 19;
+  int push_slot;
 
 #ifdef WQUEUE_PROFILE
-  if(is_write) {
-	  wstream_df_thread_p cthread = current_thread;
+  if(is_write)
 	  fp->bytes_cpu[cthread->worker_id] += n;
-  }
 #endif
 
   int sc = 0;
@@ -517,6 +568,42 @@ tdecrease_n (void *data, size_t n, bool is_write)
   if (sc == 0)
     {
       wstream_df_thread_p cthread = current_thread;
+
+#if ALLOW_PUSHES
+      max_worker = cthread->worker_id;
+      /* Which worker wrote most of the data to the frame  */
+      for(i = 0; i < MAX_CPUS; i++) {
+	  if(fp->bytes_cpu[i] > max_data) {
+		  max_data = fp->bytes_cpu[i];
+		  max_worker = i;
+	  }
+      }
+
+      /* Check whether the frame should be pushed somewhere else */
+      if(max_data != 0 && max_worker != cthread->worker_id && cthread->worker_id / 8 != max_worker / 8) {
+	  for(j = 0; j < NUM_PUSH_ATTEMPTS; j++) {
+	     rands = rands * 1103515245 + 12345;
+	     push_slot = rands % NUM_PUSH_SLOTS;
+
+	     /* Try to push */
+	     if(compare_and_swap(&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], NULL, fp)) {
+#ifdef WQUEUE_PROFILE
+	       if(max_worker / 2 == cthread->worker_id / 2)
+		  current_thread->pushes_samel2++;
+	       else if(max_worker / 8 == cthread->worker_id / 8)
+		  current_thread->pushes_samel3++;
+	       else
+		  current_thread->pushes_remote++;
+#endif
+	       return;
+	     }
+
+#ifdef WQUEUE_PROFILE
+	     current_thread->pushes_fails++;
+#endif
+	  }
+      }
+#endif
 
       if (cthread->own_next_cached_thread != NULL)
 	cdeque_push_bottom (&cthread->work_deque,
@@ -694,6 +781,7 @@ worker_thread (void)
   wstream_df_thread_p cthread = current_thread;
   unsigned int rands = 77777 + cthread->worker_id * 19;
   unsigned int steal_from = 0;
+  int i;
 
   current_barrier = NULL;
 
@@ -716,18 +804,45 @@ worker_thread (void)
 
   while (true)
     {
-      wstream_df_frame_p fp = cthread->own_next_cached_thread;
+      wstream_df_frame_p fp = NULL;
+
+#if ALLOW_PUSHES
+      wstream_df_frame_p import;
+
+      /* Check if there were remote pushes. If so, import all pushed frames
+       * into the cache / work deque */
+      for(i = 0; i < NUM_PUSH_SLOTS; i++) {
+	if((import = cthread->pushed_threads[i]) != NULL) {
+
+	  /* If the cache is empty, put the pushed frame into it.
+	   * Otherwise put it into the work deque */
+	  if(cthread->own_next_cached_thread == NULL)
+	    cthread->own_next_cached_thread = import;
+	  else
+	    cdeque_push_bottom (&cthread->work_deque, import);
+
+	  cthread->pushed_threads[i] = NULL;
+
+#ifdef WQUEUE_PROFILE
+	  cthread->steals_pushed++;
+#endif
+	}
+      }
+#endif
+
+      fp = cthread->own_next_cached_thread;
       __compiler_fence;
 
       if (fp == NULL) {
 	fp = (wstream_df_frame_p)  (cdeque_take (&cthread->work_deque));
+
 #ifdef WQUEUE_PROFILE
-	if (fp != NULL) {
+	if (fp != NULL)
 	  cthread->steals_ownqueue++;
-	}
 #endif
       } else {
 	cthread->own_next_cached_thread = NULL;
+
 #ifdef WQUEUE_PROFILE
 	cthread->steals_owncached++;
 #endif
@@ -735,31 +850,44 @@ worker_thread (void)
 
       if (fp == NULL)
 	{
-	  /* If this thread is on the last core and no other thread
-	     shares an L2 cache with it, then skip*/
-	  if(!(cthread->worker_id != (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0)) {
-		  /* First, try to steal from somebody on the same L2 cache */
-		  steal_from = cthread->worker_id + 1 - (cthread->worker_id % 2);
-		  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-	  }
+	  if(!(cthread->worker_id == (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0)) {
+	    for(i = 0; i < NUM_STEAL_ATTEMPTS_L2 && !fp; i++) {
+	      steal_from = (cthread->worker_id + 1) % 2;
+	      fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 
-	  /* If this thread is on the last core and no other thread
-	     shares an L3 cache with it, then skip*/
-	  if(fp == NULL && !(cthread->worker_id != (unsigned int)num_workers-1 && cthread->worker_id % 8 == 0)) {
-		  /* Next: try to steal from somebody on the same L3 cache */
-		  do {
-			  rands = rands * 1103515245 + 12345;
-			  steal_from = (cthread->worker_id / 8)*8 + (rands % 8);
-		  } while(steal_from == cthread->worker_id || steal_from > (unsigned int)num_workers-1);
-		  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	      if(!fp)
+		pthread_yield();
+	    }
 	  }
 
 	  if(fp == NULL) {
-		  // Cheap alternative to nrand48
+	    int l3_base = (cthread->worker_id/8)*8;
+	    int num_workers_on_l3 = num_workers - l3_base;
+
+	    if(num_workers_on_l3 > 8)
+	      num_workers_on_l3 = 8;
+
+	    if(num_workers_on_l3 > 1) {
+	      for(i = 0; i < NUM_STEAL_ATTEMPTS_L3 && !fp; i++) {
+		do {
 		  rands = rands * 1103515245 + 12345;
-		  steal_from = rands % num_workers;
-		  if (__builtin_expect (steal_from != cthread->worker_id, 1))
-			  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+		  steal_from = l3_base + rands % num_workers_on_l3;
+		} while(steal_from == cthread->worker_id);
+		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+
+		if(!fp && i % 4 == 0)
+		  pthread_yield();
+	      }
+	    }
+	  }
+
+	  if(fp == NULL) {
+	    for(i = 0; i < NUM_STEAL_ATTEMPTS_REMOTE && !fp; i++) {
+	      rands = rands * 1103515245 + 12345;
+	      steal_from = rands % num_workers;
+	      if (__builtin_expect (steal_from != cthread->worker_id, 1))
+		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	    }
 	  }
 
 #ifdef WQUEUE_PROFILE
@@ -782,20 +910,20 @@ worker_thread (void)
 	  _PAPI_P3B;
 
 #ifdef WQUEUE_PROFILE
-	  unsigned int i;
-	  for(i = 0; i < MAX_CPUS; i++) {
-		  if(fp->bytes_cpu[i]) {
-			  if(cthread->worker_id == i)
-				  cthread->bytes_l1 += fp->bytes_cpu[i];
-			  else if(cthread->worker_id / 2 == i / 2)
-				  cthread->bytes_l2 += fp->bytes_cpu[i];
-			  else if(cthread->worker_id / 8 == i / 8)
-				  cthread->bytes_l3 += fp->bytes_cpu[i];
+	  unsigned int cpu;
+	  for(cpu = 0; cpu < MAX_CPUS; cpu++) {
+		  if(fp->bytes_cpu[cpu]) {
+			  if(cthread->worker_id == cpu)
+				  cthread->bytes_l1 += fp->bytes_cpu[cpu];
+			  else if(cthread->worker_id / 2 == cpu / 2)
+				  cthread->bytes_l2 += fp->bytes_cpu[cpu];
+			  else if(cthread->worker_id / 8 == cpu / 8)
+				  cthread->bytes_l3 += fp->bytes_cpu[cpu];
 			  else
-				  cthread->bytes_rem += fp->bytes_cpu[i];
+				  cthread->bytes_rem += fp->bytes_cpu[cpu];
 
 #ifdef MATRIX_PROFILE
-			  transfer_matrix[cthread->worker_id][i] += fp->bytes_cpu[i];
+			  transfer_matrix[cthread->worker_id][cpu] += fp->bytes_cpu[cpu];
 #endif
 		  }
 	  }
@@ -954,6 +1082,10 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     core = id % ncores;
   else
     core = cpu_affinities[(id-1) % num_cpu_affinities];
+
+#if ALLOW_PUSHES
+  memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
+#endif
 
 #ifdef _PRINT_STATS
   printf ("worker %d mapped to core %d\n", id, core);
