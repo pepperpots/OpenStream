@@ -2,7 +2,7 @@ set terminal png size 600,200
 set output "@@OUTFILE_PNG@@"
 
 set xrange @@XRANGE@@
-set yrange @@YRANGE@@
+@@YRANGE@@
 
 set boxwidth 1
 set style data histograms
