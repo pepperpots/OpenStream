@@ -3,8 +3,8 @@
 
 #define __slab_align 64
 #define __slab_min_size 6 // 64 -- smallest slab
-#define __slab_max_size 18 // 262144 = 256KB -- biggest slab
-#define __slab_alloc_size 20 // 1048576 = 1MB -- amount of memory that should be allocated in one go
+#define __slab_max_size 20 // 262144 = 256KB -- biggest slab
+#define __slab_alloc_size 21 // 1048576 = 1MB -- amount of memory that should be allocated in one go
 
 typedef struct slab
 {
