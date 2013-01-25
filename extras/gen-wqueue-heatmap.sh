@@ -70,7 +70,9 @@ then
     for type in ld_op_cnt der_local_l1_rhits der_local_l1_or_l2 der_local_l3 der_local_dram der_remote_l1_l2_l3 der_remote_dram \
 	der_local_latency der_local_l1_or_l2_lat der_local_l3_lat der_local_dram_lat \
 	der_remote_latency der_remote_l1_l2_l3_lat der_remote_dram_lat \
-	st_op_cnt all_op_cnt
+	st_op_cnt all_op_cnt \
+	dc_l2_tlb_miss_cnt dc_l1_tlb_miss_cnt \
+	dc_mis_acc_cnt
     do
 	rm -f $CONFIG_NAME/ibs_$type.out $CONFIG_NAME/ibs_$type.per_load.out
 	echo -n "Prepare $type... "
@@ -107,10 +109,14 @@ for type in pushes_samel2 pushes_samel3 pushes_remote \
     ibs_der_local_latency ibs_der_local_l1_or_l2_lat ibs_der_local_l3_lat ibs_der_local_dram_lat \
     ibs_der_remote_latency ibs_der_remote_l1_l2_l3_lat ibs_der_remote_dram_lat \
     ibs_ld_op_cnt ibs_st_op_cnt ibs_all_op_cnt \
+    ibs_dc_l2_tlb_miss_cnt ibs_dc_l1_tlb_miss_cnt \
+    ibs_dc_mis_acc_cnt \
     ibs_der_local_l1_rhits.per_load ibs_der_local_l1_or_l2.per_load ibs_der_local_l3.per_load ibs_der_local_dram.per_load ibs_der_remote_l1_l2_l3.per_load ibs_der_remote_dram.per_load \
     ibs_der_local_latency.per_load ibs_der_local_l1_or_l2_lat.per_load ibs_der_local_l3_lat.per_load ibs_der_local_dram_lat.per_load \
     ibs_der_remote_latency.per_load ibs_der_remote_l1_l2_l3_lat.per_load ibs_der_remote_dram_lat.per_load \
-    ibs_st_op_cnt.per_load ibs_all_op_cnt.per_load
+    ibs_st_op_cnt.per_load ibs_all_op_cnt.per_load \
+    ibs_dc_l2_tlb_miss_cnt.per_load ibs_dc_l1_tlb_miss_cnt.per_load \
+    ibs_dc_mis_acc_cnt.per_load
 do
     TYPE_PREFIX=$(echo -n $type | sed 's/\([^_]*\)_.*/\1/')
     if [ $TYPE_PREFIX = "steals" -o $TYPE_PREFIX = "pushes" -o $TYPE_PREFIX = "tasks" ]
