@@ -195,6 +195,8 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   cdeque_t work_deque __attribute__((aligned (64)));
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
+  unsigned int rands;
+
 #if ALLOW_PUSHES
   wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)));
 #endif
@@ -554,7 +556,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
   wstream_df_thread_p cthread = current_thread;
   unsigned int max_worker;
   long long max_data = 0;
-  unsigned int rands = 77777 + cthread->worker_id * 19;
   int push_slot;
 
 #ifdef WQUEUE_PROFILE
@@ -587,8 +588,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
       /* Check whether the frame should be pushed somewhere else */
       if(max_data != 0 && max_worker != cthread->worker_id && cthread->worker_id / 8 != max_worker / 8) {
 	  for(j = 0; j < NUM_PUSH_ATTEMPTS; j++) {
-	     rands = rands * 1103515245 + 12345;
-	     push_slot = rands % NUM_PUSH_SLOTS;
+	     cthread->rands = cthread->rands * 1103515245 + 12345;
+	     push_slot = cthread->rands % NUM_PUSH_SLOTS;
 
 	     /* Try to push */
 	     if(compare_and_swap(&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], NULL, fp)) {
@@ -784,11 +785,12 @@ static void
 worker_thread (void)
 {
   wstream_df_thread_p cthread = current_thread;
-  unsigned int rands = 77777 + cthread->worker_id * 19;
   unsigned int steal_from = 0;
   int i;
 
   current_barrier = NULL;
+
+  cthread->rands = 77777 + cthread->worker_id * 19;
 
   /* Enable barrier passing if needed.  */
   if (cthread->swap_barrier != NULL)
@@ -875,8 +877,8 @@ worker_thread (void)
 	    if(num_workers_on_l3 > 1) {
 	      for(i = 0; i < NUM_STEAL_ATTEMPTS_L3 && !fp; i++) {
 		do {
-		  rands = rands * 1103515245 + 12345;
-		  steal_from = l3_base + rands % num_workers_on_l3;
+		  cthread->rands = cthread->rands * 1103515245 + 12345;
+		  steal_from = l3_base + cthread->rands % num_workers_on_l3;
 		} while(steal_from == cthread->worker_id);
 		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 
@@ -888,8 +890,8 @@ worker_thread (void)
 
 	  if(fp == NULL) {
 	    for(i = 0; i < NUM_STEAL_ATTEMPTS_REMOTE && !fp; i++) {
-	      rands = rands * 1103515245 + 12345;
-	      steal_from = rands % num_workers;
+	      cthread->rands = cthread->rands * 1103515245 + 12345;
+	      steal_from = cthread->rands % num_workers;
 	      if (__builtin_expect (steal_from != cthread->worker_id, 1))
 		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 	    }
