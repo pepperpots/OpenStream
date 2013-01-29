@@ -870,7 +870,7 @@ worker_thread (void)
 	  }
 
 	  if(fp == NULL) {
-	    int l3_base = (cthread->worker_id/8)*8;
+	    int l3_base = cthread->worker_id & ~7;
 	    int num_workers_on_l3 = num_workers - l3_base;
 
 	    if(num_workers_on_l3 > 8)
