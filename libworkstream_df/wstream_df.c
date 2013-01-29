@@ -226,6 +226,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned long long bytes_l2;
   unsigned long long bytes_l3;
   unsigned long long bytes_rem;
+  unsigned long long tasks_created;
   unsigned long long tasks_executed;
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
@@ -369,6 +370,7 @@ init_wqueue_counters (void)
 	current_thread->steals_samel3 = 0;
 	current_thread->steals_remote = 0;
 	current_thread->steals_fails = 0;
+	current_thread->tasks_created = 0;
 	current_thread->tasks_executed = 0;
 
 #ifdef ALLOW_PUSHES
@@ -383,6 +385,9 @@ init_wqueue_counters (void)
 void
 dump_wqueue_counters (wstream_df_thread_p th)
 {
+	printf ("Thread %d: tasks_created = %lld\n",
+		th->worker_id,
+		th->tasks_created);
 	printf ("Thread %d: tasks_executed = %lld\n",
 		th->worker_id,
 		th->tasks_executed);
@@ -525,6 +530,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
 
+  current_thread->tasks_created++;
   memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
 
   if (has_lp)
