@@ -36,6 +36,11 @@ then
 fi
 
 mkdir -p $CONFIG_NAME
+mkdir -p $CONFIG_NAME/by-cpu/max/data
+mkdir -p $CONFIG_NAME/by-cpu/time/data
+mkdir -p $CONFIG_NAME/by-cpu/time/graphs
+mkdir -p $CONFIG_NAME/all-cpus/data
+mkdir -p $CONFIG_NAME/all-cpus/graphs
 mkdir -p $CONFIG_NAME/numa_start
 mkdir -p $CONFIG_NAME/numa_end
 
@@ -79,11 +84,11 @@ for type in pushes_samel2 pushes_samel3 pushes_remote \
     slab_bytes slab_refills slab_allocations slab_frees slab_hits slab_toobig slab_toobig_frees slab_freed_bytes slab_toobig_freed_bytes
 do
     echo -n "Prepare $type... "
-    rm -f $CONFIG_NAME/$type.out
+    rm -f $CONFIG_NAME/all-cpus/data/$type.out
     for i in $(seq 0 $OMP_NUM_THREADS)
     do
 	val=$(grep "Thread $i: $type" $CONFIG_NAME/log | sed 's/^.* = \(.*\)/\1/')
-	echo "$i $val" >> $CONFIG_NAME/$type.out
+	echo "$i $val" >> $CONFIG_NAME/all-cpus/data/$type.out
     done
     echo "done."
 done
@@ -96,8 +101,8 @@ then
     for CPU in $(seq 0 $(($OMP_NUM_THREADS - 1)))
     do
 	echo -n "$CPU "
-	ibs_op_accum -i $CONFIG_NAME/ibsraw.pfd -o $CONFIG_NAME/ibs-accum-max-cpu$CPU.pfd --max --match-cpu $CPU
-	ibs_op_accum -i $CONFIG_NAME/ibsraw.pfd -o $CONFIG_NAME/ibs-accum-cpu$CPU.pfd --match-cpu $CPU --rebase-time --sampling-period 1000000
+	ibs_op_accum -i $CONFIG_NAME/ibsraw.pfd -o $CONFIG_NAME/by-cpu/max/data/ibs-accum-max-cpu$CPU.pfd --max --match-cpu $CPU
+	ibs_op_accum -i $CONFIG_NAME/ibsraw.pfd -o $CONFIG_NAME/by-cpu/time/data/ibs-accum-cpu$CPU.pfd --match-cpu $CPU --rebase-time --sampling-period 1000000
     done
     echo
 
@@ -108,20 +113,20 @@ then
 	dc_l2_tlb_miss_cnt dc_l1_tlb_miss_cnt \
 	dc_mis_acc_cnt
     do
-	rm -f $CONFIG_NAME/ibs_$type.out $CONFIG_NAME/ibs_$type.per_load.out
+	rm -f $CONFIG_NAME/all-cpus/data/ibs_$type.out $CONFIG_NAME/all-cpus/data/ibs_$type.per_load.out
 	echo -n "Prepare $type... "
 
 	for CPU in $(seq 0 $(($OMP_NUM_THREADS - 1)))
 	do
-	    echo $CPU $(pfd_dump $CONFIG_NAME/ibs-accum-max-cpu$CPU.pfd -d s.$type -r 2>/dev/null) >> $CONFIG_NAME/ibs_$type.out
+	    echo $CPU $(pfd_dump $CONFIG_NAME/by-cpu/max/data/ibs-accum-max-cpu$CPU.pfd -d s.$type -r 2>/dev/null) >> $CONFIG_NAME/all-cpus/data/ibs_$type.out
 	done
 
 	if [ $type != "ld_op_cnt" ]
 	then
 	    for CPU in $(seq 0 $(($OMP_NUM_THREADS - 1)))
 	    do
-		echo $CPU $(echo "scale=10; " $(pfd_dump $CONFIG_NAME/ibs-accum-max-cpu$CPU.pfd -d s.$type -r 2>/dev/null) " / " $(pfd_dump $CONFIG_NAME/ibs-accum-max-cpu$CPU.pfd -d s.ld_op_cnt -r 2>/dev/null) | bc) >> $CONFIG_NAME/ibs_$type.per_load.out
-		pfd_dump $CONFIG_NAME/ibs-accum-cpu$CPU.pfd -d s.time -d s.$type -d s.ld_op_cnt > $CONFIG_NAME/ibs_cpu$CPU-time-ibs_$type.out 2>/dev/null
+		echo $CPU $(echo "scale=10; " $(pfd_dump $CONFIG_NAME/by-cpu/max/data/ibs-accum-max-cpu$CPU.pfd -d s.$type -r 2>/dev/null) " / " $(pfd_dump $CONFIG_NAME/by-cpu/max/data/ibs-accum-max-cpu$CPU.pfd -d s.ld_op_cnt -r 2>/dev/null) | bc) >> $CONFIG_NAME/all-cpus/data/ibs_$type.per_load.out
+		pfd_dump $CONFIG_NAME/by-cpu/time/data/ibs-accum-cpu$CPU.pfd -d s.time -d s.$type -d s.ld_op_cnt > $CONFIG_NAME/by-cpu/time/data/ibs_cpu$CPU-time-ibs_$type.out 2>/dev/null
 	    done
 	fi
 
@@ -142,12 +147,12 @@ then
     ibs_dc_mis_acc_cnt.per_load"
 fi
 
-NUM_TASKS=$(echo "0" $(cat $CONFIG_NAME/tasks_executed.out | awk '{print $2;}' | sed 's/^/+ /') "0" | bc)
+NUM_TASKS=$(echo "0" $(cat $CONFIG_NAME/all-cpus/data/tasks_executed.out | awk '{print $2;}' | sed 's/^/+ /') "0" | bc)
 
-MAX_TASKS=$(cat $CONFIG_NAME/{steals_owncached,steals_ownqueue,steals_samel2,steals_samel3,steals_remote,steals_pushed}.out | \
+MAX_TASKS=$(cat $CONFIG_NAME/all-cpus/data/{steals_owncached,steals_ownqueue,steals_samel2,steals_samel3,steals_remote,steals_pushed}.out | \
     awk '{print $2;}' | awk '$0>x{x=$0};END{print x}')
 
-MAX_BYTES=$(cat $CONFIG_NAME/{bytes_l1,bytes_l2,bytes_l3,bytes_rem}.out | \
+MAX_BYTES=$(cat $CONFIG_NAME/all-cpus/data/{bytes_l1,bytes_l2,bytes_l3,bytes_rem}.out | \
     awk '{print $2;}' | awk '$0>x{x=$0};END{print x}')
 
 for type in pushes_samel2 pushes_samel3 pushes_remote \
@@ -170,9 +175,9 @@ do
     fi
 
     echo -n "$type... "
-    sed "s|@@OUTFILE_PNG@@|$CONFIG_NAME/$type.png|" "$(dirname $0)/wqueue_singlestat.gnuplot" \
-	| sed "s|@@OUTFILE_EPS@@|$CONFIG_NAME/$type.eps|" \
-	| sed "s|@@INFILE@@|$CONFIG_NAME/$type.out|" \
+    sed "s|@@OUTFILE_PNG@@|$CONFIG_NAME/all-cpus/graphs/$type.png|" "$(dirname $0)/wqueue_singlestat.gnuplot" \
+	| sed "s|@@OUTFILE_EPS@@|$CONFIG_NAME/all-cpus/graphs/$type.eps|" \
+	| sed "s|@@INFILE@@|$CONFIG_NAME/all-cpus/data/$type.out|" \
 	| sed "s|@@XLABEL@@|Worker ID|" \
 	| sed "s|@@YLABEL@@|$type $UNIT|" \
 	| sed "s|@@XRANGE@@|set xrange [0:$OMP_NUM_THREADS]|" \
@@ -197,9 +202,9 @@ do
 
 	    for CPU in $(seq 0 $(($OMP_NUM_THREADS - 1)))
 	    do
-		sed "s|@@OUTFILE_PNG@@|$CONFIG_NAME/ibs_cpu$CPU-time-$type.png|" "$(dirname $0)/wqueue_timestat.gnuplot" \
-		    | sed "s|@@OUTFILE_EPS@@|$CONFIG_NAME/ibs_cpu$CPU-time-$type.eps|" \
-		    | sed "s|@@INFILE@@|$CONFIG_NAME/ibs_cpu$CPU-time-$type.out|" \
+		sed "s|@@OUTFILE_PNG@@|$CONFIG_NAME/by-cpu/time/graphs/ibs_cpu$CPU-time-$type.png|" "$(dirname $0)/wqueue_timestat.gnuplot" \
+		    | sed "s|@@OUTFILE_EPS@@|$CONFIG_NAME/by-cpu/time/graphs/ibs_cpu$CPU-time-$type.eps|" \
+		    | sed "s|@@INFILE@@|$CONFIG_NAME/by-cpu/time/data/ibs_cpu$CPU-time-$type.out|" \
 		    | sed "s|@@XLABEL@@|time|" \
 		    | sed "s|@@YLABEL@@|$type $UNIT|" \
 		    | sed "s|@@TITLE@@|$type for CPU $CPU|" \
@@ -215,9 +220,9 @@ do
 		    exit 1
 		fi
 
-		sed "s|@@OUTFILE_PNG@@|$CONFIG_NAME/ibs_cpu$CPU-time-$type-delta.png|" "$(dirname $0)/wqueue_timestat.gnuplot" \
-		    | sed "s|@@OUTFILE_EPS@@|$CONFIG_NAME/ibs_cpu$CPU-time-$type-delta.eps|" \
-		    | sed "s|@@INFILE@@|$CONFIG_NAME/ibs_cpu$CPU-time-$type.out|" \
+		sed "s|@@OUTFILE_PNG@@|$CONFIG_NAME/by-cpu/time/graphs/ibs_cpu$CPU-time-$type-delta.png|" "$(dirname $0)/wqueue_timestat.gnuplot" \
+		    | sed "s|@@OUTFILE_EPS@@|$CONFIG_NAME/by-cpu/time/graphs/ibs_cpu$CPU-time-$type-delta.eps|" \
+		    | sed "s|@@INFILE@@|$CONFIG_NAME//by-cpu/time/data/ibs_cpu$CPU-time-$type.out|" \
 		    | sed "s|@@XLABEL@@|time|" \
 		    | sed "s|@@YLABEL@@|$type $UNIT|" \
 		    | sed "s|@@TITLE@@|$type per load for CPU $CPU|" \
