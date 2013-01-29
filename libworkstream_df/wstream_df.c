@@ -10,8 +10,8 @@
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
 
-#define NUM_STEAL_ATTEMPTS_L2 10
-#define NUM_STEAL_ATTEMPTS_L3 10
+#define NUM_STEAL_ATTEMPTS_L2 2
+#define NUM_STEAL_ATTEMPTS_L3 8
 #define NUM_STEAL_ATTEMPTS_REMOTE 1
 
 #define NUM_PUSH_SLOTS 32
@@ -830,6 +830,7 @@ worker_thread (void)
 {
   wstream_df_thread_p cthread = current_thread;
   unsigned int steal_from = 0;
+  int last_steal_from = -1;
   int i;
 
   current_barrier = NULL;
@@ -901,19 +902,16 @@ worker_thread (void)
 
       if (fp == NULL)
 	{
-	  if(!(cthread->worker_id == (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0)) {
+	  if(!(cthread->worker_id == (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0) && last_steal_from == -1) {
 	    for(i = 0; i < NUM_STEAL_ATTEMPTS_L2 && !fp; i++) {
 	      steal_from = (cthread->worker_id + 1) % 2;
 	      steal_from += cthread->worker_id;
 
 	      fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-
-	      if(!fp)
-		pthread_yield();
 	    }
 	  }
 
-	  if(fp == NULL) {
+	  if(fp == NULL && last_steal_from == -1) {
 	    int l3_base = cthread->worker_id & ~7;
 	    int num_workers_on_l3 = num_workers - l3_base;
 
@@ -926,20 +924,28 @@ worker_thread (void)
 		  cthread->rands = cthread->rands * 1103515245 + 12345;
 		  steal_from = l3_base + (cthread->rands % num_workers_on_l3);
 		} while(steal_from == cthread->worker_id);
-		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 
-		if(!fp && i % 4 == 0)
-		  pthread_yield();
+		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 	      }
 	    }
 	  }
 
 	  if(fp == NULL) {
 	    for(i = 0; i < NUM_STEAL_ATTEMPTS_REMOTE && !fp; i++) {
-	      cthread->rands = cthread->rands * 1103515245 + 12345;
-	      steal_from = cthread->rands % num_workers;
+	      if(last_steal_from == -1) {
+		cthread->rands = cthread->rands * 1103515245 + 12345;
+		steal_from = cthread->rands % num_workers;
+	      } else {
+		steal_from = last_steal_from;
+	      }
+
 	      if (__builtin_expect (steal_from != cthread->worker_id, 1))
 		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+
+	      if(fp != NULL)
+		last_steal_from = steal_from;
+	      else
+		last_steal_from = -1;
 	    }
 	  }
 
