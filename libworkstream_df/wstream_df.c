@@ -860,6 +860,8 @@ worker_thread (void)
 	  if(!(cthread->worker_id == (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0)) {
 	    for(i = 0; i < NUM_STEAL_ATTEMPTS_L2 && !fp; i++) {
 	      steal_from = (cthread->worker_id + 1) % 2;
+	      steal_from += cthread->worker_id;
+
 	      fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 
 	      if(!fp)
