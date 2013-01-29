@@ -565,7 +565,10 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
 
+#ifdef WQUEUE_PROFILE
   current_thread->tasks_created++;
+#endif
+
   memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
 
   if (has_lp)
@@ -980,7 +983,11 @@ worker_thread (void)
 #endif
 
 	  fp->work_fn (fp);
+
+#ifdef WQUEUE_PROFILE
 	  cthread->tasks_executed++;
+#endif
+
 	  _PAPI_P3E;
 
 	  __compiler_fence;
