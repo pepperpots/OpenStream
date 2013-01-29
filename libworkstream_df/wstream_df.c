@@ -880,7 +880,7 @@ worker_thread (void)
 	      for(i = 0; i < NUM_STEAL_ATTEMPTS_L3 && !fp; i++) {
 		do {
 		  cthread->rands = cthread->rands * 1103515245 + 12345;
-		  steal_from = l3_base + cthread->rands % num_workers_on_l3;
+		  steal_from = l3_base + (cthread->rands % num_workers_on_l3);
 		} while(steal_from == cthread->worker_id);
 		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 
