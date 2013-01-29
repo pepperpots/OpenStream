@@ -12,7 +12,19 @@ typedef struct slab
 
 } slab_t, *slab_p;
 
-static __thread slab_p slab_alloc_free_pool[__slab_max_size + 1];
+typedef struct slab_cache {
+  slab_p slab_free_pool[__slab_max_size + 1];
+
+  unsigned long long slab_bytes;
+  unsigned long long slab_refills;
+  unsigned long long slab_allocations;
+  unsigned long long slab_frees;
+  unsigned long long slab_freed_bytes;
+  unsigned long long slab_hits;
+  unsigned long long slab_toobig;
+  unsigned long long slab_toobig_frees;
+  unsigned long long slab_toobig_freed_bytes;
+} slab_cache_t, *slab_cache_p;
 
 static inline unsigned int
 get_slab_index (unsigned int size)
@@ -30,17 +42,20 @@ get_slab_index (unsigned int size)
 }
 
 static inline void
-slab_refill (unsigned int idx)
+slab_refill (slab_cache_p slab_cache, unsigned int idx)
 {
   const unsigned int num_slabs = 1 << (__slab_alloc_size - idx);
   const unsigned int slab_size = 1 << idx;
   unsigned int i;
   slab_p s;
 
-  assert (!posix_memalign ((void **) &slab_alloc_free_pool[idx],
+  assert (!posix_memalign ((void **) &slab_cache->slab_free_pool[idx],
 			   __slab_align, 1 << __slab_alloc_size));
 
-  s = slab_alloc_free_pool[idx]; // avoid useless warning;
+  slab_cache->slab_refills++;
+  slab_cache->slab_bytes += 1 << __slab_alloc_size;
+
+  s = slab_cache->slab_free_pool[idx]; // avoid useless warning;
   for (i = 0; i < num_slabs - 1; ++i)
     {
       s->next = (slab_p) (((char *) s) + slab_size);
@@ -50,28 +65,33 @@ slab_refill (unsigned int idx)
 }
 
 static inline void *
-slab_alloc (unsigned int size)
+slab_alloc (slab_cache_p slab_cache, unsigned int size)
 {
   unsigned int idx = get_slab_index (size);
   void *res;
 
+  slab_cache->slab_allocations++;
+
   if (idx > __slab_max_size)
     {
+      slab_cache->slab_toobig++;
       assert (!posix_memalign ((void **) &res, __slab_align, size));
       return res;
     }
 
-  if (slab_alloc_free_pool[idx] == NULL)
-    slab_refill (idx);
+  if (slab_cache->slab_free_pool[idx] == NULL)
+    slab_refill (slab_cache, idx);
+  else
+    slab_cache->slab_hits++;
 
-  res = (void *) slab_alloc_free_pool[idx];
-  slab_alloc_free_pool[idx] = slab_alloc_free_pool[idx]->next;
+  res = (void *) slab_cache->slab_free_pool[idx];
+  slab_cache->slab_free_pool[idx] = slab_cache->slab_free_pool[idx]->next;
 
   return res;
 }
 
 static inline void
-slab_free (void *e, unsigned int size)
+slab_free (slab_cache_p slab_cache, void *e, unsigned int size)
 {
   slab_p elem = (slab_p) e;
   unsigned int idx = get_slab_index (size);
@@ -79,21 +99,35 @@ slab_free (void *e, unsigned int size)
   if (idx > __slab_max_size)
     {
       free (e);
+      slab_cache->slab_toobig_frees++;
+      slab_cache->slab_toobig_freed_bytes += size;
     }
   else
     {
-      elem->next = slab_alloc_free_pool[idx];
-      slab_alloc_free_pool[idx] = elem;
+      elem->next = slab_cache->slab_free_pool[idx];
+      slab_cache->slab_free_pool[idx] = elem;
+      slab_cache->slab_frees++;
+      slab_cache->slab_freed_bytes += size;
     }
 }
 
 static inline void
-slab_init_allocator ()
+slab_init_allocator (slab_cache_p slab_cache)
 {
   int i;
 
   for (i = 0; i < __slab_max_size + 1; ++i)
-    slab_alloc_free_pool[i] = NULL;
+    slab_cache->slab_free_pool[i] = NULL;
+
+  slab_cache->slab_bytes = 0;
+  slab_cache->slab_refills = 0;
+  slab_cache->slab_allocations = 0;
+  slab_cache->slab_frees = 0;
+  slab_cache->slab_freed_bytes = 0;
+  slab_cache->slab_hits = 0;
+  slab_cache->slab_toobig = 0;
+  slab_cache->slab_toobig_frees = 0;
+  slab_cache->slab_toobig_freed_bytes = 0;
 }
 
 
@@ -103,18 +137,18 @@ slab_init_allocator ()
 #undef __slab_alloc_size
 
 #if !NO_SLAB_ALLOCATOR
-#  define wstream_alloc(PP,A,S)			\
-  *(PP) = slab_alloc ((S))
-#  define wstream_free(P,S)			\
-  slab_free ((P), (S))
-#  define wstream_init_alloc()			\
-  slab_init_allocator ()
+#  define wstream_alloc(SLAB, PP,A,S)			\
+  *(PP) = slab_alloc ((SLAB), (S))
+#  define wstream_free(SLAB, P,S)			\
+  slab_free ((SLAB), (P), (S))
+#  define wstream_init_alloc(SLAB)			\
+  slab_init_allocator (SLAB)
 #else
-#  define wstream_alloc(PP,A,S)			\
+#  define wstream_alloc(SLAB, PP,A,S)			\
   assert (!posix_memalign ((void **) (PP), (A), (S)))
-#  define wstream_free(P,S)			\
+#  define wstream_free(SLAB, P,S)			\
   free ((P))
-#  define wstream_init_alloc()
+#  define wstream_init_alloc(SLAB)
 #endif
 
 

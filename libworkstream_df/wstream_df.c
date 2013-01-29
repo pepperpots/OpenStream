@@ -195,6 +195,10 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   cdeque_t work_deque __attribute__((aligned (64)));
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
+#if !NO_SLAB_ALLOCATOR
+  slab_cache_t slab_cache;
+#endif
+
   unsigned int rands;
 
 #if ALLOW_PUSHES
@@ -257,7 +261,7 @@ wstream_df_create_barrier ()
 {
   barrier_p barrier;
 
-  wstream_alloc (&barrier, 64, sizeof (barrier_t));
+  wstream_alloc (&current_thread->slab_cache, &barrier, 64, sizeof (barrier_t));
   memset (barrier, 0, sizeof (barrier_t));
 
   /* Add one guard elemment, it will be matched by one increment of
@@ -275,7 +279,7 @@ try_pass_barrier (barrier_p bar)
   if (bar->barrier_counter_created == exec)
     {
       if (bar->barrier_unused == true)
-	wstream_free (bar, sizeof (barrier_t));
+	wstream_free (&current_thread->slab_cache, bar, sizeof (barrier_t));
       else
 	{
 	  if (ws_setcontext (&bar->continuation_context) == -1)
@@ -328,7 +332,7 @@ wstream_df_taskwait ()
 	 this scheduler will be, so leave NULL then set when a barrier
 	 passes to the barrier's continuation).  */
 
-      wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
+      wstream_alloc(&cthread->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
       ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
       ws_prepcontext (&cbar->continuation_context, NULL, WSTREAM_STACK_SIZE, NULL);
 
@@ -347,10 +351,10 @@ wstream_df_taskwait ()
 	 the context that was swapped out (can only happen in TEND).  The
 	 stack-stored variable BAR should have been preserved even if the
 	 thread-local "current_barrier" has not.  */
-      wstream_free (cthread->current_stack, WSTREAM_STACK_SIZE);
+      wstream_free (&cthread->slab_cache, cthread->current_stack, WSTREAM_STACK_SIZE);
     }
 
-  wstream_free (cbar, sizeof (barrier_t));
+  wstream_free (&cthread->slab_cache, cbar, sizeof (barrier_t));
   /* Restore thread-local variables.  */
   cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
@@ -364,21 +368,22 @@ wstream_df_taskwait ()
 void
 init_wqueue_counters (void)
 {
-	current_thread->steals_owncached = 0;
-	current_thread->steals_ownqueue = 0;
-	current_thread->steals_samel2 = 0;
-	current_thread->steals_samel3 = 0;
-	current_thread->steals_remote = 0;
-	current_thread->steals_fails = 0;
-	current_thread->tasks_created = 0;
-	current_thread->tasks_executed = 0;
+	wstream_df_thread_p cthread = current_thread;
+	cthread->steals_owncached = 0;
+	cthread->steals_ownqueue = 0;
+	cthread->steals_samel2 = 0;
+	cthread->steals_samel3 = 0;
+	cthread->steals_remote = 0;
+	cthread->steals_fails = 0;
+	cthread->tasks_created = 0;
+	cthread->tasks_executed = 0;
 
 #ifdef ALLOW_PUSHES
-	current_thread->steals_pushed = 0;
-	current_thread->pushes_samel2 = 0;
-	current_thread->pushes_samel3 = 0;
-	current_thread->pushes_remote = 0;
-	current_thread->pushes_fails = 0;
+	cthread->steals_pushed = 0;
+	cthread->pushes_samel2 = 0;
+	cthread->pushes_samel3 = 0;
+	cthread->pushes_remote = 0;
+	cthread->pushes_fails = 0;
 #endif
 }
 
@@ -409,6 +414,36 @@ dump_wqueue_counters (wstream_df_thread_p th)
 	printf ("Thread %d: steals_fails = %lld\n",
 		th->worker_id,
 		th->steals_fails);
+
+#if !NO_SLAB_ALLOCATOR
+	printf ("Thread %d: slab_bytes = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_bytes);
+	printf ("Thread %d: slab_refills = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_refills);
+	printf ("Thread %d: slab_allocations = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_allocations);
+	printf ("Thread %d: slab_frees = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_frees);
+	printf ("Thread %d: slab_freed_bytes = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_freed_bytes);
+	printf ("Thread %d: slab_hits = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_hits);
+	printf ("Thread %d: slab_toobig = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_toobig);
+	printf ("Thread %d: slab_toobig_frees = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_toobig_frees);
+	printf ("Thread %d: slab_toobig_freed_bytes = %lld\n",
+		th->worker_id,
+		th->slab_cache.slab_toobig_freed_bytes);
+#endif
 
 #ifdef ALLOW_PUSHES
 	printf ("Thread %d: pushes_samel2 = %lld\n",
@@ -524,7 +559,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   __compiler_fence;
 
-  wstream_alloc(&frame_pointer, 64, size);
+  wstream_alloc(&current_thread->slab_cache, &frame_pointer, 64, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -660,7 +695,7 @@ __builtin_ia32_tend (void *fp)
       current_barrier = NULL;
     }
 
-  wstream_free (cfp, cfp->size);
+  wstream_free (&current_thread->slab_cache, cfp, cfp->size);
 
   /* If this task belongs to a barrier, increment the exec count and
      try to pass the barrier.  */
@@ -976,11 +1011,12 @@ worker_thread (void)
 void *
 wstream_df_worker_thread_fn (void *data)
 {
+  current_thread = ((wstream_df_thread_p) data);
+
   if (((wstream_df_thread_p) data)->worker_id != 0)
     {
-      wstream_init_alloc();
+      wstream_init_alloc(&current_thread->slab_cache);
     }
-  current_thread = ((wstream_df_thread_p) data);
 
 #ifdef WQUEUE_PROFILE
       init_wqueue_counters ();
@@ -1122,7 +1158,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
 
   void *stack;
-  wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
+  wstream_alloc(&wstream_df_worker_threads[0].slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
   errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
   wstream_df_worker->current_stack = stack;
 
@@ -1184,8 +1220,6 @@ void pre_main()
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
 
-  wstream_init_alloc();
-
 #ifdef WQUEUE_PROFILE
 #ifdef MATRIX_PROFILE
   memset(transfer_matrix, 0, sizeof(transfer_matrix));
@@ -1213,6 +1247,8 @@ void pre_main()
     wstream_df_fatal ("Out of memory ...");
 
   ncores = wstream_df_num_cores ();
+
+  wstream_init_alloc(&wstream_df_worker_threads[0].slab_cache);
 
 #ifdef _PRINT_STATS
   printf ("Creating %d workers for %d cores\n", num_workers, ncores);
@@ -1247,7 +1283,7 @@ void pre_main()
     ws_ctx_t ctx;
     void *stack;
 
-    wstream_alloc(&stack, 64, WSTREAM_STACK_SIZE);
+    wstream_alloc(&wstream_df_worker_threads[0].slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
     ws_prepcontext (&master_ctx, NULL, WSTREAM_STACK_SIZE, NULL);
     ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, master_join_fn);
 
@@ -1350,7 +1386,7 @@ init_stream (void *s, size_t element_size)
 void
 wstream_df_stream_ctor (void **s, size_t element_size)
 {
-  wstream_alloc(s, 64, sizeof (wstream_df_stream_t));
+  wstream_alloc(&current_thread->slab_cache, s, 64, sizeof (wstream_df_stream_t));
   init_stream (*s, element_size);
 }
 
@@ -1361,7 +1397,7 @@ wstream_df_stream_array_ctor (void **s, size_t num_streams, size_t element_size)
 
   for (i = 0; i < num_streams; ++i)
     {
-      wstream_alloc(&s[i], 64, sizeof (wstream_df_stream_t));
+      wstream_alloc(&current_thread->slab_cache, &s[i], 64, sizeof (wstream_df_stream_t));
       init_stream (s[i], element_size);
     }
 }
@@ -1411,7 +1447,7 @@ dec_stream_ref (void *s)
   if (refcount == 0)
     {
       force_empty_queues (s);
-      wstream_free(s, sizeof (wstream_df_stream_t));
+      wstream_free(&current_thread->slab_cache, s, sizeof (wstream_df_stream_t));
     }
 #if 0
   int refcount = stream->refcount;
@@ -1571,7 +1607,7 @@ __builtin_ia32_tick (void *s, size_t burst)
       /* Allocate a fake view, with a fake data block, that allows to
 	 keep the same dependence resolution algorithm.  */
       size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size;
-      wstream_alloc(&cons_view, 64, size);
+      wstream_alloc(&current_thread->slab_cache, &cons_view, 64, size);
       memset (cons_view, 0, size);
 
       cons_view->horizon = burst * stream->elem_size;
