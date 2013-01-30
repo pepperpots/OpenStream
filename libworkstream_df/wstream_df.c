@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
@@ -17,6 +18,10 @@
 #define NUM_PUSH_SLOTS 32
 #define NUM_PUSH_ATTEMPTS 16
 #define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
+
+#define MAX_WQEVENT_SAMPLES 100000
+#define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
+#define WQEVENT_SAMPLING_OUTFILE "events.prv"
 
 #define _PHARAON_MODE
 
@@ -37,6 +42,21 @@ int _papi_tracked_events[_papi_num_events] =
 //  {PAPI_TOT_CYC, PAPI_L1_DCM, PAPI_L2_DCM, PAPI_TLB_DM, PAPI_PRF_DM, PAPI_MEM_SCY};
 #endif
 
+#ifdef __i386
+inline  uint64_t rdtsc() {
+  uint64_t x;
+  __asm__ volatile ("rdtsc" : "=A" (x));
+  return x;
+}
+#elif defined __amd64
+inline uint64_t rdtsc() {
+  uint64_t a, d;
+  __asm__ volatile ("rdtsc" : "=a" (a), "=d" (d));
+  return (d<<32) | a;
+}
+#else
+# error "RDTSC is not defined for your architecture"
+#endif
 
 /***************************************************************************/
 /* Implement linked list operations:
@@ -179,6 +199,26 @@ typedef struct barrier
   struct barrier *save_barrier;
 } barrier_t, *barrier_p;
 
+#define WQEVENT_STATECHANGE 0
+#define WQEVENT_SINGLEEVENT 1
+#define WQEVENT_STEAL 2
+
+#define WORKER_STATE_SEEKING 0
+#define WORKER_STATE_TASKEXEC 1
+
+typedef struct worker_event {
+  uint64_t time;
+  uint32_t type;
+
+  union {
+    struct {
+      uint16_t src;
+      uint16_t size;
+    } steal;
+    uint32_t state;
+  };
+} worker_state_change_t, *worker_state_change_p;
+
 /* T* worker threads have each their own private work queue, which
    contains the frames that are ready to be executed.  For now the
    control program will be distributing work round-robin, later we
@@ -232,6 +272,11 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned long long bytes_rem;
   unsigned long long tasks_created;
   unsigned long long tasks_executed;
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING
+  worker_state_change_t events[MAX_WQEVENT_SAMPLES];
+  unsigned int num_events;
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
@@ -961,6 +1006,17 @@ worker_thread (void)
 			  cthread->steals_remote++;
 	  }
 #endif
+
+#if ALLOW_WQEVENT_SAMPLING
+	  if(fp != NULL) {
+	    assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+	    cthread->events[cthread->num_events].time = rdtsc();
+	    cthread->events[cthread->num_events].steal.src = steal_from;
+	    cthread->events[cthread->num_events].steal.size = fp->size;
+	    cthread->events[cthread->num_events].type = WQEVENT_STEAL;
+	    cthread->num_events++;
+	  }
+#endif
 	}
 
       if (fp != NULL)
@@ -988,7 +1044,23 @@ worker_thread (void)
 	  }
 #endif
 
+#if ALLOW_WQEVENT_SAMPLING
+	  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+	  cthread->events[cthread->num_events].time = rdtsc();
+	  cthread->events[cthread->num_events].state = WORKER_STATE_TASKEXEC;
+	  cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+	  cthread->num_events++;
+#endif
+
 	  fp->work_fn (fp);
+
+#if ALLOW_WQEVENT_SAMPLING
+	  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+	  cthread->events[cthread->num_events].time = rdtsc();
+	  cthread->events[cthread->num_events].state = WORKER_STATE_SEEKING;
+	  cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+	  cthread->num_events++;
+#endif
 
 #ifdef WQUEUE_PROFILE
 	  cthread->tasks_executed++;
@@ -1153,6 +1225,12 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
 #endif
 
+#if ALLOW_STATE_SAMPLING
+  wstream_df_worker->events[0].time = rdtsc();
+  wstream_df_worker->events[0].state = WORKER_STATE_SEEKING;
+  wstream_df_worker->num_events = 1;
+#endif
+
 #ifdef _PRINT_STATS
   printf ("worker %d mapped to core %d\n", id, core);
 #endif
@@ -1313,6 +1391,106 @@ void pre_main()
   free (cpu_affinities);
 }
 
+/* Dumps worker events to a file in paraver format. */
+void dump_events(void)
+{
+  unsigned int i, k;
+  wstream_df_thread_p th;
+  time_t t = time(NULL);
+  struct tm * now = localtime(&t);
+  int64_t max_time = -1;
+  int64_t min_time = -1;
+  FILE* fp = fopen(WQEVENT_SAMPLING_OUTFILE, "w+");
+  int last_state_idx;
+
+  assert(fp != NULL);
+
+  /* Find minimum and maximum time.
+   * All the time values in the dump will be based on the minimum
+   */
+  for(i = 0; i < (unsigned int)num_workers; i++) {
+    th = &wstream_df_worker_threads[i];
+
+    if(th->num_events > 0) {
+      if(min_time == -1 || th->events[0].time < (uint64_t)min_time)
+	min_time = th->events[0].time;
+
+      if(max_time == -1 || th->events[th->num_events-1].time > (uint64_t)max_time)
+	max_time = th->events[th->num_events-1].time;
+    }
+  }
+
+  assert(min_time != -1);
+  assert(max_time != -1);
+
+  /* Write paraver header */
+  fprintf(fp, "#Paraver (%d/%d/%d at %d:%d):%"PRIu64":1(%d):1:1(%d:1)\n",
+	  now->tm_mday,
+	  now->tm_mon+1,
+	  now->tm_year+1900,
+	  now->tm_hour,
+	  now->tm_min,
+	  max_time-min_time,
+	  num_workers,
+	  num_workers);
+
+  /* Dump events and states */
+  for (i = 0; i < (unsigned int)num_workers; ++i) {
+    th = &wstream_df_worker_threads[i];
+    last_state_idx = -1;
+
+    if(th->num_events > 0) {
+      for(k = 0; k < th->num_events-1; k++) {
+	/* States */
+	if(th->events[k].type == WQEVENT_STATECHANGE) {
+	  if(last_state_idx != -1) {
+	    /* Not the first state change, so using last_state_idx is safe */
+	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+		    (th->worker_id+1),
+		    (th->worker_id+1),
+		    th->events[last_state_idx].time-min_time,
+		    th->events[k].time-min_time,
+		    th->events[last_state_idx].state);
+	  } else {
+	    /* First state change, by default the initial state is "seeking" */
+	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+		    (th->worker_id+1),
+		    (th->worker_id+1),
+		    (uint64_t)0,
+		    th->events[k].time-min_time,
+		    WORKER_STATE_SEEKING);
+	  }
+
+	  last_state_idx = k;
+	} else if(th->events[k].type == WQEVENT_STEAL) {
+	  /* Steal events (dumped as communication) */
+	  fprintf(fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
+		  th->events[k].steal.src+1,
+		  th->events[k].steal.src+1,
+		  th->events[k].time-min_time,
+		  th->events[k].time-min_time,
+		  (th->worker_id+1),
+		  (th->worker_id+1),
+		  th->events[k].time-min_time,
+		  th->events[k].time-min_time,
+		  th->events[k].steal.size);
+	}
+      }
+
+      /* Final state is "seeking" (beginning at the last state,
+       * finishing at program termination) */
+      fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+	      (th->worker_id+1),
+	      (th->worker_id+1),
+	      th->events[last_state_idx].time-min_time,
+	      max_time-min_time,
+	      WORKER_STATE_SEEKING);
+    }
+  }
+
+  fclose(fp);
+}
+
 __attribute__((destructor))
 void post_main()
 {
@@ -1342,6 +1520,10 @@ void post_main()
 	  unsigned long long bytes_l3 = 0;
 	  unsigned long long bytes_rem = 0;
 	  unsigned long long bytes_total = 0;
+
+#if ALLOW_WQEVENT_SAMPLING
+	  dump_events();
+#endif
 
 	  for (i = 0; i < num_workers; ++i) {
 		  dump_wqueue_counters(&wstream_df_worker_threads[i]);
