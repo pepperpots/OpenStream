@@ -202,6 +202,7 @@ typedef struct barrier
 #define WQEVENT_STATECHANGE 0
 #define WQEVENT_SINGLEEVENT 1
 #define WQEVENT_STEAL 2
+#define WQEVENT_TCREATE 3
 
 #define WORKER_STATE_SEEKING 0
 #define WORKER_STATE_TASKEXEC 1
@@ -601,14 +602,22 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 {
   wstream_df_frame_p frame_pointer;
   barrier_p cbar = current_barrier;
+  wstream_df_thread_p cthread = current_thread;
 
   __compiler_fence;
 
-  wstream_alloc(&current_thread->slab_cache, &frame_pointer, 64, size);
+  wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
+
+#if ALLOW_WQEVENT_SAMPLING
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].type = WQEVENT_TCREATE;
+  cthread->num_events++;
+#endif
 
 #ifdef WQUEUE_PROFILE
   current_thread->tasks_created++;
@@ -1474,6 +1483,12 @@ void dump_events(void)
 		  th->events[k].time-min_time,
 		  th->events[k].time-min_time,
 		  th->events[k].steal.size);
+	} else if(th->events[k].type == WQEVENT_TCREATE) {
+	  /* Tcreate event (simply dumped as an event) */
+	  fprintf(fp, "2:%d:1:1:%d:%"PRIu64":1:1\n",
+		  (th->worker_id+1),
+		  (th->worker_id+1),
+		  th->events[k].time-min_time);
 	}
       }
 
