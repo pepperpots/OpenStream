@@ -19,7 +19,7 @@
 #define NUM_PUSH_ATTEMPTS 16
 #define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
 
-#define MAX_WQEVENT_SAMPLES 100000
+#define MAX_WQEVENT_SAMPLES 1000000
 #define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
 #define WQEVENT_SAMPLING_OUTFILE "events.prv"
 
@@ -206,6 +206,9 @@ typedef struct barrier
 
 #define WORKER_STATE_SEEKING 0
 #define WORKER_STATE_TASKEXEC 1
+#define WORKER_STATE_RT_TCREATE 2
+#define WORKER_STATE_RT_RESDEP 3
+#define WORKER_STATE_RT_TDEC 4
 
 typedef struct worker_event {
   uint64_t time;
@@ -213,10 +216,14 @@ typedef struct worker_event {
 
   union {
     struct {
-      uint16_t src;
-      uint16_t size;
+      uint32_t src;
+      uint32_t size;
     } steal;
-    uint32_t state;
+
+    struct {
+      uint32_t state;
+      uint32_t previous_state_idx;
+    } state_change;
   };
 } worker_state_change_t, *worker_state_change_p;
 
@@ -278,6 +285,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 #if ALLOW_WQEVENT_SAMPLING
   worker_state_change_t events[MAX_WQEVENT_SAMPLES];
   unsigned int num_events;
+  unsigned int previous_state_idx;
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
@@ -294,8 +302,29 @@ static inline void trace_state_change(wstream_df_thread_p cthread, unsigned int 
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
-  cthread->events[cthread->num_events].state = state;
+  cthread->events[cthread->num_events].state_change.state = state;
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+
+  cthread->events[cthread->num_events].state_change.previous_state_idx =
+    cthread->previous_state_idx;
+
+  cthread->previous_state_idx = cthread->num_events;
+  cthread->num_events++;
+}
+
+static inline void trace_state_restore(wstream_df_thread_p cthread)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+
+  cthread->events[cthread->num_events].state_change.state =
+    cthread->events[cthread->previous_state_idx].state_change.state;
+
+  cthread->events[cthread->num_events].state_change.previous_state_idx =
+    cthread->events[cthread->previous_state_idx].state_change.previous_state_idx;
+
+  cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
 }
 
@@ -312,6 +341,7 @@ static inline void trace_steal(wstream_df_thread_p cthread, unsigned int src, un
 #define trace_event(cthread, type) do { } while(0)
 #define trace_state_change(cthread, state) do { } while(0)
 #define trace_steal(cthread, src, size) do { } while(0)
+#define trace_state_restore(cthread) do { } while(0)
 #endif
 
 /***************************************************************************/
@@ -639,13 +669,14 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   __compiler_fence;
 
+  trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
+  trace_event(cthread, WQEVENT_TCREATE);
+
   wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
-
-  trace_event(cthread, WQEVENT_TCREATE);
 
 #ifdef WQUEUE_PROFILE
   current_thread->tasks_created++;
@@ -670,6 +701,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   cbar->barrier_counter_created++;
   frame_pointer->own_barrier = cbar;
 
+  trace_state_restore(cthread);
   return frame_pointer;
 }
 
@@ -683,6 +715,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
   unsigned int max_worker;
   long long max_data = 0;
   int push_slot;
+
+  trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
 #ifdef WQUEUE_PROFILE
   if(is_write)
@@ -727,6 +761,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	       else
 		  current_thread->pushes_remote++;
 #endif
+	       trace_state_restore(cthread);
 	       return;
 	     }
 
@@ -742,6 +777,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
 			    (wstream_df_type) cthread->own_next_cached_thread);
       cthread->own_next_cached_thread = fp;
     }
+
+  trace_state_restore(cthread);
 }
 
 /* Decrease the synchronization counter by one.  This is not used in
@@ -816,6 +853,8 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
   wstream_df_list_p prod_queue = &stream->producer_queue;
   wstream_df_list_p cons_queue = &stream->consumer_queue;
 
+  trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
+
   if (is_read_view_p == true)
     {
       /* It's either a peek view or "normal", stream-advancing.  */
@@ -889,6 +928,8 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
       else
 	wstream_df_list_push (prod_queue, (void *) view);
     }
+
+  trace_state_restore(current_thread);
 }
 
 /***************************************************************************/
@@ -1244,6 +1285,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   wstream_df_worker->events[0].time = rdtsc();
   wstream_df_worker->events[0].state = WORKER_STATE_SEEKING;
   wstream_df_worker->num_events = 1;
+  wstream_df_worker->last_state_idx = 0;
 #endif
 
 #ifdef _PRINT_STATS
@@ -1466,7 +1508,7 @@ void dump_events(void)
 		    (th->worker_id+1),
 		    th->events[last_state_idx].time-min_time,
 		    th->events[k].time-min_time,
-		    th->events[last_state_idx].state);
+		    th->events[last_state_idx].state_change.state);
 	  } else {
 	    /* First state change, by default the initial state is "seeking" */
 	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
