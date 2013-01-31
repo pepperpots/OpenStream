@@ -281,6 +281,39 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 #endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
+#if ALLOW_WQEVENT_SAMPLING
+static inline void trace_event(wstream_df_thread_p cthread, unsigned int type)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].type = type;
+  cthread->num_events++;
+}
+
+static inline void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].state = state;
+  cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+  cthread->num_events++;
+}
+
+static inline void trace_steal(wstream_df_thread_p cthread, unsigned int src, unsigned int size)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].steal.src = src;
+  cthread->events[cthread->num_events].steal.size = size;
+  cthread->events[cthread->num_events].type = WQEVENT_STEAL;
+  cthread->num_events++;
+}
+#else
+#define trace_event(cthread, type) do { } while(0)
+#define trace_state_change(cthread, state) do { } while(0)
+#define trace_steal(cthread, src, size) do { } while(0)
+#endif
+
 /***************************************************************************/
 /***************************************************************************/
 /* The current frame pointer, thread data, barrier and saved barrier
@@ -612,12 +645,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->size = size;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
 
-#if ALLOW_WQEVENT_SAMPLING
-  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
-  cthread->events[cthread->num_events].type = WQEVENT_TCREATE;
-  cthread->num_events++;
-#endif
+  trace_event(cthread, WQEVENT_TCREATE);
 
 #ifdef WQUEUE_PROFILE
   current_thread->tasks_created++;
@@ -1016,16 +1044,8 @@ worker_thread (void)
 	  }
 #endif
 
-#if ALLOW_WQEVENT_SAMPLING
-	  if(fp != NULL) {
-	    assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-	    cthread->events[cthread->num_events].time = rdtsc();
-	    cthread->events[cthread->num_events].steal.src = steal_from;
-	    cthread->events[cthread->num_events].steal.size = fp->size;
-	    cthread->events[cthread->num_events].type = WQEVENT_STEAL;
-	    cthread->num_events++;
-	  }
-#endif
+	  if(fp != NULL)
+	    trace_steal(cthread, steal_from, fp->size);
 	}
 
       if (fp != NULL)
@@ -1053,23 +1073,9 @@ worker_thread (void)
 	  }
 #endif
 
-#if ALLOW_WQEVENT_SAMPLING
-	  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-	  cthread->events[cthread->num_events].time = rdtsc();
-	  cthread->events[cthread->num_events].state = WORKER_STATE_TASKEXEC;
-	  cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
-	  cthread->num_events++;
-#endif
-
+	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 	  fp->work_fn (fp);
-
-#if ALLOW_WQEVENT_SAMPLING
-	  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-	  cthread->events[cthread->num_events].time = rdtsc();
-	  cthread->events[cthread->num_events].state = WORKER_STATE_SEEKING;
-	  cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
-	  cthread->num_events++;
-#endif
+	  trace_state_change(cthread, WORKER_STATE_SEEKING);
 
 #ifdef WQUEUE_PROFILE
 	  cthread->tasks_executed++;
@@ -1400,6 +1406,7 @@ void pre_main()
   free (cpu_affinities);
 }
 
+#if ALLOW_WQEVENT_SAMPLING
 /* Dumps worker events to a file in paraver format. */
 void dump_events(void)
 {
@@ -1505,6 +1512,9 @@ void dump_events(void)
 
   fclose(fp);
 }
+#else
+void dump_events(void) {}
+#endif
 
 __attribute__((destructor))
 void post_main()
