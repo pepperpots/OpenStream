@@ -209,6 +209,15 @@ typedef struct barrier
 #define WORKER_STATE_RT_TCREATE 2
 #define WORKER_STATE_RT_RESDEP 3
 #define WORKER_STATE_RT_TDEC 4
+#define WORKER_STATE_MAX 4
+
+static const char* state_names[] = {
+  "seeking",
+  "taskexec",
+  "tcreate",
+  "resdep",
+  "tdec"
+};
 
 typedef struct worker_event {
   uint64_t time;
@@ -1460,8 +1469,14 @@ void dump_events(void)
   int64_t min_time = -1;
   FILE* fp = fopen(WQEVENT_SAMPLING_OUTFILE, "w+");
   int last_state_idx;
+  unsigned int state;
+  unsigned long long state_durations[WORKER_STATE_MAX];
+  unsigned long long total_duration = 0;
+  unsigned long long num_tasks = 0;
 
   assert(fp != NULL);
+
+  memset(state_durations, 0, sizeof(state_durations));
 
   /* Find minimum and maximum time.
    * All the time values in the dump will be based on the minimum
@@ -1476,6 +1491,10 @@ void dump_events(void)
       if(max_time == -1 || th->events[th->num_events-1].time > (uint64_t)max_time)
 	max_time = th->events[th->num_events-1].time;
     }
+
+#if WQUEUE_PROFILE
+    num_tasks += th->tasks_executed;
+#endif
   }
 
   assert(min_time != -1);
@@ -1502,13 +1521,18 @@ void dump_events(void)
 	/* States */
 	if(th->events[k].type == WQEVENT_STATECHANGE) {
 	  if(last_state_idx != -1) {
+	    state = th->events[last_state_idx].state_change.state;
+
 	    /* Not the first state change, so using last_state_idx is safe */
 	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
 		    (th->worker_id+1),
 		    (th->worker_id+1),
 		    th->events[last_state_idx].time-min_time,
 		    th->events[k].time-min_time,
-		    th->events[last_state_idx].state_change.state);
+		    state);
+
+	    state_durations[state] += th->events[k].time - th->events[last_state_idx].time;
+	    total_duration += th->events[k].time - th->events[last_state_idx].time;
 	  } else {
 	    /* First state change, by default the initial state is "seeking" */
 	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
@@ -1517,6 +1541,9 @@ void dump_events(void)
 		    (uint64_t)0,
 		    th->events[k].time-min_time,
 		    WORKER_STATE_SEEKING);
+
+	    state_durations[WORKER_STATE_SEEKING] += th->events[k].time-min_time;
+	    total_duration += th->events[k].time-min_time;
 	  }
 
 	  last_state_idx = k;
@@ -1549,8 +1576,22 @@ void dump_events(void)
 	      th->events[last_state_idx].time-min_time,
 	      max_time-min_time,
 	      WORKER_STATE_SEEKING);
+
+      state_durations[WORKER_STATE_SEEKING] += max_time-th->events[last_state_idx].time;
+      total_duration += max_time-th->events[last_state_idx].time;
     }
   }
+
+  for(i = 0; i < WORKER_STATE_MAX; i++) {
+    printf("Overall time for state %s: %lld (%.6f %%)\n",
+	   state_names[i],
+	   state_durations[i],
+	   ((double)state_durations[i] / (double)total_duration)*100.0);
+  }
+
+#if WQUEUE_PROFILE
+  printf("Overall average task duration: %lld\n", state_durations[WORKER_STATE_TASKEXEC] / num_tasks);
+#endif
 
   fclose(fp);
 }
