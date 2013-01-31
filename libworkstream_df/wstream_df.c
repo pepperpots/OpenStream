@@ -22,6 +22,7 @@
 #define MAX_WQEVENT_SAMPLES 1000000
 #define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
 #define WQEVENT_SAMPLING_OUTFILE "events.prv"
+#define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
 
 #define _PHARAON_MODE
 
@@ -1458,6 +1459,115 @@ void pre_main()
 }
 
 #if ALLOW_WQEVENT_SAMPLING
+int get_next_state_change(wstream_df_thread_p th, int curr)
+{
+  for(curr = curr+1; (unsigned int)curr < th->num_events; curr++) {
+    if(th->events[curr].type == WQEVENT_STATECHANGE)
+      return curr;
+  }
+
+  return -1;
+}
+
+int get_min_index(int* curr_idx)
+{
+  int i;
+  int min_idx = -1;
+  uint64_t min = UINT64_MAX;
+  uint64_t curr;
+
+  for(i = 0; i < num_workers; i++) {
+    if(curr_idx[i] != -1) {
+      curr = wstream_df_worker_threads[i].events[curr_idx[i]].time;
+
+      if(curr < min) {
+	min = curr;
+	min_idx = i;
+      }
+    }
+  }
+
+  return min_idx;
+}
+
+int64_t get_min_time(void)
+{
+  int i;
+  int64_t min = -1;
+
+  for(i = 0; i < num_workers; i++)
+    if(wstream_df_worker_threads[i].num_events > 0)
+      if(min == -1 || wstream_df_worker_threads[i].events[0].time < (uint64_t)min)
+	min = wstream_df_worker_threads[i].events[0].time;
+
+  return min;
+}
+
+int64_t get_max_time(void)
+{
+  int i;
+  int64_t max = -1;
+
+  for(i = 0; i < num_workers; i++)
+    if(wstream_df_worker_threads[i].num_events > 0)
+      if(max == -1 || wstream_df_worker_threads[i].events[wstream_df_worker_threads[i].num_events-1].time > (uint64_t)max)
+	max = wstream_df_worker_threads[i].events[wstream_df_worker_threads[i].num_events-1].time;
+
+  return max;
+}
+
+void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals)
+{
+  int curr_idx[num_workers];
+  unsigned int last_state[num_workers];
+  int curr_parallelism = 0;
+  double parallelism_time = 0.0;
+  double parallelism_time_interval = 0.0;
+  int i;
+  uint64_t min_time = get_min_time();
+  uint64_t max_time = get_max_time();
+  uint64_t last_time = min_time;
+  uint64_t last_time_interval = min_time;
+  uint64_t interval_length = (max_time-min_time)/max_intervals;
+  worker_state_change_p curr_event;
+  FILE* fp = fopen(WQEVENT_SAMPLING_PARFILE, "w+");
+
+  assert(fp != NULL);
+
+  memset(curr_idx, 0, num_workers*sizeof(curr_idx[0]));
+
+  for(i = 0; i < num_workers; i++) {
+    curr_idx[i] = get_next_state_change(&wstream_df_worker_threads[i], 0);
+    last_state[i] = WORKER_STATE_SEEKING;
+  }
+
+  while((i = get_min_index(curr_idx))!= -1) {
+    curr_event = &wstream_df_worker_threads[i].events[curr_idx[i]];
+    parallelism_time += (double)(curr_event->time - last_time) * curr_parallelism;
+    parallelism_time_interval += (double)(curr_event->time - last_time) * curr_parallelism;
+
+    if(curr_event->state_change.state == state)
+      curr_parallelism++;
+    else if(last_state[i] == state)
+      curr_parallelism--;
+
+    last_state[i] = curr_event->state_change.state;
+    last_time = curr_event->time;
+    curr_idx[i] = get_next_state_change(&wstream_df_worker_threads[i], curr_idx[i]);
+
+    if(curr_event->time - last_time_interval > interval_length) {
+      fprintf(fp, "%"PRIu64" %f\n", curr_event->time-min_time, (double)parallelism_time_interval /(double)(curr_event->time - last_time_interval));
+      last_time_interval = curr_event->time;
+      parallelism_time_interval = 0.0;
+    }
+  }
+
+  printf("Overall average parallelism: %.6f\n",
+	 (double)parallelism_time / (double)(max_time - min_time));
+
+  fclose(fp);
+}
+
 /* Dumps worker events to a file in paraver format. */
 void dump_events(void)
 {
@@ -1465,8 +1575,8 @@ void dump_events(void)
   wstream_df_thread_p th;
   time_t t = time(NULL);
   struct tm * now = localtime(&t);
-  int64_t max_time = -1;
-  int64_t min_time = -1;
+  int64_t max_time = get_max_time();
+  int64_t min_time = get_min_time();
   FILE* fp = fopen(WQEVENT_SAMPLING_OUTFILE, "w+");
   int last_state_idx;
   unsigned int state;
@@ -1478,24 +1588,13 @@ void dump_events(void)
 
   memset(state_durations, 0, sizeof(state_durations));
 
-  /* Find minimum and maximum time.
-   * All the time values in the dump will be based on the minimum
-   */
+#if WQUEUE_PROFILE
+  /* Count number of tasks */
   for(i = 0; i < (unsigned int)num_workers; i++) {
     th = &wstream_df_worker_threads[i];
-
-    if(th->num_events > 0) {
-      if(min_time == -1 || th->events[0].time < (uint64_t)min_time)
-	min_time = th->events[0].time;
-
-      if(max_time == -1 || th->events[th->num_events-1].time > (uint64_t)max_time)
-	max_time = th->events[th->num_events-1].time;
-    }
-
-#if WQUEUE_PROFILE
     num_tasks += th->tasks_executed;
-#endif
   }
+#endif
 
   assert(min_time != -1);
   assert(max_time != -1);
@@ -1597,6 +1696,7 @@ void dump_events(void)
 }
 #else
 void dump_events(void) {}
+#define dump_avg_state_parallelism(state, max_intervals) do { } while(0)
 #endif
 
 __attribute__((destructor))
@@ -1629,9 +1729,8 @@ void post_main()
 	  unsigned long long bytes_rem = 0;
 	  unsigned long long bytes_total = 0;
 
-#if ALLOW_WQEVENT_SAMPLING
 	  dump_events();
-#endif
+	  dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000);
 
 	  for (i = 0; i < num_workers; ++i) {
 		  dump_wqueue_counters(&wstream_df_worker_threads[i]);
