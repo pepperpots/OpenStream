@@ -759,7 +759,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
       if(max_data != 0 && max_worker != cthread->worker_id && cthread->worker_id / 8 != max_worker / 8) {
 	  for(j = 0; j < NUM_PUSH_ATTEMPTS; j++) {
 	     cthread->rands = cthread->rands * 1103515245 + 12345;
-	     push_slot = cthread->rands % NUM_PUSH_SLOTS;
+	     push_slot = (cthread->rands >> 16)% NUM_PUSH_SLOTS;
 
 	     /* Try to push */
 	     if(compare_and_swap(&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], NULL, fp)) {
@@ -1055,7 +1055,7 @@ worker_thread (void)
 	      for(i = 0; i < NUM_STEAL_ATTEMPTS_L3 && !fp; i++) {
 		do {
 		  cthread->rands = cthread->rands * 1103515245 + 12345;
-		  steal_from = l3_base + (cthread->rands % num_workers_on_l3);
+		  steal_from = l3_base + ((cthread->rands >> 16) % num_workers_on_l3);
 		} while(steal_from == cthread->worker_id);
 
 		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
@@ -1067,7 +1067,7 @@ worker_thread (void)
 	    for(i = 0; i < NUM_STEAL_ATTEMPTS_REMOTE && !fp; i++) {
 	      if(last_steal_from == -1) {
 		cthread->rands = cthread->rands * 1103515245 + 12345;
-		steal_from = cthread->rands % num_workers;
+		steal_from = (cthread->rands >> 16) % num_workers;
 	      } else {
 		steal_from = last_steal_from;
 	      }
