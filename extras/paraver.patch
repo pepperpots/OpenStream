@@ -1,0 +1,89 @@
+--- a/paraver-kernel/Makefile.in	2013-02-01 12:13:02.017777144 +0100
++++ b/paraver-kernel/Makefile.in	2013-02-01 12:12:59.075857885 +0100
+@@ -34,7 +34,7 @@
+ POST_UNINSTALL = :
+ build_triplet = @build@
+ host_triplet = @host@
+-bin_PROGRAMS = paramedir.bin$(EXEEXT) otf2prv.bin$(EXEEXT)
++bin_PROGRAMS = paramedir.bin$(EXEEXT)
+ subdir = .
+ DIST_COMMON = README $(am__configure_deps) $(srcdir)/Makefile.am \
+ 	$(srcdir)/Makefile.in $(srcdir)/config.h.in \
+@@ -54,10 +54,6 @@
+ CONFIG_CLEAN_VPATH_FILES =
+ am__installdirs = "$(DESTDIR)$(bindir)"
+ PROGRAMS = $(bin_PROGRAMS)
+-am_otf2prv_bin_OBJECTS = otf2prv.$(OBJEXT)
+-otf2prv_bin_OBJECTS = $(am_otf2prv_bin_OBJECTS)
+-otf2prv_bin_DEPENDENCIES = api/libparaver-api.la \
+-	src/libparaver-kernel.la
+ am_paramedir_bin_OBJECTS = paramedir.$(OBJEXT)
+ paramedir_bin_OBJECTS = $(am_paramedir_bin_OBJECTS)
+ paramedir_bin_DEPENDENCIES = api/libparaver-api.la \
+@@ -75,8 +71,8 @@
+ CXXLINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
+ 	--mode=link $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) $(AM_LDFLAGS) \
+ 	$(LDFLAGS) -o $@
+-SOURCES = $(otf2prv_bin_SOURCES) $(paramedir_bin_SOURCES)
+-DIST_SOURCES = $(otf2prv_bin_SOURCES) $(paramedir_bin_SOURCES)
++SOURCES = $(paramedir_bin_SOURCES)
++DIST_SOURCES = $(paramedir_bin_SOURCES)
+ RECURSIVE_TARGETS = all-recursive check-recursive dvi-recursive \
+ 	html-recursive info-recursive install-data-recursive \
+ 	install-dvi-recursive install-exec-recursive \
+@@ -267,15 +263,6 @@
+                   api/libparaver-api.la \
+                   src/libparaver-kernel.la 
+ 
+-otf2prv_bin_SOURCES = \
+-											api/otf2prv.cpp
+-
+-otf2prv_bin_LDADD = \
+-										api/libparaver-api.la \
+-										src/libparaver-kernel.la \
+-										-lotf2 \
+-										-lscorep_utilities
+-
+ all: config.h
+ 	$(MAKE) $(AM_MAKEFLAGS) all-recursive
+ 
+@@ -373,9 +360,7 @@
+ 	list=`for p in $$list; do echo "$$p"; done | sed 's/$(EXEEXT)$$//'`; \
+ 	echo " rm -f" $$list; \
+ 	rm -f $$list
+-otf2prv.bin$(EXEEXT): $(otf2prv_bin_OBJECTS) $(otf2prv_bin_DEPENDENCIES) $(EXTRA_otf2prv_bin_DEPENDENCIES) 
+-	@rm -f otf2prv.bin$(EXEEXT)
+-	$(CXXLINK) $(otf2prv_bin_OBJECTS) $(otf2prv_bin_LDADD) $(LIBS)
++
+ paramedir.bin$(EXEEXT): $(paramedir_bin_OBJECTS) $(paramedir_bin_DEPENDENCIES) $(EXTRA_paramedir_bin_DEPENDENCIES) 
+ 	@rm -f paramedir.bin$(EXEEXT)
+ 	$(CXXLINK) $(paramedir_bin_OBJECTS) $(paramedir_bin_LDADD) $(LIBS)
+@@ -386,7 +371,6 @@
+ distclean-compile:
+ 	-rm -f *.tab.c
+ 
+-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/otf2prv.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/paramedir.Po@am__quote@
+ 
+ .cpp.o:
+@@ -410,20 +394,6 @@
+ @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCXX_FALSE@	$(LTCXXCOMPILE) -c -o $@ $<
+ 
+-otf2prv.o: api/otf2prv.cpp
+-@am__fastdepCXX_TRUE@	$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT otf2prv.o -MD -MP -MF $(DEPDIR)/otf2prv.Tpo -c -o otf2prv.o `test -f 'api/otf2prv.cpp' || echo '$(srcdir)/'`api/otf2prv.cpp
+-@am__fastdepCXX_TRUE@	$(am__mv) $(DEPDIR)/otf2prv.Tpo $(DEPDIR)/otf2prv.Po
+-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	source='api/otf2prv.cpp' object='otf2prv.o' libtool=no @AMDEPBACKSLASH@
+-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+-@am__fastdepCXX_FALSE@	$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o otf2prv.o `test -f 'api/otf2prv.cpp' || echo '$(srcdir)/'`api/otf2prv.cpp
+-
+-otf2prv.obj: api/otf2prv.cpp
+-@am__fastdepCXX_TRUE@	$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT otf2prv.obj -MD -MP -MF $(DEPDIR)/otf2prv.Tpo -c -o otf2prv.obj `if test -f 'api/otf2prv.cpp'; then $(CYGPATH_W) 'api/otf2prv.cpp'; else $(CYGPATH_W) '$(srcdir)/api/otf2prv.cpp'; fi`
+-@am__fastdepCXX_TRUE@	$(am__mv) $(DEPDIR)/otf2prv.Tpo $(DEPDIR)/otf2prv.Po
+-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	source='api/otf2prv.cpp' object='otf2prv.obj' libtool=no @AMDEPBACKSLASH@
+-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+-@am__fastdepCXX_FALSE@	$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o otf2prv.obj `if test -f 'api/otf2prv.cpp'; then $(CYGPATH_W) 'api/otf2prv.cpp'; else $(CYGPATH_W) '$(srcdir)/api/otf2prv.cpp'; fi`
+-
+ paramedir.o: api/paramedir.cpp
+ @am__fastdepCXX_TRUE@	$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT paramedir.o -MD -MP -MF $(DEPDIR)/paramedir.Tpo -c -o paramedir.o `test -f 'api/paramedir.cpp' || echo '$(srcdir)/'`api/paramedir.cpp
+ @am__fastdepCXX_TRUE@	$(am__mv) $(DEPDIR)/paramedir.Tpo $(DEPDIR)/paramedir.Po

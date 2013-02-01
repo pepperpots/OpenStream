@@ -1,0 +1,3 @@
+#!/bin/sh
+
+LD_LIBRARY_PATH="@@CONTRIB_LIBDIR@@/paraver-kernel/:@@CONTRIB_LIBDIR@@/" @@CONTRIB_BINDIR@@/wxparaver.bin $@
