@@ -1285,7 +1285,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   if (cpu_affinities == NULL)
     core = id % ncores;
   else
-    core = cpu_affinities[(id-1) % num_cpu_affinities];
+    core = cpu_affinities[id % num_cpu_affinities];
 
 #if ALLOW_PUSHES
   memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
