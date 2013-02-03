@@ -328,7 +328,7 @@ $(CONTRIB_LIBDIR)/libboost_system.so: $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/b2
 	cd $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/ ; ./b2 install --prefix=$(INST_DIR) -j `grep processor /proc/cpuinfo | wc -l`
 
 $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/b2: $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/exdep
-	cd $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/; ./bootstrap.sh --prefix=$(INST_DIR)
+	cd $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/; ./bootstrap.sh --prefix=$(INST_DIR) --without-libraries=python
 
 $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/exdep: $(ARCHIVES_DIR)/boost_$(BOOST_VERSION).tar.bz2
 	mkdir -p $(CONTRIB_DIR)
