@@ -219,12 +219,12 @@ $(CONTRIB_BINDIR)/osparaver: \
 	sed 's|@@CONTRIB_LIBDIR@@|$(CONTRIB_LIBDIR)|g;s|@@CONTRIB_BINDIR@@|$(CONTRIB_BINDIR)|g' $(EXTRAS_DIR)/osparaver.in > $@
 	chmod +x $@
 
-$(CONTRIB_BINDIR)/wxparaver.bin: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/config.log
+$(CONTRIB_BINDIR)/wxparaver.bin: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver install
 
 # WxParaver
-$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/config.log: \
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/Makefile: \
 		$(CONTRIB_LIBDIR)/paraver-kernel/libparaver-api.so \
 		$(CONTRIB_INCDIR)/wx/propgrid/propgrid.h
 	cd $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/ ; \
@@ -236,11 +236,11 @@ $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/config.log: \
 		LDFLAGS="-L$(CONTRIB_LIB64DIR) -L$(CONTRIB_LIBDIR) -L$(CONTRIB_LIBDIR)/paraver-kernel/"
 
 # Paraver-kernel
-$(CONTRIB_LIBDIR)/paraver-kernel/libparaver-api.so: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/config.log
+$(CONTRIB_LIBDIR)/paraver-kernel/libparaver-api.so: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/ install
 
-$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/config.log: \
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/Makefile: \
 		$(CONTRIB_LIBDIR)/ptools_common_files/libptools_common_files.a \
 		$(CONTRIB_BINDIR)/otf2-config \
 		$(CONTRIB_LIBDIR)/libboost_system.so \
@@ -256,11 +256,11 @@ $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/config.log: \
 		LDFLAGS="-L$(CONTRIB_LIB64DIR) -L$(CONTRIB_LIBDIR)"
 
 # Ptools common files
-$(CONTRIB_LIBDIR)/ptools_common_files/libptools_common_files.a: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/config.log
+$(CONTRIB_LIBDIR)/ptools_common_files/libptools_common_files.a: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/ install
 
-$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/config.log: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/exdep
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/Makefile: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/exdep
 	cd $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/; ./configure --prefix=$(INST_DIR)
 
 $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/exdep: $(ARCHIVES_DIR)/paraver-source-$(PARAVER_VERSION).tar.gz
@@ -279,11 +279,11 @@ $(ARCHIVES_DIR)/paraver-source-$(PARAVER_VERSION).tar.gz:
 # Score-p
 #
 
-$(CONTRIB_BINDIR)/scorep: $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/config.log
+$(CONTRIB_BINDIR)/scorep: $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)
 	$(MAKE) -C $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION) install
 
-$(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/config.log: $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/exdep
+$(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/Makefile: $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/exdep
 	cd $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/; ./configure --prefix=$(INST_DIR)
 
 $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/exdep: $(ARCHIVES_DIR)/scorep-$(SCOREP_VERSION).tar.gz
@@ -301,11 +301,11 @@ $(ARCHIVES_DIR)/scorep-$(SCOREP_VERSION).tar.gz:
 # OTF2
 #
 
-$(CONTRIB_BINDIR)/otf2-config: $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/config.log
+$(CONTRIB_BINDIR)/otf2-config: $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)
 	$(MAKE) -C $(CONTRIB_DIR)/otf2-$(OTF2_VERSION) install
 
-$(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/config.log: $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/exdep
+$(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/Makefile: $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/exdep
 	cd $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/; ./configure --prefix=$(INST_DIR)
 
 $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/exdep: $(ARCHIVES_DIR)/otf2-$(OTF2_VERSION).tar.gz
@@ -344,11 +344,11 @@ $(ARCHIVES_DIR)/boost_$(BOOST_VERSION).tar.bz2:
 # WxWidgets
 #
 
-$(CONTRIB_BINDIR)/wx-config: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/config.log
+$(CONTRIB_BINDIR)/wx-config: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)
 	$(MAKE) -C $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION) install
 
-$(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/config.log: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep
+$(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/Makefile: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep
 	cd $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/; ./configure --prefix=$(INST_DIR)
 
 $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep: $(ARCHIVES_DIR)/wxWidgets-$(WXWIDGETS_VERSION).tar.bz2
@@ -366,11 +366,11 @@ $(ARCHIVES_DIR)/wxWidgets-$(WXWIDGETS_VERSION).tar.bz2:
 # WxPropertyGrid
 #
 
-$(CONTRIB_INCDIR)/wx/propgrid/propgrid.h: $(CONTRIB_DIR)/propgrid/config.log
+$(CONTRIB_INCDIR)/wx/propgrid/propgrid.h: $(CONTRIB_DIR)/propgrid/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/propgrid
 	$(MAKE) -C $(CONTRIB_DIR)/propgrid install
 
-$(CONTRIB_DIR)/propgrid/config.log: \
+$(CONTRIB_DIR)/propgrid/Makefile: \
 		$(CONTRIB_DIR)/propgrid/exdep \
 		$(CONTRIB_BINDIR)/wx-config
 	cd $(CONTRIB_DIR)/propgrid ; ./configure --prefix=$(INST_DIR) --with-wxdir=$(CONTRIB_BINDIR)
@@ -390,11 +390,11 @@ $(ARCHIVES_DIR)/wxpropgrid-$(WXPROPERTYGRID_VERSION)-src.tar.gz:
 # Libxml2
 #
 
-$(CONTRIB_BINDIR)/xml2-config: $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/config.log
+$(CONTRIB_BINDIR)/xml2-config: $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)
 	$(MAKE) -C $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION) install
 
-$(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/config.log: $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/exdep
+$(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/Makefile: $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/exdep
 	cd $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/; ./configure --prefix=$(INST_DIR)
 
 $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/exdep: $(ARCHIVES_DIR)/libxml2-$(LIBXML2_VERSION).tar.gz
