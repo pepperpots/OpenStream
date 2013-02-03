@@ -350,7 +350,7 @@ $(CONTRIB_BINDIR)/wx-config: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/Makef
 	$(MAKE) -C $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION) install
 
 $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/Makefile: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep
-	cd $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/; ./configure --prefix=$(INST_DIR)
+	cd $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/; ./configure --prefix=$(INST_DIR) --enable-unicode
 
 $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep: $(ARCHIVES_DIR)/wxWidgets-$(WXWIDGETS_VERSION).tar.bz2
 	mkdir -p $(CONTRIB_DIR)
@@ -374,7 +374,7 @@ $(CONTRIB_INCDIR)/wx/propgrid/propgrid.h: $(CONTRIB_DIR)/propgrid/Makefile
 $(CONTRIB_DIR)/propgrid/Makefile: \
 		$(CONTRIB_DIR)/propgrid/exdep \
 		$(CONTRIB_BINDIR)/wx-config
-	cd $(CONTRIB_DIR)/propgrid ; ./configure --prefix=$(INST_DIR) --with-wxdir=$(CONTRIB_BINDIR)
+	cd $(CONTRIB_DIR)/propgrid ; ./configure --prefix=$(INST_DIR) --with-wxdir=$(CONTRIB_BINDIR) --enable-unicode
 
 $(CONTRIB_DIR)/propgrid/exdep: $(ARCHIVES_DIR)/wxpropgrid-$(WXPROPERTYGRID_VERSION)-src.tar.gz
 	mkdir -p $(CONTRIB_DIR)
