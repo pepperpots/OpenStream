@@ -231,6 +231,7 @@ $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/Makefile: \
 	./configure \
 		--prefix=$(INST_DIR) \
 		--with-boost=$(INST_DIR) \
+		--with-wxdir=$(CONTRIB_BINDIR) \
 		CFLAGS="-I$(CONTRIB_INCDIR)/libxml2 -I$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/api" \
 		CPPFLAGS="-I$(CONTRIB_INCDIR)/libxml2 -I$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/api" \
 		LDFLAGS="-L$(CONTRIB_LIB64DIR) -L$(CONTRIB_LIBDIR) -L$(CONTRIB_LIBDIR)/paraver-kernel/"
