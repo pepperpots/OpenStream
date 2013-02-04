@@ -5,4 +5,7 @@ STATES
 3    Resolve dependencies
 4    Tdecrease
 
-
+EVENT_TYPE
+0    3    Tcreate
+VALUES
+1      Task creation

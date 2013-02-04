@@ -1660,10 +1660,11 @@ void dump_events(void)
 		  th->events[k].steal.size);
 	} else if(th->events[k].type == WQEVENT_TCREATE) {
 	  /* Tcreate event (simply dumped as an event) */
-	  fprintf(fp, "2:%d:1:1:%d:%"PRIu64":1:1\n",
+	  fprintf(fp, "2:%d:1:1:%d:%"PRIu64":%d:1\n",
 		  (th->worker_id+1),
 		  (th->worker_id+1),
-		  th->events[k].time-min_time);
+		  th->events[k].time-min_time,
+		  WQEVENT_TCREATE);
 	}
       }
 
