@@ -87,3 +87,16 @@
  paramedir.o: api/paramedir.cpp
  @am__fastdepCXX_TRUE@	$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT paramedir.o -MD -MP -MF $(DEPDIR)/paramedir.Tpo -c -o paramedir.o `test -f 'api/paramedir.cpp' || echo '$(srcdir)/'`api/paramedir.cpp
  @am__fastdepCXX_TRUE@	$(am__mv) $(DEPDIR)/paramedir.Tpo $(DEPDIR)/paramedir.Po
+--- a/paraver-kernel/api/trace.cpp	2013-02-04 15:03:35.383153694 +0100
++++ b/paraver-kernel/api/trace.cpp	2013-02-04 15:07:28.118829745 +0100
+@@ -119,6 +119,10 @@
+ 
+   myTrace = myKernel->newTrace( whichFile, noLoad, progress );
+   string pcfFile = myKernel->getPCFFileLocation( whichFile );
++
++  if(getenv("OSPARAVER_CONFIG_FILE"))
++    pcfFile = getenv("OSPARAVER_CONFIG_FILE");
++
+   parsePCF( pcfFile );
+   string rowFile = myKernel->getROWFileLocation( whichFile );
+   parseROW( rowFile );

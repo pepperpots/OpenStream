@@ -215,9 +215,13 @@ osparaver: $(CONTRIB_BINDIR)/osparaver
 
 $(CONTRIB_BINDIR)/osparaver: \
 		$(EXTRAS_DIR)/osparaver.in \
-		$(CONTRIB_BINDIR)/wxparaver.bin
-	sed 's|@@CONTRIB_LIBDIR@@|$(CONTRIB_LIBDIR)|g;s|@@CONTRIB_BINDIR@@|$(CONTRIB_BINDIR)|g' $(EXTRAS_DIR)/osparaver.in > $@
+		$(CONTRIB_BINDIR)/wxparaver.bin \
+		$(INST_DIR)/openstream.pcf
+	sed 's|@@CONTRIB_LIBDIR@@|$(CONTRIB_LIBDIR)|g;s|@@CONTRIB_BINDIR@@|$(CONTRIB_BINDIR)|g;s|@@INST_DIR@@|$(INST_DIR)|g' $(EXTRAS_DIR)/osparaver.in > $@
 	chmod +x $@
+
+$(INST_DIR)/openstream.pcf: $(EXTRAS_DIR)/openstream.pcf
+	cp $< $@
 
 $(CONTRIB_BINDIR)/wxparaver.bin: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver
