@@ -220,7 +220,7 @@ typedef struct barrier
 #define WORKER_STATE_RT_TCREATE 2
 #define WORKER_STATE_RT_RESDEP 3
 #define WORKER_STATE_RT_TDEC 4
-#define WORKER_STATE_MAX 4
+#define WORKER_STATE_MAX 5
 
 static const char* state_names[] = {
   "seeking",
