@@ -802,6 +802,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
 #if ALLOW_PUSHES
       max_worker = cthread->worker_id;
+      max_data = fp->bytes_cpu[cthread->worker_id];
       /* Which worker wrote most of the data to the frame  */
       for(i = 0; i < MAX_CPUS; i++) {
 	  if(fp->bytes_cpu[i] > max_data) {
