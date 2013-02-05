@@ -1689,8 +1689,6 @@ void dump_average_task_durations(void)
 	    assert(0);
 	  }
 
-	  /*printf("%"PRIu64" [%d] >? %"PRIu64" [%d]\n", th->events[end_idx].time, end_idx, th->events[start_idx].time, start_idx);
-	    assert(th->events[end_idx].time > th->events[start_idx].time);*/
 	  task_durations[type_idx] += duration;
 	  num_tasks[type_idx]++;
 
