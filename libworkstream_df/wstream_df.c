@@ -153,10 +153,11 @@ typedef struct wstream_df_frame
 {
   int synchronization_counter;
   int size;
-  int steal_type;
-  int last_owner;
   void (*work_fn) (void *);
   struct barrier *own_barrier;
+
+  int steal_type;
+  int last_owner;
   int bytes_cpu[MAX_CPUS];
 
   /* Variable size struct */
