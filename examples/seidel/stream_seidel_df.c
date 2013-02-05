@@ -400,6 +400,201 @@ void dump_matrix(FILE* fp, int N, double* matrix)
 	fprintf(fp, "\n");
 }
 
+/* Creates an initial task for a given block. The task reads data
+ * from the initial matrix and copies it to the streams.
+ */
+void create_initial_task(double* matrix, int N, int numiters, int block_size, int id_x, int id_y)
+{
+	int blocks_x = N / block_size;
+	int blocks_y = N / block_size;
+	int blocks = blocks_x * blocks_y;
+
+	/* Arrays used to access the data from the streams at
+	 * initialization / termination */
+	double top_in[block_size];
+	double top_out[block_size];
+	double left_in[block_size];
+	double left_out[block_size];
+	double center_in[block_size*block_size];
+	double center_out[block_size*block_size];
+
+	int id = id_y*blocks_x + id_x;
+
+	/* Upper left corner */
+	if(id_y == 0 && id_x == 0) {
+		#pragma omp task output(scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     NULL, NULL, NULL, NULL, center_out);
+		}
+	} else if(id_y == 0 && id_x < blocks_x-1) {
+		/* Upper row, but not in a corner  */
+		#pragma omp task output(sleft_ref[id] << left_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     left_out, NULL, NULL, NULL, center_out);
+		}
+	} else if(id_y == 0 && id_x == blocks_x-1) {
+		/* Upper right corner */
+		#pragma omp task output(sleft_ref[id] << left_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     left_out, NULL, NULL, NULL, center_out);
+		}
+	} else if(id_x == 0 && id_y < blocks_y-1) {
+		/* Left row, but not in a corner*/
+		#pragma omp task output(stop_ref[id] << top_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     NULL, top_out, NULL, NULL, center_out);
+		}
+	} else if(id_x == 0 && id_y == blocks_y-1) {
+		/* Lower left corner */
+		#pragma omp task output(stop_ref[id] << top_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     NULL, top_out, NULL, NULL, center_out);
+		}
+	} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
+		/* Lower row, but not in a corner */
+		#pragma omp task output(sleft_ref[id] << left_out[block_size],		\
+			stop_ref[id] << top_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     left_out, top_out, NULL, NULL, center_out);
+		}
+	} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
+		/* Lower right corner */
+		#pragma omp task output(sleft_ref[id] << left_out[block_size],		\
+			stop_ref[id] << top_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     left_out, top_out, NULL, NULL, center_out);
+		}
+	} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
+		/* Right row, but not in a corner */
+		#pragma omp task output(sleft_ref[id] << left_out[block_size],		\
+			stop_ref[id] << top_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     left_out, top_out, NULL, NULL, center_out);
+		}
+	} else {
+		/* Block in the center */
+		#pragma omp task output(sleft_ref[id] << left_out[block_size],		\
+			stop_ref[id] << top_out[block_size],		\
+			scenter_ref[id] << center_out[block_size*block_size])
+		{
+			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
+					     left_out, top_out, NULL, NULL, center_out);
+		}
+	}
+}
+
+/* Creates a terminal task for a given block. Data is read from the
+ * streams and written to the final matrix. */
+void create_terminal_task(double* matrix, int N, int numiters, int block_size, int id_x, int id_y)
+{
+	int blocks_x = N / block_size;
+	int blocks_y = N / block_size;
+	int blocks = blocks_x * blocks_y;
+
+	/* Arrays used to access the data from the streams at
+	 * initialization / termination */
+	double top_in[block_size];
+	double top_out[block_size];
+	double left_in[block_size];
+	double left_out[block_size];
+	double center_in[block_size*block_size];
+	double center_out[block_size*block_size];
+
+	int id = id_y*blocks_x + id_x;
+
+	/* Upper left corner */
+	if(id_y == 0 && id_x == 0) {
+		#pragma omp task input(scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       NULL, NULL, NULL, NULL, center_in);
+		}
+	} else if(id_y == 0 && id_x < blocks_x-1) {
+		/* Upper row, but not in a corner  */
+		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       left_in, NULL, NULL, NULL, center_in);
+		}
+	} else if(id_y == 0 && id_x == blocks_x-1) {
+		/* Upper right corner */
+		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       left_in, NULL, NULL, NULL, center_in);
+		}
+	} else if(id_x == 0 && id_y < blocks_y-1) {
+		/* Left row, but not in a corner*/
+		#pragma omp task input(stop_ref[numiters*blocks+id] >> top_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       NULL, top_in, NULL, NULL, center_in);
+		}
+	} else if(id_x == 0 && id_y == blocks_y-1) {
+		/* Lower left corner */
+		#pragma omp task input(stop_ref[numiters*blocks+id] >> top_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       NULL, top_in, NULL, NULL, center_in);
+		}
+	} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
+		/* Lower row, but not in a corner */
+		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
+		       stop_ref[numiters*blocks+id] >> top_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       left_in, top_in, NULL, NULL, center_in);
+		}
+	} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
+		/* Lower right corner */
+		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
+		       stop_ref[numiters*blocks+id] >> top_in[block_size],	\
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       left_in, top_in, NULL, NULL, center_in);
+		}
+	} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
+		/* Right row, but not in a corner */
+		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
+		       stop_ref[numiters*blocks+id] >> top_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       left_in, top_in, NULL, NULL, center_in);
+		}
+	} else {
+		/* Block in the center */
+		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
+		       stop_ref[numiters*blocks+id] >> top_in[block_size], \
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		{
+			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
+					       left_in, top_in, NULL, NULL, center_in);
+		}
+	}
+}
+
 struct profiler_sync sync;
 
 int main(int argc, char** argv)
@@ -498,15 +693,6 @@ int main(int argc, char** argv)
 	memcpy (sbottom_ref, sbottom, (numiters+1)*blocks * sizeof (void *));
 	memcpy (scenter_ref, scenter, (numiters+1)*blocks * sizeof (void *));
 
-	/* Arrays used to access the data from the streams at
-	 * initialization / termination */
-	double top_in[block_size];
-	double top_out[block_size];
-	double left_in[block_size];
-	double left_out[block_size];
-	double center_in[block_size*block_size];
-	double center_out[block_size*block_size];
-
 	if(res_file == NULL)
 		res_file = fopen("stream_seidel_df.out", "w");
 
@@ -518,160 +704,6 @@ int main(int argc, char** argv)
 	gettimeofday(&start, NULL);
 	PROFILER_NOTIFY_RECORD(&sync);
 
-	/* Create tasks that initialize the streams and those that
-	 * read the final value from the streams.
-	 * As the dependencies rely on the position of the block,
-	 * all cases are treated explicitly.
-	 */
-	for(int id_x = 0; id_x < blocks_x; id_x++) {
-		for(int id_y = 0; id_y < blocks_y; id_y++) {
-			int id = id_y*blocks_x + id_x;
-
-			/* Upper left corner */
-			if(id_y == 0 && id_x == 0) {
-				#pragma omp task output(scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     NULL, NULL, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       NULL, NULL, NULL, NULL, center_in);
-				}
-			} else if(id_y == 0 && id_x < blocks_x-1) {
-				/* Upper row, but not in a corner  */
-				#pragma omp task output(sleft[id] << left_out[block_size],     \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, NULL, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, NULL, NULL, NULL, center_in);
-				}
-			} else if(id_y == 0 && id_x == blocks_x-1) {
-				/* Upper right corner */
-				#pragma omp task output(sleft[id] << left_out[block_size],     \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, NULL, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, NULL, NULL, NULL, center_in);
-				}
-			} else if(id_x == 0 && id_y < blocks_y-1) {
-				/* Left row, but not in a corner*/
-				#pragma omp task output(stop[id] << top_out[block_size],       \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     NULL, top_out, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(stop   [numiters*blocks+id] >> top_in[block_size],    \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       NULL, top_in, NULL, NULL, center_in);
-				}
-			} else if(id_x == 0 && id_y == blocks_y-1) {
-				/* Lower left corner */
-				#pragma omp task output(stop[id] << top_out[block_size],     \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     NULL, top_out, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(stop   [numiters*blocks+id] >> top_in[block_size],   \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       NULL, top_in, NULL, NULL, center_in);
-				}
-			} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
-				/* Lower row, but not in a corner */
-				#pragma omp task output(sleft[id] << left_out[block_size],   \
-							stop[id] << top_out[block_size],     \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],  \
-						       stop   [numiters*blocks+id] >> top_in[block_size],   \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, NULL, NULL, center_in);
-				}
-			} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
-				/* Lower right corner */
-				#pragma omp task output(sleft[id] << left_out[block_size], \
-							stop[id] << top_out[block_size],   \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(sleft[numiters*blocks+id] >> left_in[block_size], \
-						       stop [numiters*blocks+id] >> top_in[block_size],  \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, NULL, NULL, center_in);
-				}
-			} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
-				/* Right row, but not in a corner */
-				#pragma omp task output(sleft  [id] << left_out[block_size],   \
-							stop   [id] << top_out[block_size],    \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
-						       stop   [numiters*blocks+id] >> top_in[block_size],    \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, NULL, NULL, center_in);
-				}
-			} else {
-				/* Block in the center */
-				#pragma omp task output(sleft[id] << left_out[block_size],     \
-							stop[id] << top_out[block_size],       \
-							scenter[id] << center_out[block_size*block_size])
-				{
-					gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
-							     left_out, top_out, NULL, NULL, center_out);
-				}
-
-				#pragma omp task input(sleft  [numiters*blocks+id] >> left_in[block_size],   \
-						       stop   [numiters*blocks+id] >> top_in[block_size],    \
-						       scenter[numiters*blocks+id] >> center_in[block_size*block_size])
-				{
-					gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
-							       left_in, top_in, NULL, NULL, center_in);
-				}
-			}
-		}
-	}
-
 	/* As there are dependencies between a block's task and the same task
 	 * at the next iteration, recursive task creation as in gauss_seidel_df()
 	 * must have an iteration distance of at least two. However, if there
@@ -680,11 +712,28 @@ int main(int argc, char** argv)
 	 */
 	int init_iter = (numiters > 1) ? 2 : numiters;
 
-	/* Start the per-block-per-iteration tasks */
+	/* Create tasks that initialize the streams and those that
+	 * read the final value from the streams. The order in which
+	 * The per-block tasks are created is diagonal in order to
+	 * unblock tasks as soon as possible.
+	 */
 	for(int it = 0; it < init_iter; it++) {
-		for(int id_y = 0; id_y < blocks_y; id_y++) {
-			for(int id_x = 0; id_x < blocks_x; id_x++) {
-				create_next_iteration_task(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
+		for(int x = 0; x < blocks_x; x++) {
+			int max_outer_y = (x == blocks_x-1) ? blocks_y : 1;
+			for(int outer_y = 0; outer_y < max_outer_y; outer_y++) {
+				int xadd = (x == blocks_x-1) ? outer_y : 0;
+				for(int y = outer_y; y < blocks_y && y <= x+xadd; y++) {
+					int id_x = x-y+xadd;
+					int id_y = y;
+
+					if(it == 0)
+						create_initial_task(matrix, N, numiters, block_size, id_x, id_y);
+
+					create_next_iteration_task(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
+
+					if(it == init_iter-1)
+						create_terminal_task(matrix, N, numiters, block_size, id_x, id_y);
+				}
 			}
 		}
 	}
