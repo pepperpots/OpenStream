@@ -145,10 +145,16 @@ struct barrier;
 unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
 #endif
 
+#define STEAL_TYPE_UNKNOWN 0
+#define STEAL_TYPE_PUSH 1
+#define STEAL_TYPE_STEAL 2
+
 typedef struct wstream_df_frame
 {
   int synchronization_counter;
   int size;
+  int steal_type;
+  int last_owner;
   void (*work_fn) (void *);
   struct barrier *own_barrier;
   int bytes_cpu[MAX_CPUS];
@@ -204,6 +210,9 @@ typedef struct barrier
 #define WQEVENT_SINGLEEVENT 1
 #define WQEVENT_STEAL 2
 #define WQEVENT_TCREATE 3
+#define WQEVENT_PUSH 4
+#define WQEVENT_START_TASKEXEC 5
+#define WQEVENT_END_TASKEXEC 6
 
 #define WORKER_STATE_SEEKING 0
 #define WORKER_STATE_TASKEXEC 1
@@ -229,6 +238,16 @@ typedef struct worker_event {
       uint32_t src;
       uint32_t size;
     } steal;
+
+    struct {
+      uint32_t from_node;
+      uint32_t type;
+    } texec;
+
+    struct {
+      uint32_t dst;
+      uint32_t size;
+    } push;
 
     struct {
       uint32_t state;
@@ -300,12 +319,29 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 } wstream_df_thread_t, *wstream_df_thread_p;
 
 #if ALLOW_WQEVENT_SAMPLING
+
 static inline void trace_event(wstream_df_thread_p cthread, unsigned int type)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].type = type;
   cthread->num_events++;
+}
+
+static inline void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, unsigned int type)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].texec.from_node = from_node;
+  cthread->events[cthread->num_events].texec.type = type;
+  cthread->events[cthread->num_events].type = WQEVENT_START_TASKEXEC;
+  cthread->previous_state_idx = cthread->num_events;
+  cthread->num_events++;
+}
+
+static inline void trace_task_exec_end(wstream_df_thread_p cthread)
+{
+  trace_event(cthread, WQEVENT_END_TASKEXEC);
 }
 
 static inline void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
@@ -347,10 +383,24 @@ static inline void trace_steal(wstream_df_thread_p cthread, unsigned int src, un
   cthread->events[cthread->num_events].type = WQEVENT_STEAL;
   cthread->num_events++;
 }
+
+static inline void trace_push(wstream_df_thread_p cthread, unsigned int dst, unsigned int size)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].push.dst = dst;
+  cthread->events[cthread->num_events].push.size = size;
+  cthread->events[cthread->num_events].type = WQEVENT_PUSH;
+  cthread->num_events++;
+}
+
 #else
+#define trace_task_exec_end(cthread) do { } while(0)
+#define trace_task_exec_start(cthread, from_node, type) do { } while(0)
 #define trace_event(cthread, type) do { } while(0)
 #define trace_state_change(cthread, state) do { } while(0)
 #define trace_steal(cthread, src, size) do { } while(0)
+#define trace_push(cthread, src, size) do { } while(0)
 #define trace_state_restore(cthread) do { } while(0)
 #endif
 
@@ -686,6 +736,8 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
+  frame_pointer->last_owner = cthread->worker_id;
+  frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
 
 #ifdef WQUEUE_PROFILE
@@ -744,6 +796,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
   if (sc == 0)
     {
       wstream_df_thread_p cthread = current_thread;
+      fp->last_owner = cthread->worker_id;
+      fp->steal_type = STEAL_TYPE_PUSH;
 
 #if ALLOW_PUSHES
       max_worker = cthread->worker_id;
@@ -771,6 +825,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	       else
 		  current_thread->pushes_remote++;
 #endif
+	       trace_push(cthread, max_worker, fp->size);
 	       trace_state_restore(cthread);
 	       return;
 	     }
@@ -1095,8 +1150,10 @@ worker_thread (void)
 	  }
 #endif
 
-	  if(fp != NULL)
+	  if(fp != NULL) {
 	    trace_steal(cthread, steal_from, fp->size);
+	    fp->steal_type = STEAL_TYPE_STEAL;
+	  }
 	}
 
       if (fp != NULL)
@@ -1124,8 +1181,10 @@ worker_thread (void)
 	  }
 #endif
 
+	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 	  fp->work_fn (fp);
+	  trace_task_exec_end(cthread);
 	  trace_state_change(cthread, WORKER_STATE_SEEKING);
 
 #ifdef WQUEUE_PROFILE
@@ -1459,14 +1518,19 @@ void pre_main()
 }
 
 #if ALLOW_WQEVENT_SAMPLING
-int get_next_state_change(wstream_df_thread_p th, int curr)
+int get_next_event(wstream_df_thread_p th, int curr, unsigned int type)
 {
   for(curr = curr+1; (unsigned int)curr < th->num_events; curr++) {
-    if(th->events[curr].type == WQEVENT_STATECHANGE)
+    if(th->events[curr].type == type)
       return curr;
   }
 
   return -1;
+}
+
+int get_next_state_change(wstream_df_thread_p th, int curr)
+{
+  return get_next_event(th, curr, WQEVENT_STATECHANGE);
 }
 
 int get_min_index(int* curr_idx)
@@ -1568,6 +1632,132 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals)
   fclose(fp);
 }
 
+#define TASK_DURATION_PUSH_SAMEL1 0
+#define TASK_DURATION_PUSH_SAMEL2 1
+#define TASK_DURATION_PUSH_SAMEL3 2
+#define TASK_DURATION_PUSH_REMOTE 3
+#define TASK_DURATION_STEAL_SAMEL2 4
+#define TASK_DURATION_STEAL_SAMEL3 5
+#define TASK_DURATION_STEAL_REMOTE 6
+#define TASK_DURATION_MAX 7
+
+void dump_average_task_durations(void)
+{
+  uint64_t task_durations[TASK_DURATION_MAX];
+  uint64_t num_tasks[TASK_DURATION_MAX];
+  uint64_t duration;
+  wstream_df_thread_p th;
+  unsigned int i;
+  int start_idx, end_idx;
+  int type_idx;
+  uint64_t total_num_tasks = 0;
+  uint64_t total_duration = 0;
+
+  memset(task_durations, 0, sizeof(task_durations));
+  memset(num_tasks, 0, sizeof(num_tasks));
+
+  for (i = 0; i < (unsigned int)num_workers; ++i) {
+    th = &wstream_df_worker_threads[i];
+    end_idx = 0;
+
+    if(th->num_events > 0) {
+      while((start_idx = get_next_event(th, end_idx, WQEVENT_START_TASKEXEC)) != -1 && end_idx != -1) {
+	end_idx = get_next_event(th, start_idx, WQEVENT_END_TASKEXEC);
+
+	if(end_idx != -1) {
+	  assert(th->events[end_idx].time > th->events[start_idx].time);
+
+	  duration = th->events[end_idx].time - th->events[start_idx].time;
+
+	  if(th->events[start_idx].texec.type == STEAL_TYPE_PUSH) {
+	    if(th->worker_id == th->events[start_idx].texec.from_node)
+	      type_idx = TASK_DURATION_PUSH_SAMEL1;
+	    else if(th->worker_id / 2 == th->events[start_idx].texec.from_node / 2)
+	      type_idx = TASK_DURATION_PUSH_SAMEL2;
+	    else if(th->worker_id / 8 == th->events[start_idx].texec.from_node / 8)
+	      type_idx = TASK_DURATION_PUSH_SAMEL3;
+	    else
+	      type_idx = TASK_DURATION_PUSH_REMOTE;
+	  } else if(th->events[start_idx].texec.type == STEAL_TYPE_STEAL) {
+	    if(th->worker_id / 2 == th->events[start_idx].texec.from_node / 2)
+	      type_idx = TASK_DURATION_STEAL_SAMEL2;
+	    else if(th->worker_id / 8 == th->events[start_idx].texec.from_node / 8)
+	      type_idx = TASK_DURATION_STEAL_SAMEL3;
+	    else
+	      type_idx = TASK_DURATION_STEAL_REMOTE;
+	  } else {
+	    assert(0);
+	  }
+
+	  /*printf("%"PRIu64" [%d] >? %"PRIu64" [%d]\n", th->events[end_idx].time, end_idx, th->events[start_idx].time, start_idx);
+	    assert(th->events[end_idx].time > th->events[start_idx].time);*/
+	  task_durations[type_idx] += duration;
+	  num_tasks[type_idx]++;
+
+	  total_duration += duration;
+	  total_num_tasks++;
+	}
+      }
+    }
+  }
+
+  printf("Overall task num / duration (push, same L1): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%), "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_PUSH_SAMEL1], task_durations[TASK_DURATION_PUSH_SAMEL1],
+	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_SAMEL1]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_PUSH_SAMEL1]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_PUSH_SAMEL1] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_SAMEL1] / num_tasks[TASK_DURATION_PUSH_SAMEL1]);
+
+  printf("Overall task num / duration (push, same L2): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_PUSH_SAMEL2], task_durations[TASK_DURATION_PUSH_SAMEL2],
+	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_SAMEL2]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_PUSH_SAMEL2]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_PUSH_SAMEL2] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_SAMEL2] / num_tasks[TASK_DURATION_PUSH_SAMEL2]);
+
+  printf("Overall task num / duration (push, same L3): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_PUSH_SAMEL3], task_durations[TASK_DURATION_PUSH_SAMEL3],
+	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_SAMEL3]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_PUSH_SAMEL3]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_PUSH_SAMEL3] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_SAMEL3] / num_tasks[TASK_DURATION_PUSH_SAMEL3]);
+
+  printf("Overall task num / duration (push, remote): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_PUSH_REMOTE], task_durations[TASK_DURATION_PUSH_REMOTE],
+	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_REMOTE]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_PUSH_REMOTE]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_PUSH_REMOTE] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_REMOTE] / num_tasks[TASK_DURATION_PUSH_REMOTE]);
+
+  printf("Overall task num / duration (steal, same L2): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_STEAL_SAMEL2], task_durations[TASK_DURATION_STEAL_SAMEL2],
+	 100.0*(long double)num_tasks[TASK_DURATION_STEAL_SAMEL2]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_STEAL_SAMEL2]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_STEAL_SAMEL2] == 0 ? 0 : task_durations[TASK_DURATION_STEAL_SAMEL2] / num_tasks[TASK_DURATION_STEAL_SAMEL2]);
+
+  printf("Overall task num / duration (steal, same L3): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_STEAL_SAMEL3], task_durations[TASK_DURATION_STEAL_SAMEL3],
+	 100.0*(long double)num_tasks[TASK_DURATION_STEAL_SAMEL3]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_STEAL_SAMEL3]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_STEAL_SAMEL3] == 0 ? 0 : task_durations[TASK_DURATION_STEAL_SAMEL3] / num_tasks[TASK_DURATION_STEAL_SAMEL3]);
+
+  printf("Overall task num / duration (steal, remote): "
+	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
+	 "%"PRIu64" cycles / task\n",
+	 num_tasks[TASK_DURATION_STEAL_REMOTE], task_durations[TASK_DURATION_STEAL_REMOTE],
+	 100.0*(long double)num_tasks[TASK_DURATION_STEAL_REMOTE]/(long double)total_num_tasks,
+	 100.0*(long double)task_durations[TASK_DURATION_STEAL_REMOTE]/(long double)total_duration,
+	 num_tasks[TASK_DURATION_STEAL_REMOTE] == 0 ? 0 : task_durations[TASK_DURATION_STEAL_REMOTE] / num_tasks[TASK_DURATION_STEAL_REMOTE]);
+}
+
 /* Dumps worker events to a file in paraver format. */
 void dump_events(void)
 {
@@ -1582,19 +1772,10 @@ void dump_events(void)
   unsigned int state;
   unsigned long long state_durations[WORKER_STATE_MAX];
   unsigned long long total_duration = 0;
-  unsigned long long num_tasks = 0;
 
   assert(fp != NULL);
 
   memset(state_durations, 0, sizeof(state_durations));
-
-#if WQUEUE_PROFILE
-  /* Count number of tasks */
-  for(i = 0; i < (unsigned int)num_workers; i++) {
-    th = &wstream_df_worker_threads[i];
-    num_tasks += th->tasks_executed;
-  }
-#endif
 
   assert(min_time != -1);
   assert(max_time != -1);
@@ -1689,14 +1870,11 @@ void dump_events(void)
 	   ((double)state_durations[i] / (double)total_duration)*100.0);
   }
 
-#if WQUEUE_PROFILE
-  printf("Overall average task duration: %lld\n", state_durations[WORKER_STATE_TASKEXEC] / num_tasks);
-#endif
-
   fclose(fp);
 }
 #else
 void dump_events(void) {}
+void dump_average_task_durations(void) {}
 #define dump_avg_state_parallelism(state, max_intervals) do { } while(0)
 #endif
 
@@ -1732,6 +1910,7 @@ void post_main()
 
 	  dump_events();
 	  dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000);
+	  dump_average_task_durations();
 
 	  for (i = 0; i < num_workers; ++i) {
 		  dump_wqueue_counters(&wstream_df_worker_threads[i]);
