@@ -4,6 +4,7 @@ STATES
 2    Task creation
 3    Resolve dependencies
 4    Tdecrease
+5    Broadcast
 
 EVENT_TYPE
 0    3    Tcreate

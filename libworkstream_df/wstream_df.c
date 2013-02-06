@@ -220,14 +220,16 @@ typedef struct barrier
 #define WORKER_STATE_RT_TCREATE 2
 #define WORKER_STATE_RT_RESDEP 3
 #define WORKER_STATE_RT_TDEC 4
-#define WORKER_STATE_MAX 5
+#define WORKER_STATE_RT_BCAST 5
+#define WORKER_STATE_MAX 6
 
 static const char* state_names[] = {
   "seeking",
   "taskexec",
   "tcreate",
   "resdep",
-  "tdec"
+  "tdec",
+  "broadcast"
 };
 
 typedef struct worker_event {
@@ -2145,6 +2147,9 @@ broadcast (void *v)
 {
   wstream_df_view_p prod_view = (wstream_df_view_p) v;
   wstream_df_view_p cons_view = prod_view;
+  wstream_df_thread_p cthread = current_thread;
+
+  trace_state_change(cthread, WORKER_STATE_RT_BCAST);
 
   size_t offset = prod_view->reached_position;
   size_t burst = prod_view->burst;
@@ -2155,6 +2160,8 @@ broadcast (void *v)
       memcpy (((char *)cons_view->data) + offset, base_addr, burst);
       tdecrease_n ((void *) cons_view->owner, burst, 1);
     }
+
+  trace_state_restore(cthread);
 }
 
 void
