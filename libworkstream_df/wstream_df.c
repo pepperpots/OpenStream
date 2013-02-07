@@ -783,6 +783,13 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
+  if (fp->work_fn == (void *) 1)
+    {
+      wstream_free(&cthread->slab_cache, fp, fp->size);
+      trace_state_restore(cthread);
+      return;
+    }
+
 #ifdef WQUEUE_PROFILE
   if(is_write)
 	  fp->bytes_cpu[cthread->worker_id] += n;
@@ -820,7 +827,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	     push_slot = (cthread->rands >> 16)% NUM_PUSH_SLOTS;
 
 	     /* Try to push */
-	     if(compare_and_swap(&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], NULL, fp)) {
+	     if(compare_and_swap((size_t *)&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], 0, (size_t)fp)) {
 #ifdef WQUEUE_PROFILE
 	       if(max_worker / 2 == cthread->worker_id / 2)
 		  current_thread->pushes_samel2++;
@@ -989,7 +996,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	  view->sibling = cons_view->sibling;
 	  view->reached_position = cons_view->reached_position;
 	  cons_view->reached_position += view->burst;
-	  tdecrease_n (prod_fp, 1, 1);
+	  tdecrease_n (prod_fp, 1, 0);
 
 	  if (cons_view->reached_position == cons_view->burst)
 	    wstream_df_list_pop (cons_queue);
@@ -2200,6 +2207,7 @@ __builtin_ia32_tick (void *s, size_t burst)
      where to write at least during the producers' execution ... */
   if (cons_queue->active_peek_chain == NULL)
     {
+      wstream_df_frame_p cons_frame;
       /* Normally an error, but for OMPSs expansion, we need to allow
 	 it.  */
       /*  wstream_df_fatal ("TICK (%d) matches no PEEK view, which is unsupported at this time.",
@@ -2207,13 +2215,26 @@ __builtin_ia32_tick (void *s, size_t burst)
       */
       /* Allocate a fake view, with a fake data block, that allows to
 	 keep the same dependence resolution algorithm.  */
-      size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size;
-      wstream_alloc(&current_thread->slab_cache, &cons_view, 64, size);
-      memset (cons_view, 0, size);
+      size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size + sizeof (wstream_df_frame_t);
+      wstream_alloc(&current_thread->slab_cache, &cons_frame, 64, size);
+      memset (cons_frame, 0, size);
 
+      /* Avoid one atomic operation by setting the "next" field (which
+	 is the SC in the frame) to the size, which means TDEC won't
+	 do anything.  */
+      cons_frame->synchronization_counter = burst * stream->elem_size;
+      cons_frame->size = size;
+
+      /* Guard for TDEC: use "work_fn" field as a marker that this
+	 frame is not to be considered in optimizations and should be
+	 deallocated if it's TDEC'd.  We assume a function pointer
+	 cannot be "0x1".  */
+      cons_frame->work_fn = (void *)1;
+
+      cons_view = (wstream_df_view_p) (((char *) cons_frame) + sizeof (wstream_df_frame_t));
       cons_view->horizon = burst * stream->elem_size;
       cons_view->burst = cons_view->horizon;
-      cons_view->owner = cons_view;
+      cons_view->owner = cons_frame;
       cons_view->data = ((char *) cons_view) + sizeof (wstream_df_view_t);
     }
   else
