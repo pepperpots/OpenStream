@@ -636,7 +636,7 @@ int main(int argc, char** argv)
 				       "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 				       "  -b <block size power>        Set the block size 1 << <block size power>, default is %d\n"
 				       "  -r <iterations>              Number of iterations\n"
-				       "  -o <output file>             Write data to output file, default is stream_seidel_df.out\n",
+				       "  -o <output file>             Write data to output file, default is stream_df_seidel.out\n",
 				       argv[0], N, block_size);
 				exit(0);
 				break;
@@ -694,7 +694,7 @@ int main(int argc, char** argv)
 	memcpy (scenter_ref, scenter, (numiters+1)*blocks * sizeof (void *));
 
 	if(res_file == NULL)
-		res_file = fopen("stream_seidel_df.out", "w");
+		res_file = fopen("stream_df_seidel.out", "w");
 
 	/* Init matrix: M[24,24] = M[N-24,N-24] = 500.0
 	 * (same data as in the sequential version */
