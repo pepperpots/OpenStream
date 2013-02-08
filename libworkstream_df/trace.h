@@ -58,6 +58,12 @@ typedef struct worker_event {
 } worker_state_change_t, *worker_state_change_p;
 
 #if ALLOW_WQEVENT_SAMPLING
+
+#define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS \
+  worker_state_change_t events[MAX_WQEVENT_SAMPLES]; \
+  unsigned int num_events; \
+  unsigned int previous_state_idx;
+
 struct wstream_df_thread;
 
 void trace_init(struct wstream_df_thread* cthread);
@@ -74,6 +80,9 @@ void dump_average_task_durations(int num_workers, struct wstream_df_thread* wstr
 void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 
 #else
+
+#define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS
+
 #define trace_init(cthread)  do { } while(0)
 #define trace_task_exec_end(cthread) do { } while(0)
 #define trace_task_exec_start(cthread, from_node, type) do { } while(0)

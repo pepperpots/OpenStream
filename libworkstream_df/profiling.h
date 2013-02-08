@@ -2,14 +2,41 @@
 #define PROFILING_H
 
 #include "config.h"
-#include "wstream_df.h"
+#include <stdint.h>
+
+#if ALLOW_PUSHES
+#define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
+	unsigned long long steals_pushed; \
+	unsigned long long pushes_samel2; \
+	unsigned long long pushes_samel3; \
+	unsigned long long pushes_remote; \
+	unsigned long long pushes_fails;
+#else
+#define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
+#endif
 
 #ifdef WQUEUE_PROFILE
-void
-init_wqueue_counters (wstream_df_thread_p th);
+#define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
+	unsigned long long steals_fails; \
+	unsigned long long steals_owncached; \
+	unsigned long long steals_ownqueue; \
+	unsigned long long steals_samel2; \
+	unsigned long long steals_samel3; \
+	unsigned long long steals_remote; \
+	unsigned long long bytes_l1; \
+	unsigned long long bytes_l2; \
+	unsigned long long bytes_l3; \
+	unsigned long long bytes_rem; \
+	unsigned long long tasks_created; \
+	unsigned long long tasks_executed;
+
+struct wstream_df_thread;
 
 void
-dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream_df_worker_threads);
+init_wqueue_counters (struct wstream_df_thread* th);
+
+void
+dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 
 void
 dump_global_wqueue_counters ();
@@ -20,6 +47,8 @@ dump_global_wqueue_counters ();
 	} while (0)
 
 #else
+
+#define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS
 #define init_wqueue_counters(th) do {} while(0)
 #define dump_wqueue_counters(num_workers, wstream_df_worker_threads) do {} while(0)
 #define inc_wqueue_counter(ctr, delta) do {} while(0)
@@ -42,5 +71,9 @@ void dump_transfer_matrix(unsigned int num_workers);
 #define init_transfer_matrix() do {} while(0)
 #define dump_transfer_matrix(num_workers) do {} while(0)
 #endif
+
+#define WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS \
+	WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
+	WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
 
 #endif

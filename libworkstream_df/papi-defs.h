@@ -10,6 +10,7 @@
 #define _PAPI_COUNTER_SETS 3
 
 #ifndef _PAPI_PROFILE
+#define WSTREAM_DF_THREAD_PAPI_FIELDS
 # define _PAPI_P0B
 # define _PAPI_P0E
 # define _PAPI_P1B
@@ -22,6 +23,11 @@
 # define _PAPI_INIT_CTRS(I)
 # define _PAPI_DUMP_CTRS(I)
 #else
+
+#define WSTREAM_DF_THREAD_PAPI_FIELDS \
+	int _papi_eset[16];	      \
+	long long counters[16][_papi_num_events]
+
 # define _papi_num_events 4
 extern int _papi_tracked_events[_papi_num_events];
 

@@ -11,6 +11,7 @@
 #include "config.h"
 #include "list.h"
 #include "trace.h"
+#include "profiling.h"
 
 #define STEAL_TYPE_UNKNOWN 0
 #define STEAL_TYPE_PUSH 1
@@ -105,6 +106,12 @@ typedef struct barrier
   struct barrier *save_barrier;
 } barrier_t, *barrier_p;
 
+#if ALLOW_PUSHES
+  #define WSTREAM_DF_THREAD_PUSH_FIELDS wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)))
+#else
+  #define WSTREAM_DF_THREAD_PUSH_FIELDS
+#endif
+
 /* T* worker threads have each their own private work queue, which
    contains the frames that are ready to be executed.  For now the
    control program will be distributing work round-robin, later we
@@ -121,50 +128,16 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   cdeque_t work_deque __attribute__((aligned (64)));
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
-#if !NO_SLAB_ALLOCATOR
-  slab_cache_t slab_cache;
-#endif
-
   unsigned int rands;
 
-#if ALLOW_PUSHES
-  wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)));
-#endif
+  WSTREAM_DF_THREAD_SLAB_FIELDS;
+  WSTREAM_DF_THREAD_PUSH_FIELDS;
+  WSTREAM_DF_THREAD_PAPI_FIELDS;
+  WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS;
+  WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS;
 
   barrier_p swap_barrier;
   void *current_stack; // BUG in swap/get context: stack is not set
-#ifdef _PAPI_PROFILE
-  int _papi_eset[16];
-  long long counters[16][_papi_num_events];
-#endif
-
-#ifdef WQUEUE_PROFILE
-  unsigned long long steals_fails;
-  unsigned long long steals_owncached;
-  unsigned long long steals_ownqueue;
-  unsigned long long steals_samel2;
-  unsigned long long steals_samel3;
-  unsigned long long steals_remote;
-#ifdef ALLOW_PUSHES
-  unsigned long long steals_pushed;
-  unsigned long long pushes_samel2;
-  unsigned long long pushes_samel3;
-  unsigned long long pushes_remote;
-  unsigned long long pushes_fails;
-#endif
-  unsigned long long bytes_l1;
-  unsigned long long bytes_l2;
-  unsigned long long bytes_l3;
-  unsigned long long bytes_rem;
-  unsigned long long tasks_created;
-  unsigned long long tasks_executed;
-#endif
-
-#if ALLOW_WQEVENT_SAMPLING
-  worker_state_change_t events[MAX_WQEVENT_SAMPLES];
-  unsigned int num_events;
-  unsigned int previous_state_idx;
-#endif
 } wstream_df_thread_t, *wstream_df_thread_p;
 
 #endif

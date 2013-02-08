@@ -1,5 +1,7 @@
 #include "profiling.h"
 #include <string.h>
+#include <stdio.h>
+#include "wstream_df.h"
 
 #ifdef MATRIX_PROFILE
 unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];

@@ -9,6 +9,13 @@
 #define __slab_max_size 20 // 262144 = 256KB -- biggest slab
 #define __slab_alloc_size 21 // 1048576 = 1MB -- amount of memory that should be allocated in one go
 
+#if !NO_SLAB_ALLOCATOR
+  #define WSTREAM_DF_THREAD_SLAB_FIELDS \
+   slab_cache_t slab_cache
+#else
+  #define WSTREAM_DF_THREAD_SLAB_FIELDS
+#endif
+
 typedef struct slab
 {
   struct slab * next;
