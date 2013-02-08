@@ -5,6 +5,7 @@
 #include "wstream_df.h"
 #include "arch.h"
 
+#if ALLOW_WQEVENT_SAMPLING
 static const char* state_names[] = {
   "seeking",
   "taskexec",
@@ -453,3 +454,5 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 
   fclose(fp);
 }
+
+#endif
