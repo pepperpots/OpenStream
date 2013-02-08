@@ -757,12 +757,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
 #endif
 
-#if ALLOW_STATE_SAMPLING
-  wstream_df_worker->events[0].time = rdtsc();
-  wstream_df_worker->events[0].state = WORKER_STATE_SEEKING;
-  wstream_df_worker->num_events = 1;
-  wstream_df_worker->last_state_idx = 0;
-#endif
+  trace_init(wstream_df_worker);
 
 #ifdef _PRINT_STATS
   printf ("worker %d mapped to core %d\n", id, core);

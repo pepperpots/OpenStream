@@ -14,6 +14,16 @@ static const char* state_names[] = {
   "broadcast"
 };
 
+void trace_init(struct wstream_df_thread* cthread)
+{
+	cthread->events[0].time = rdtsc();
+	cthread->events[0].type = WQEVENT_STATECHANGE;
+	cthread->events[0].state_change.state = WORKER_STATE_SEEKING;
+	cthread->events[0].state_change.previous_state_idx = -1;
+	cthread->num_events = 1;
+	cthread->previous_state_idx = 0;
+}
+
 void trace_event(wstream_df_thread_p cthread, unsigned int type)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
