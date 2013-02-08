@@ -3,6 +3,7 @@
 #include "error.h"
 #include "cdeque.h"
 #include "arch.h"
+#include "papi-defs.h"
 
 /* Push element ELEM to the bottom of the deque CDEQUE. Increase the size
    if necessary.  */

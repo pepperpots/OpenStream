@@ -44,12 +44,6 @@ extern void wstream_df_stream_dtor (void **, size_t);
 extern void wstream_df_stream_reference (void *, size_t);
 
 
-void dump_papi_counters (int);
-void init_papi_counters (int);
-void start_papi_counters (int);
-void stop_papi_counters (int);
-void accum_papi_counters (int);
-
 /***************************************************************************/
 /* Data structures for T*.  */
 /***************************************************************************/
