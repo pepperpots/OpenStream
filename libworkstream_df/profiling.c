@@ -33,25 +33,24 @@ init_wqueue_counters (wstream_df_thread_p th)
 {
 	th->steals_owncached = 0;
 	th->steals_ownqueue = 0;
-	th->steals_samel2 = 0;
-	th->steals_samel3 = 0;
-	th->steals_remote = 0;
+	memset(th->steals_mem, 0, sizeof(th->steals_mem));
+
 	th->steals_fails = 0;
 	th->tasks_created = 0;
 	th->tasks_executed = 0;
 
 #if ALLOW_PUSHES
 	th->steals_pushed = 0;
-	th->pushes_samel2 = 0;
-	th->pushes_samel3 = 0;
-	th->pushes_remote = 0;
 	th->pushes_fails = 0;
+	memset(th->pushes_mem, 0, sizeof(th->pushes_mem));
 #endif
 }
 
 void
 dump_wqueue_counters_single (wstream_df_thread_p th)
 {
+	int level;
+
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
 		th->tasks_created);
@@ -64,15 +63,14 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	printf ("Thread %d: steals_ownqueue = %lld\n",
 		th->worker_id,
 		th->steals_ownqueue);
-	printf ("Thread %d: steals_samel2 = %lld\n",
-		th->worker_id,
-		th->steals_samel2);
-	printf ("Thread %d: steals_samel3 = %lld\n",
-		th->worker_id,
-		th->steals_samel3);
-	printf ("Thread %d: steals_remote = %lld\n",
-		th->worker_id,
-		th->steals_remote);
+
+	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+		printf ("Thread %d: steals_%s = %lld\n",
+			th->worker_id,
+			mem_level_name(level),
+			th->steals_mem[level]);
+	}
+
 	printf ("Thread %d: steals_fails = %lld\n",
 		th->worker_id,
 		th->steals_fails);
@@ -108,63 +106,53 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 #endif
 
 #if ALLOW_PUSHES
-	printf ("Thread %d: pushes_samel2 = %lld\n",
-		th->worker_id,
-		th->pushes_samel2);
-	printf ("Thread %d: pushes_samel3 = %lld\n",
-		th->worker_id,
-		th->pushes_samel3);
-	printf ("Thread %d: pushes_remote = %lld\n",
-		th->worker_id,
-		th->pushes_remote);
 	printf ("Thread %d: pushes_fails = %lld\n",
 		th->worker_id,
 		th->pushes_fails);
 	printf ("Thread %d: steals_pushed = %lld\n",
 		th->worker_id,
 		th->steals_pushed);
+
+	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+		printf ("Thread %d: pushes_%s = %lld\n",
+			th->worker_id,
+			mem_level_name(level),
+			th->pushes_mem[level]);
+	}
 #endif
 
-	printf ("Thread %d: bytes_l1 = %lld\n",
+	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+		printf ("Thread %d: bytes_%s = %lld\n",
 		th->worker_id,
-		th->bytes_l1);
-	printf ("Thread %d: bytes_l2 = %lld\n",
-		th->worker_id,
-		th->bytes_l2);
-	printf ("Thread %d: bytes_l3 = %lld\n",
-		th->worker_id,
-		th->bytes_l3);
-	printf ("Thread %d: bytes_rem = %lld\n",
-		th->worker_id,
-		th->bytes_rem);
+		mem_level_name(level),
+		th->bytes_mem[level]);
+	}
 }
 
 void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 {
-	unsigned int i;
-	unsigned long long bytes_l1 = 0;
-	unsigned long long bytes_l2 = 0;
-	unsigned long long bytes_l3 = 0;
-	unsigned long long bytes_rem = 0;
+	unsigned int i, level;
+	unsigned long long bytes_mem[MEM_NUM_LEVELS];
 	unsigned long long bytes_total = 0;
+
+	memset(bytes_mem, 0, sizeof(bytes_mem));
 
 	for (i = 0; i < num_workers; ++i) {
 		dump_wqueue_counters_single(&wstream_df_worker_threads[i]);
-		bytes_l1 += wstream_df_worker_threads[i].bytes_l1;
-		bytes_l2 += wstream_df_worker_threads[i].bytes_l2;
-		bytes_l3 += wstream_df_worker_threads[i].bytes_l3;
-		bytes_rem += wstream_df_worker_threads[i].bytes_rem;
-	}
-	bytes_total = bytes_l1 + bytes_l2 + bytes_l3 + bytes_rem;
 
-	printf("Overall bytes_l1 = %lld (%f %%)\n"
-	       "Overall bytes_l2 = %lld (%f %%)\n"
-	       "Overall bytes_l3 = %lld (%f %%)\n"
-	       "Overall bytes_rem = %lld (%f %%)\n",
-	       bytes_l1, 100.0*(double)bytes_l1/(double)bytes_total,
-	       bytes_l2, 100.0*(double)bytes_l2/(double)bytes_total,
-	       bytes_l3, 100.0*(double)bytes_l3/(double)bytes_total,
-	       bytes_rem, 100.0*(double)bytes_rem/(double)bytes_total);
+		for(level = 0; level < MEM_NUM_LEVELS; level++)
+			bytes_mem[level] += wstream_df_worker_threads[i].bytes_mem[level];
+	}
+
+	for(level = 0; level < MEM_NUM_LEVELS; level++)
+		bytes_total += bytes_mem[level];
+
+	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+		printf ("Oveall bytes_%s = %lld (%f %%)\n",
+			mem_level_name(level),
+			bytes_mem[level],
+			100.0*(double)bytes_mem[level]/(double)bytes_total);
+	}
 }
 
 #endif

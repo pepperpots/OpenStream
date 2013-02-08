@@ -192,7 +192,7 @@ static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
-  int i, j;
+  int i, j, level;
   wstream_df_thread_p cthread = current_thread;
   unsigned int max_worker;
   long long max_data = 0;
@@ -227,6 +227,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 #if ALLOW_PUSHES
       max_worker = cthread->worker_id;
       max_data = fp->bytes_cpu[cthread->worker_id];
+
       /* Which worker wrote most of the data to the frame  */
       for(i = 0; i < MAX_CPUS; i++) {
 	  if(fp->bytes_cpu[i] > max_data) {
@@ -236,7 +237,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
       }
 
       /* Check whether the frame should be pushed somewhere else */
-      if(max_data != 0 && max_worker != cthread->worker_id && cthread->worker_id / 8 != max_worker / 8) {
+      if(max_data != 0 && max_worker != cthread->worker_id && mem_lowest_common_level(cthread->worker_id, max_worker) >= PUSH_MIN_MEM_LEVEL) {
 	  for(j = 0; j < NUM_PUSH_ATTEMPTS; j++) {
 	     cthread->rands = cthread->rands * 1103515245 + 12345;
 	     push_slot = (cthread->rands >> 16)% NUM_PUSH_SLOTS;
@@ -244,12 +245,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	     /* Try to push */
 	     if(compare_and_swap((size_t *)&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], 0, (size_t)fp)) {
 
-	       if(max_worker / 2 == cthread->worker_id / 2)
-		 inc_wqueue_counter(&current_thread->pushes_samel2, 1);
-	       else if(max_worker / 8 == cthread->worker_id / 8)
-		 inc_wqueue_counter(&current_thread->pushes_samel3, 1);
-	       else
-		 inc_wqueue_counter(&current_thread->pushes_remote, 1);
+	       level = mem_lowest_common_level(cthread->worker_id, max_worker);
+	       inc_wqueue_counter(&current_thread->pushes_mem[level], 1);
 
 	       trace_push(cthread, max_worker, fp->size);
 	       trace_state_restore(cthread);
@@ -443,7 +440,7 @@ worker_thread (void)
   wstream_df_thread_p cthread = current_thread;
   unsigned int steal_from = 0;
   int last_steal_from = -1;
-  int i;
+  int i, level, attempt, sibling_num;
   unsigned int cpu;
 
   current_barrier = NULL;
@@ -506,70 +503,28 @@ worker_thread (void)
 	inc_wqueue_counter(&cthread->steals_owncached, 1);
       }
 
-      if (fp == NULL)
+      if (fp == NULL && last_steal_from == -1)
 	{
-	  if(!(cthread->worker_id == (unsigned int)num_workers-1 && cthread->worker_id % 2 == 0) && last_steal_from == -1) {
-	    for(i = 0; i < NUM_STEAL_ATTEMPTS_L2 && !fp; i++) {
-	      steal_from = (cthread->worker_id + 1) % 2;
-	      steal_from += cthread->worker_id;
-
-	      fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-	    }
-	  }
-
-	  if(fp == NULL && last_steal_from == -1) {
-	    int l3_base = cthread->worker_id & ~7;
-	    int num_workers_on_l3 = num_workers - l3_base;
-
-	    if(num_workers_on_l3 > 8)
-	      num_workers_on_l3 = 8;
-
-	    if(num_workers_on_l3 > 1) {
-	      for(i = 0; i < NUM_STEAL_ATTEMPTS_L3 && !fp; i++) {
-		do {
+	  for(level = 0; level < MEM_NUM_LEVELS && !fp; level++)
+	    {
+	      for(attempt = 0; attempt < mem_num_steal_attempts_at_level(level) && !fp; attempt++)
+		{
 		  cthread->rands = cthread->rands * 1103515245 + 12345;
-		  steal_from = l3_base + ((cthread->rands >> 16) % num_workers_on_l3);
-		} while(steal_from == cthread->worker_id);
+		  sibling_num = (cthread->rands >> 16) % mem_cores_at_level(level);
+		  steal_from = mem_nth_sibling_at_level(level, cthread->worker_id, sibling_num);
+		  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
 
-		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-	      }
+		  if(fp == NULL)
+		    inc_wqueue_counter(&cthread->steals_fails, 1);
+		}
 	    }
-	  }
 
-	  if(fp == NULL) {
-	    for(i = 0; i < NUM_STEAL_ATTEMPTS_REMOTE && !fp; i++) {
-	      if(last_steal_from == -1) {
-		cthread->rands = cthread->rands * 1103515245 + 12345;
-		steal_from = (cthread->rands >> 16) % num_workers;
-	      } else {
-		steal_from = last_steal_from;
-	      }
-
-	      if (__builtin_expect (steal_from != cthread->worker_id, 1))
-		fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-
-	      if(fp != NULL)
-		last_steal_from = steal_from;
-	      else
-		last_steal_from = -1;
+	  if(fp != NULL)
+	    {
+	      inc_wqueue_counter(&cthread->steals_mem[level], 1);
+	      trace_steal(cthread, steal_from, fp->size);
+	      fp->steal_type = STEAL_TYPE_STEAL;
 	    }
-	  }
-
-	  if(fp == NULL) {
-	    inc_wqueue_counter(&cthread->steals_fails, 1);
-	  } else {
-	    if(cthread->worker_id / 2 == steal_from / 2)
-	      inc_wqueue_counter(&cthread->steals_samel2, 1);
-	    else if(cthread->worker_id / 8 == steal_from / 8)
-	      inc_wqueue_counter(&cthread->steals_samel3, 1);
-	    else
-	      inc_wqueue_counter(&cthread->steals_remote, 1);
-	  }
-
-	  if(fp != NULL) {
-	    trace_steal(cthread, steal_from, fp->size);
-	    fp->steal_type = STEAL_TYPE_STEAL;
-	  }
 	}
 
       if (fp != NULL)
@@ -577,20 +532,15 @@ worker_thread (void)
 	  current_barrier = NULL;
 	  _PAPI_P3B;
 
-	  for(cpu = 0; cpu < MAX_CPUS; cpu++) {
-		  if(fp->bytes_cpu[cpu]) {
-			  if(cthread->worker_id == cpu)
-			    inc_wqueue_counter(&cthread->bytes_l1, fp->bytes_cpu[cpu]);
-			  else if(cthread->worker_id / 2 == cpu / 2)
-			    inc_wqueue_counter(&cthread->bytes_l2, fp->bytes_cpu[cpu]);
-			  else if(cthread->worker_id / 8 == cpu / 8)
-			    inc_wqueue_counter(&cthread->bytes_l3, fp->bytes_cpu[cpu]);
-			  else
-			    inc_wqueue_counter(&cthread->bytes_rem, fp->bytes_cpu[cpu]);
-
-			  inc_transfer_matrix_entry(cthread->worker_id, cpu, fp->bytes_cpu[cpu]);
-		  }
-	  }
+	  for(cpu = 0; cpu < MAX_CPUS; cpu++)
+	    {
+	      if(fp->bytes_cpu[cpu])
+		{
+		  level = mem_lowest_common_level(cthread->worker_id, cpu);
+		  inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu[cpu]);
+		  inc_transfer_matrix_entry(cthread->worker_id, cpu, fp->bytes_cpu[cpu]);
+		}
+	    }
 
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);

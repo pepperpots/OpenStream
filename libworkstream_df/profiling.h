@@ -7,9 +7,7 @@
 #if ALLOW_PUSHES
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
 	unsigned long long steals_pushed; \
-	unsigned long long pushes_samel2; \
-	unsigned long long pushes_samel3; \
-	unsigned long long pushes_remote; \
+	unsigned long long pushes_mem[MEM_NUM_LEVELS]; \
 	unsigned long long pushes_fails;
 #else
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
@@ -20,13 +18,8 @@
 	unsigned long long steals_fails; \
 	unsigned long long steals_owncached; \
 	unsigned long long steals_ownqueue; \
-	unsigned long long steals_samel2; \
-	unsigned long long steals_samel3; \
-	unsigned long long steals_remote; \
-	unsigned long long bytes_l1; \
-	unsigned long long bytes_l2; \
-	unsigned long long bytes_l3; \
-	unsigned long long bytes_rem; \
+	unsigned long long steals_mem[MEM_NUM_LEVELS]; \
+	unsigned long long bytes_mem[MEM_NUM_LEVELS]; \
 	unsigned long long tasks_created; \
 	unsigned long long tasks_executed;
 
