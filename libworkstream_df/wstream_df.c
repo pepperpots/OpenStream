@@ -439,7 +439,6 @@ worker_thread (void)
 {
   wstream_df_thread_p cthread = current_thread;
   unsigned int steal_from = 0;
-  int last_steal_from = -1;
   int i, level, attempt, sibling_num;
   unsigned int cpu;
 
@@ -503,7 +502,7 @@ worker_thread (void)
 	inc_wqueue_counter(&cthread->steals_owncached, 1);
       }
 
-      if (fp == NULL && last_steal_from == -1)
+      if(fp == NULL)
 	{
 	  for(level = 0; level < MEM_NUM_LEVELS && !fp; level++)
 	    {

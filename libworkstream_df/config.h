@@ -35,18 +35,19 @@
 
 /* Description of the memory hierarchy */
 
-#define MEM_NUM_LEVELS 5
+#define MEM_NUM_LEVELS 6
 
 /* 5 levels are defined:
  * 0: 1st level cache, private
  * 1: 2nd level cache, shared by 2 cores
  * 2: 3rd level cache, shared by 8 cores
  * 3: NUMA domain containing 8 cores
- * 4: whole machine, 64 cores in total
+ * 4: 32 Cores from NUMA domain at a distance of 1 hop
+ * 5: 24 Cores from NUMA domain at a distance of 2 hops
  */
 static int mem_cores_at_level(unsigned int level)
 {
-	int cores_at_level[] = {1, 2, 8, 8, 64};
+	int cores_at_level[] = {1, 2, 8, 8, 32, 24};
 	assert(level < MEM_NUM_LEVELS);
 	return cores_at_level[level];
 }
@@ -58,16 +59,103 @@ static const char* mem_level_name(unsigned int level)
 				"same_l2",
 				"same_l3",
 				"same_numa",
-				"same_machine"};
+				"numa_1hop",
+				"numa_2hops"};
 	assert(level < MEM_NUM_LEVELS);
 	return level_names[level];
+}
+
+/* Determines how many NUMA hops two cores are
+ * away from each other */
+static int mem_numa_num_hops(unsigned int a, unsigned int b)
+{
+	/* Distance matrix as reported by numactl --hardware */
+	static int node_distances[8][8] = {
+		{10, 16, 16, 22, 16, 22, 16, 22},
+		{16, 10, 22, 16, 22, 16, 22, 16},
+		{16, 22, 10, 16, 16, 22, 16, 22},
+		{22, 16, 16, 10, 22, 16, 22, 16},
+		{16, 22, 16, 22, 10, 16, 16, 22},
+		{22, 16, 22, 16, 16, 10, 22, 16},
+		{16, 22, 16, 22, 16, 22, 10, 16},
+		{22, 16, 22, 16, 22, 16, 16, 10}
+	};
+
+	int node_a = a / 8;
+	int node_b = b / 8;
+	int distance = node_distances[node_a][node_b];
+
+	switch(distance) {
+		case 10: return 0;
+		case 16: return 1;
+		case 22: return 2;
+	}
+}
+
+/* Enumerates all cores of a NUMA node */
+#define NUMA_NODE_CORES(numa_node) \
+	(numa_node*8+0), \
+	(numa_node*8+1), \
+	(numa_node*8+2), \
+	(numa_node*8+3), \
+	(numa_node*8+4), \
+	(numa_node*8+5), \
+	(numa_node*8+6), \
+	(numa_node*8+7)
+
+/* Returns the n-th sibling of a core at a NUMA hop distance of 1. */
+static int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int sibling_num)
+{
+	int numa_node = cpu / 8;
+
+	static int onehop_siblings[8][32] = {
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(2), NUMA_NODE_CORES(4), NUMA_NODE_CORES(6) },
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(3), NUMA_NODE_CORES(5), NUMA_NODE_CORES(7) },
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(3), NUMA_NODE_CORES(4), NUMA_NODE_CORES(6) },
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(2), NUMA_NODE_CORES(3), NUMA_NODE_CORES(7) },
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(2), NUMA_NODE_CORES(5), NUMA_NODE_CORES(6) },
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(3), NUMA_NODE_CORES(4), NUMA_NODE_CORES(7) },
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(2), NUMA_NODE_CORES(4), NUMA_NODE_CORES(7) },
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(3), NUMA_NODE_CORES(5), NUMA_NODE_CORES(6) }
+	};
+
+	return onehop_siblings[numa_node][sibling_num];
+}
+
+/* Returns the n-th sibling of a core at a NUMA hop distance of 2. */
+static int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int sibling_num)
+{
+	int numa_node = cpu / 8;
+
+	static int twohops_siblings[8][24] = {
+		{ NUMA_NODE_CORES(3), NUMA_NODE_CORES(5), NUMA_NODE_CORES(7)},
+		{ NUMA_NODE_CORES(2), NUMA_NODE_CORES(4), NUMA_NODE_CORES(6)},
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(5), NUMA_NODE_CORES(7)},
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(4), NUMA_NODE_CORES(6)},
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(3), NUMA_NODE_CORES(7)},
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(2), NUMA_NODE_CORES(6)},
+		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(3), NUMA_NODE_CORES(5)},
+		{ NUMA_NODE_CORES(0), NUMA_NODE_CORES(2), NUMA_NODE_CORES(4)}
+	};
+
+	return twohops_siblings[numa_node][sibling_num];
 }
 
 /* Checks if two cores are siblings at a level */
 static int mem_level_siblings(unsigned int level, unsigned int a, unsigned int b)
 {
-	return (a / mem_cores_at_level(level)) ==
-		(b / mem_cores_at_level(level));
+	switch(level) {
+		case 0:
+		case 1:
+		case 2:
+		case 3:
+			return (a / mem_cores_at_level(level)) ==
+				(b / mem_cores_at_level(level));
+		case 4: return (mem_numa_num_hops(a, b) == 1);
+		case 5: return (mem_numa_num_hops(a, b) == 2);
+	}
+
+	assert(0);
 }
 
 /* Returns the lowest common level in the memory hierarchy between
@@ -85,11 +173,7 @@ static int mem_lowest_common_level(unsigned int a, unsigned int b)
 	assert(0);
 }
 
-/* Returns the n-th sibling of a core at a given level of the memory hierarchy.
- * The core ID returned is guaranteed to be different from the core passed
- * as an argument.
- */
-static int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
+static int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
 	unsigned int base = cpu - (cpu % mem_cores_at_level(level));
 	unsigned int sibling = base + sibling_num;
@@ -100,10 +184,29 @@ static int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsign
 	return sibling;
 }
 
+/* Returns the n-th sibling of a core at a given level of the memory hierarchy.
+ * The core ID returned is guaranteed to be different from the core passed
+ * as an argument.
+ */
+static int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
+{
+	/* For the cache levels, just determine the base core and add the sibling
+	 * For NUMA levels, we have to look up the siblings in a matrix.
+	 */
+	if(level <= 3)
+		return  mem_nth_cache_sibling_at_level(level, cpu, sibling_num);
+	else if(level == 4)
+		return mem_numa_get_1hop_nth_sibling(cpu, sibling_num);
+	else if(level == 5)
+		return mem_numa_get_2hops_nth_sibling(cpu, sibling_num);
+
+	assert(0);
+}
+
 /* Returns how many steal attempts at a given level should be performed. */
 static int mem_num_steal_attempts_at_level(unsigned int level)
 {
-	int steals_at_level[] = {0, 2, 8, 1, 1};
+	int steals_at_level[] = {0, 2, 8, 0, 1, 1};
 	assert(level < MEM_NUM_LEVELS);
 	return steals_at_level[level];
 }
