@@ -5,11 +5,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define WSTREAM_DF_DEQUE_LOG_SIZE 8
-#define MAX_NUM_CORES 1024
-#define WSTREAM_STACK_SIZE 1 << 16
+#include "fibers.h"
+#include "alloc.h"
+#include "cdeque.h"
+#include "config.h"
+#include "list.h"
+#include "trace.h"
 
-#define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
+#define STEAL_TYPE_UNKNOWN 0
+#define STEAL_TYPE_PUSH 1
+#define STEAL_TYPE_STEAL 2
 
 /* Create a new thread, with frame pointer size, and sync counter */
 extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool);
@@ -39,129 +44,133 @@ extern void wstream_df_stream_dtor (void **, size_t);
 extern void wstream_df_stream_reference (void *, size_t);
 
 
-/* Memory fences.  */
-static inline void
-load_load_fence (uintptr_t dep)
-{
-#if !NO_FENCES && defined(__arm__)
-  /* Fences the load that produced DEP. */
-  __asm__ __volatile__ ("teq %0, %0; beq 0f; 0: isb" :: "r" (dep) : "memory");
-#else
-  (void) dep;
-  __compiler_fence;
-#endif
-}
-
-static inline void
-load_store_fence (uintptr_t dep)
-{
-#if !NO_FENCES && defined(__arm__)
-  /* Fences the load that produced DEP. */
-  __asm__ __volatile__ ("teq %0, %0; beq 0f; 0:" :: "r" (dep) : "memory");
-#else
-  (void) dep;
-  __compiler_fence;
-#endif
-}
-
-static inline void
-store_load_fence ()
-{
-#if !NO_FENCES && defined(__arm__)
-  __asm__ __volatile__ ("dmb" ::: "memory");
-#elif !NO_FENCES
-  __sync_synchronize ();
-#else
-  __compiler_fence;
-#endif
-}
-
-static inline void
-store_store_fence ()
-{
-#if !NO_FENCES && defined(__arm__)
-  __asm__ __volatile__ ("dmb" ::: "memory");
-#else
-  __compiler_fence;
-#endif
-}
-
-#if defined(__arm__)
-static inline size_t
-load_linked (volatile size_t *ptr)
-{
-  size_t value;
-  __asm__ __volatile__ ("ldrex %0, [%1]" : "=r" (value) : "r" (ptr));
-  return value;
-}
-
-static inline bool
-store_conditional (volatile size_t *ptr, size_t value)
-{
-  size_t status = 1;
-  __asm__ __volatile__ ("strex %0, %2, [%1]"
-			: "+r" (status)
-			: "r" (ptr), "r" (value));
-  return status == 0;
-}
-#endif
-
-static inline bool
-compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
-{
-#if !NO_FENCES || !NO_SYNC
-#if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
-  int status = 1;
-  __asm__ __volatile__ ("0: ldrex r0, [%1]\n\t"
-                        "teq r0, %2\n\t"
-			"bne 1f\n\t"
-                        "strex %0, %3, [%1]\n\t"
-                        "teq %0, #1\n\t"
-                        "beq 0b\n\t"
-                        "1:"
-                        : "+r" (status)
-                        : "r" (ptr), "r" (oldval), "r" (newval)
-                        : "r0");
-  return status == 0;
-#else
-  return __sync_bool_compare_and_swap (ptr, oldval, newval);
-#endif
-#else
-  if (*ptr == oldval)
-    {
-      *ptr = newval;
-      return true;
-    }
-  else
-    return false;
-#endif
-}
-
-static inline bool
-weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
-{
-#if !NO_FENCES || !NO_SYNC
-#if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
-  int status = 1;
-  __asm__ __volatile__ ("ldrex r0, [%1]\n\t"
-			"teq r0, %2\n\t"
-			"strexeq %0, %3, [%1]"
-			: "+r" (status)
-			: "r" (ptr), "r" (oldval), "r" (newval)
-			: "r0");
-  return !status;
-#else
-  return __sync_bool_compare_and_swap (ptr, oldval, newval);
-#endif
-#else
-  return compare_and_swap (ptr, oldval, newval);
-#endif
-}
-
-
 void dump_papi_counters (int);
 void init_papi_counters (int);
 void start_papi_counters (int);
 void stop_papi_counters (int);
 void accum_papi_counters (int);
+
+/***************************************************************************/
+/* Data structures for T*.  */
+/***************************************************************************/
+
+typedef struct wstream_df_view
+{
+  /* MUST always be 1st field.  */
+  void *next;
+  /* MUST always be 2nd field.  */
+  void *data;
+  /* MUST always be 3rd field.  */
+  void *sibling;
+  size_t burst;
+  size_t horizon;
+  void *owner;
+  /* re-use the dummy view's reached position to store the size of an
+     array of views.  */
+  size_t reached_position;
+} wstream_df_view_t, *wstream_df_view_p;
+
+/* The stream data structure.  It only relies on two linked lists of
+   views in the case of a sequential control program (or at least
+   sequential with respect to production and consumption of data in
+   any given stream), or two single-producer single-consumer queues if
+   the production and consumption of data is scheduled by independent
+   control program threads.  */
+typedef struct wstream_df_stream
+{
+  wstream_df_list_t producer_queue __attribute__((aligned (64)));
+  wstream_df_list_t consumer_queue __attribute__((aligned (64)));
+
+  size_t elem_size;
+  int refcount;
+} wstream_df_stream_t, *wstream_df_stream_p;
+
+
+typedef struct wstream_df_frame
+{
+  int synchronization_counter;
+  int size;
+  void (*work_fn) (void *);
+  struct barrier *own_barrier;
+
+  int steal_type;
+  int last_owner;
+  int bytes_cpu[MAX_CPUS];
+
+  /* Variable size struct */
+  //char buf [];
+} wstream_df_frame_t, *wstream_df_frame_p;
+
+typedef struct barrier
+{
+  int barrier_counter_executed __attribute__((aligned (64)));
+  int barrier_counter_created __attribute__((aligned (64)));
+  bool barrier_unused;
+  ws_ctx_t continuation_context;
+
+  struct barrier *save_barrier;
+} barrier_t, *barrier_p;
+
+/* T* worker threads have each their own private work queue, which
+   contains the frames that are ready to be executed.  For now the
+   control program will be distributing work round-robin, later we
+   will add work-sharing to make this more load-balanced.  A
+   single-producer single-consumer concurrent dequeue could be used in
+   this preliminary stage, which would require no atomic operations,
+   but we'll directly use a multi-producer single-consumer queue
+   instead.  */
+typedef struct __attribute__ ((aligned (64))) wstream_df_thread
+{
+  pthread_t posix_thread_id;
+  unsigned int worker_id;
+
+  cdeque_t work_deque __attribute__((aligned (64)));
+  wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
+
+#if !NO_SLAB_ALLOCATOR
+  slab_cache_t slab_cache;
+#endif
+
+  unsigned int rands;
+
+#if ALLOW_PUSHES
+  wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)));
+#endif
+
+  barrier_p swap_barrier;
+  void *current_stack; // BUG in swap/get context: stack is not set
+#ifdef _PAPI_PROFILE
+  int _papi_eset[16];
+  long long counters[16][_papi_num_events];
+#endif
+
+#ifdef WQUEUE_PROFILE
+  unsigned long long steals_fails;
+  unsigned long long steals_owncached;
+  unsigned long long steals_ownqueue;
+  unsigned long long steals_samel2;
+  unsigned long long steals_samel3;
+  unsigned long long steals_remote;
+#ifdef ALLOW_PUSHES
+  unsigned long long steals_pushed;
+  unsigned long long pushes_samel2;
+  unsigned long long pushes_samel3;
+  unsigned long long pushes_remote;
+  unsigned long long pushes_fails;
+#endif
+  unsigned long long bytes_l1;
+  unsigned long long bytes_l2;
+  unsigned long long bytes_l3;
+  unsigned long long bytes_rem;
+  unsigned long long tasks_created;
+  unsigned long long tasks_executed;
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING
+  worker_state_change_t events[MAX_WQEVENT_SAMPLES];
+  unsigned int num_events;
+  unsigned int previous_state_idx;
+#endif
+} wstream_df_thread_t, *wstream_df_thread_p;
+
 #endif

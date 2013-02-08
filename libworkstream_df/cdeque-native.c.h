@@ -2,6 +2,7 @@
 #include "wstream_df.h"
 #include "error.h"
 #include "cdeque.h"
+#include "arch.h"
 
 /* Push element ELEM to the bottom of the deque CDEQUE. Increase the size
    if necessary.  */

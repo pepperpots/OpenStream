@@ -1,6 +1,9 @@
 #ifndef __SLAB_ALLOCATOR_H_
 #define __SLAB_ALLOCATOR_H_
 
+#include <assert.h>
+#include <stdlib.h>
+
 #define __slab_align 64
 #define __slab_min_size 6 // 64 -- smallest slab
 #define __slab_max_size 20 // 262144 = 256KB -- biggest slab

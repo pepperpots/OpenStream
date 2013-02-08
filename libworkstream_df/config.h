@@ -1,0 +1,33 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+//#define _WSTREAM_DF_DEBUG 1
+//#define _PAPI_PROFILE
+//#define _PRINT_STATS
+
+#define WSTREAM_DF_DEQUE_LOG_SIZE 8
+#define MAX_NUM_CORES 1024
+#define WSTREAM_STACK_SIZE 1 << 16
+
+#define _PHARAON_MODE
+
+#define MAX_CPUS 64
+
+#define WQUEUE_PROFILE
+#define MATRIX_PROFILE "wqueue_matrix.out"
+
+#define NUM_STEAL_ATTEMPTS_L2 2
+#define NUM_STEAL_ATTEMPTS_L3 8
+#define NUM_STEAL_ATTEMPTS_REMOTE 1
+
+#define NUM_PUSH_SLOTS 32
+#define NUM_PUSH_ATTEMPTS 16
+#define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
+
+#define MAX_WQEVENT_SAMPLES 10000000
+#define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
+
+#define WQEVENT_SAMPLING_OUTFILE "events.prv"
+#define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
+
+#endif
