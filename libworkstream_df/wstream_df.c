@@ -941,39 +941,10 @@ void post_main()
   }
 #endif
 
-#ifdef WQUEUE_PROFILE
-  {
-	  int i;
-	  unsigned long long bytes_l1 = 0;
-	  unsigned long long bytes_l2 = 0;
-	  unsigned long long bytes_l3 = 0;
-	  unsigned long long bytes_rem = 0;
-	  unsigned long long bytes_total = 0;
-
-	  dump_events(num_workers, wstream_df_worker_threads);
-	  dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
-	  dump_average_task_durations(num_workers, wstream_df_worker_threads);
-
-	  for (i = 0; i < num_workers; ++i) {
-		  dump_wqueue_counters(&wstream_df_worker_threads[i]);
-		  bytes_l1 += wstream_df_worker_threads[i].bytes_l1;
-		  bytes_l2 += wstream_df_worker_threads[i].bytes_l2;
-		  bytes_l3 += wstream_df_worker_threads[i].bytes_l3;
-		  bytes_rem += wstream_df_worker_threads[i].bytes_rem;
-	  }
-	  bytes_total = bytes_l1 + bytes_l2 + bytes_l3 + bytes_rem;
-
-	  printf("Overall bytes_l1 = %lld (%f %%)\n"
-		 "Overall bytes_l2 = %lld (%f %%)\n"
-		 "Overall bytes_l3 = %lld (%f %%)\n"
-		 "Overall bytes_rem = %lld (%f %%)\n",
-		 bytes_l1, 100.0*(double)bytes_l1/(double)bytes_total,
-		 bytes_l2, 100.0*(double)bytes_l2/(double)bytes_total,
-		 bytes_l3, 100.0*(double)bytes_l3/(double)bytes_total,
-		 bytes_rem, 100.0*(double)bytes_rem/(double)bytes_total);
-  }
-#endif
-
+  dump_events(num_workers, wstream_df_worker_threads);
+  dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
+  dump_average_task_durations(num_workers, wstream_df_worker_threads);
+  dump_wqueue_counters(num_workers, wstream_df_worker_threads);
   dump_transfer_matrix(num_workers);
 }
 

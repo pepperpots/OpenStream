@@ -48,7 +48,7 @@ init_wqueue_counters (wstream_df_thread_p th)
 }
 
 void
-dump_wqueue_counters (wstream_df_thread_p th)
+dump_wqueue_counters_single (wstream_df_thread_p th)
 {
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
@@ -135,6 +135,34 @@ dump_wqueue_counters (wstream_df_thread_p th)
 	printf ("Thread %d: bytes_rem = %lld\n",
 		th->worker_id,
 		th->bytes_rem);
+}
+
+void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+{
+	unsigned int i;
+	unsigned long long bytes_l1 = 0;
+	unsigned long long bytes_l2 = 0;
+	unsigned long long bytes_l3 = 0;
+	unsigned long long bytes_rem = 0;
+	unsigned long long bytes_total = 0;
+
+	for (i = 0; i < num_workers; ++i) {
+		dump_wqueue_counters_single(&wstream_df_worker_threads[i]);
+		bytes_l1 += wstream_df_worker_threads[i].bytes_l1;
+		bytes_l2 += wstream_df_worker_threads[i].bytes_l2;
+		bytes_l3 += wstream_df_worker_threads[i].bytes_l3;
+		bytes_rem += wstream_df_worker_threads[i].bytes_rem;
+	}
+	bytes_total = bytes_l1 + bytes_l2 + bytes_l3 + bytes_rem;
+
+	printf("Overall bytes_l1 = %lld (%f %%)\n"
+	       "Overall bytes_l2 = %lld (%f %%)\n"
+	       "Overall bytes_l3 = %lld (%f %%)\n"
+	       "Overall bytes_rem = %lld (%f %%)\n",
+	       bytes_l1, 100.0*(double)bytes_l1/(double)bytes_total,
+	       bytes_l2, 100.0*(double)bytes_l2/(double)bytes_total,
+	       bytes_l3, 100.0*(double)bytes_l3/(double)bytes_total,
+	       bytes_rem, 100.0*(double)bytes_rem/(double)bytes_total);
 }
 
 #endif

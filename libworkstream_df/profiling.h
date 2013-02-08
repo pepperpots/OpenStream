@@ -9,7 +9,10 @@ void
 init_wqueue_counters (wstream_df_thread_p th);
 
 void
-dump_wqueue_counters (wstream_df_thread_p th);
+dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream_df_worker_threads);
+
+void
+dump_global_wqueue_counters ();
 
 #define inc_wqueue_counter(ctr, delta) \
 	do { \
@@ -18,7 +21,7 @@ dump_wqueue_counters (wstream_df_thread_p th);
 
 #else
 #define init_wqueue_counters(th) do {} while(0)
-#define dump_wqueue_counters(th) do {} while(0)
+#define dump_wqueue_counters(num_workers, wstream_df_worker_threads) do {} while(0)
 #define inc_wqueue_counter(ctr, delta) do {} while(0)
 #endif
 
