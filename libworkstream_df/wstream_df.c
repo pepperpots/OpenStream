@@ -13,10 +13,6 @@
 #include "wstream_df.h"
 #include "profiling.h"
 
-#ifdef MATRIX_PROFILE
-unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
-#endif
-
 /***************************************************************************/
 /***************************************************************************/
 /* The current frame pointer, thread data, barrier and saved barrier
@@ -592,9 +588,7 @@ worker_thread (void)
 			  else
 			    inc_wqueue_counter(&cthread->bytes_rem, fp->bytes_cpu[cpu]);
 
-#ifdef MATRIX_PROFILE
-			  transfer_matrix[cthread->worker_id][cpu] += fp->bytes_cpu[cpu];
-#endif
+			  inc_transfer_matrix_entry(cthread->worker_id, cpu, fp->bytes_cpu[cpu]);
 		  }
 	  }
 
@@ -850,11 +844,7 @@ void pre_main()
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
 
-#ifdef WQUEUE_PROFILE
-#ifdef MATRIX_PROFILE
-  memset(transfer_matrix, 0, sizeof(transfer_matrix));
-#endif
-#endif
+  init_transfer_matrix();
 
 #ifdef _PAPI_PROFILE
   int retval = PAPI_library_init(PAPI_VER_CURRENT);
@@ -981,21 +971,10 @@ void post_main()
 		 bytes_l2, 100.0*(double)bytes_l2/(double)bytes_total,
 		 bytes_l3, 100.0*(double)bytes_l3/(double)bytes_total,
 		 bytes_rem, 100.0*(double)bytes_rem/(double)bytes_total);
-
-#ifdef MATRIX_PROFILE
-	  FILE* matrix_fp = fopen(MATRIX_PROFILE, "w+");
-	  assert(matrix_fp);
-	  int j;
-	  for (i = 0; i < num_workers; ++i) {
-		  for (j = 0; j < num_workers; ++j) {
-			  fprintf(matrix_fp, "10%lld ", transfer_matrix[i][j]);
-		  }
-		  fprintf(matrix_fp, "\n");
-	  }
-	  fclose(matrix_fp);
-#endif
   }
 #endif
+
+  dump_transfer_matrix(num_workers);
 }
 
 

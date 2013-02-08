@@ -22,4 +22,22 @@ dump_wqueue_counters (wstream_df_thread_p th);
 #define inc_wqueue_counter(ctr, delta) do {} while(0)
 #endif
 
+#ifdef MATRIX_PROFILE
+extern unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+
+static inline void
+inc_transfer_matrix_entry(unsigned int consumer, unsigned int producer,
+			  unsigned long long num_bytes)
+{
+	transfer_matrix[consumer][producer] += num_bytes;
+}
+
+void init_transfer_matrix(void);
+void dump_transfer_matrix(unsigned int num_workers);
+#else
+#define inc_transfer_matrix_entry(consumer, producer, num_bytes) do {} while(0)
+#define init_transfer_matrix() do {} while(0)
+#define dump_transfer_matrix(num_workers) do {} while(0)
+#endif
+
 #endif

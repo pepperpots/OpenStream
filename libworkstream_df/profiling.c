@@ -1,4 +1,29 @@
 #include "profiling.h"
+#include <string.h>
+
+#ifdef MATRIX_PROFILE
+unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+
+void init_transfer_matrix(void)
+{
+	memset(transfer_matrix, 0, sizeof(transfer_matrix));
+}
+
+void dump_transfer_matrix(unsigned int num_workers)
+{
+	unsigned int i, j;
+	FILE* matrix_fp = fopen(MATRIX_PROFILE, "w+");
+	assert(matrix_fp);
+
+	for (i = 0; i < num_workers; ++i) {
+		for (j = 0; j < num_workers; ++j) {
+			fprintf(matrix_fp, "10%lld ", transfer_matrix[i][j]);
+		}
+		fprintf(matrix_fp, "\n");
+	}
+	fclose(matrix_fp);
+}
+#endif
 
 #ifdef WQUEUE_PROFILE
 void
