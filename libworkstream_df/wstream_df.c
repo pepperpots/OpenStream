@@ -929,18 +929,6 @@ void post_main()
 
   _PAPI_DUMP_CTRS (_PAPI_COUNTER_SETS);
 
-#ifdef _PRINT_STATS
-  {
-    int i;
-
-    for (i = 0; i < num_workers; ++i)
-      {
-	int worker_id = wstream_df_worker_threads[i].worker_id;
-	printf ("worker %d executed %d tasks\n", worker_id, executed_tasks);
-      }
-  }
-#endif
-
   dump_events(num_workers, wstream_df_worker_threads);
   dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
   dump_average_task_durations(num_workers, wstream_df_worker_threads);
