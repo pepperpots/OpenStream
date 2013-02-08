@@ -11,6 +11,7 @@
 #include "config.h"
 #include "trace.h"
 #include "wstream_df.h"
+#include "profiling.h"
 
 #ifdef MATRIX_PROFILE
 unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
@@ -144,125 +145,6 @@ wstream_df_taskwait ()
 /***************************************************************************/
 /***************************************************************************/
 
-
-#ifdef WQUEUE_PROFILE
-void
-init_wqueue_counters (void)
-{
-	wstream_df_thread_p cthread = current_thread;
-	cthread->steals_owncached = 0;
-	cthread->steals_ownqueue = 0;
-	cthread->steals_samel2 = 0;
-	cthread->steals_samel3 = 0;
-	cthread->steals_remote = 0;
-	cthread->steals_fails = 0;
-	cthread->tasks_created = 0;
-	cthread->tasks_executed = 0;
-
-#ifdef ALLOW_PUSHES
-	cthread->steals_pushed = 0;
-	cthread->pushes_samel2 = 0;
-	cthread->pushes_samel3 = 0;
-	cthread->pushes_remote = 0;
-	cthread->pushes_fails = 0;
-#endif
-}
-
-void
-dump_wqueue_counters (wstream_df_thread_p th)
-{
-	printf ("Thread %d: tasks_created = %lld\n",
-		th->worker_id,
-		th->tasks_created);
-	printf ("Thread %d: tasks_executed = %lld\n",
-		th->worker_id,
-		th->tasks_executed);
-	printf ("Thread %d: steals_owncached = %lld\n",
-		th->worker_id,
-		th->steals_owncached);
-	printf ("Thread %d: steals_ownqueue = %lld\n",
-		th->worker_id,
-		th->steals_ownqueue);
-	printf ("Thread %d: steals_samel2 = %lld\n",
-		th->worker_id,
-		th->steals_samel2);
-	printf ("Thread %d: steals_samel3 = %lld\n",
-		th->worker_id,
-		th->steals_samel3);
-	printf ("Thread %d: steals_remote = %lld\n",
-		th->worker_id,
-		th->steals_remote);
-	printf ("Thread %d: steals_fails = %lld\n",
-		th->worker_id,
-		th->steals_fails);
-
-#if !NO_SLAB_ALLOCATOR
-	printf ("Thread %d: slab_bytes = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_bytes);
-	printf ("Thread %d: slab_refills = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_refills);
-	printf ("Thread %d: slab_allocations = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_allocations);
-	printf ("Thread %d: slab_frees = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_frees);
-	printf ("Thread %d: slab_freed_bytes = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_freed_bytes);
-	printf ("Thread %d: slab_hits = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_hits);
-	printf ("Thread %d: slab_toobig = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_toobig);
-	printf ("Thread %d: slab_toobig_frees = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_toobig_frees);
-	printf ("Thread %d: slab_toobig_freed_bytes = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_toobig_freed_bytes);
-#endif
-
-#ifdef ALLOW_PUSHES
-	printf ("Thread %d: pushes_samel2 = %lld\n",
-		th->worker_id,
-		th->pushes_samel2);
-	printf ("Thread %d: pushes_samel3 = %lld\n",
-		th->worker_id,
-		th->pushes_samel3);
-	printf ("Thread %d: pushes_remote = %lld\n",
-		th->worker_id,
-		th->pushes_remote);
-	printf ("Thread %d: pushes_fails = %lld\n",
-		th->worker_id,
-		th->pushes_fails);
-	printf ("Thread %d: steals_pushed = %lld\n",
-		th->worker_id,
-		th->steals_pushed);
-#endif
-
-	printf ("Thread %d: bytes_l1 = %lld\n",
-		th->worker_id,
-		th->bytes_l1);
-	printf ("Thread %d: bytes_l2 = %lld\n",
-		th->worker_id,
-		th->bytes_l2);
-	printf ("Thread %d: bytes_l3 = %lld\n",
-		th->worker_id,
-		th->bytes_l3);
-	printf ("Thread %d: bytes_rem = %lld\n",
-		th->worker_id,
-		th->bytes_rem);
-
-}
-#endif
-
-/***************************************************************************/
-/***************************************************************************/
-
 /* Create a new thread, with frame pointer size, and sync counter */
 void *
 __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
@@ -284,9 +166,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
 
-#ifdef WQUEUE_PROFILE
-  current_thread->tasks_created++;
-#endif
+  inc_wqueue_counter(&current_thread->tasks_created, 1);
 
   memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
 
@@ -331,10 +211,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
       return;
     }
 
-#ifdef WQUEUE_PROFILE
   if(is_write)
-	  fp->bytes_cpu[cthread->worker_id] += n;
-#endif
+    inc_wqueue_counter(&fp->bytes_cpu[cthread->worker_id], n);
 
   int sc = 0;
 
@@ -369,22 +247,20 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
 	     /* Try to push */
 	     if(compare_and_swap((size_t *)&wstream_df_worker_threads[max_worker].pushed_threads[push_slot], 0, (size_t)fp)) {
-#ifdef WQUEUE_PROFILE
+
 	       if(max_worker / 2 == cthread->worker_id / 2)
-		  current_thread->pushes_samel2++;
+		 inc_wqueue_counter(&current_thread->pushes_samel2, 1);
 	       else if(max_worker / 8 == cthread->worker_id / 8)
-		  current_thread->pushes_samel3++;
+		 inc_wqueue_counter(&current_thread->pushes_samel3, 1);
 	       else
-		  current_thread->pushes_remote++;
-#endif
+		 inc_wqueue_counter(&current_thread->pushes_remote, 1);
+
 	       trace_push(cthread, max_worker, fp->size);
 	       trace_state_restore(cthread);
 	       return;
 	     }
 
-#ifdef WQUEUE_PROFILE
-	     current_thread->pushes_fails++;
-#endif
+	     inc_wqueue_counter(&current_thread->pushes_fails, 1);
 	  }
       }
 #endif
@@ -572,6 +448,7 @@ worker_thread (void)
   unsigned int steal_from = 0;
   int last_steal_from = -1;
   int i;
+  unsigned int cpu;
 
   current_barrier = NULL;
 
@@ -615,9 +492,7 @@ worker_thread (void)
 
 	  cthread->pushed_threads[i] = NULL;
 
-#ifdef WQUEUE_PROFILE
-	  cthread->steals_pushed++;
-#endif
+	  inc_wqueue_counter(&cthread->steals_pushed, 1);
 	}
       }
 #endif
@@ -628,16 +503,11 @@ worker_thread (void)
       if (fp == NULL) {
 	fp = (wstream_df_frame_p)  (cdeque_take (&cthread->work_deque));
 
-#ifdef WQUEUE_PROFILE
 	if (fp != NULL)
-	  cthread->steals_ownqueue++;
-#endif
+	  inc_wqueue_counter(&cthread->steals_ownqueue, 1);
       } else {
 	cthread->own_next_cached_thread = NULL;
-
-#ifdef WQUEUE_PROFILE
-	cthread->steals_owncached++;
-#endif
+	inc_wqueue_counter(&cthread->steals_owncached, 1);
       }
 
       if (fp == NULL)
@@ -689,18 +559,16 @@ worker_thread (void)
 	    }
 	  }
 
-#ifdef WQUEUE_PROFILE
 	  if(fp == NULL) {
-		  cthread->steals_fails++;
+	    inc_wqueue_counter(&cthread->steals_fails, 1);
 	  } else {
-		  if(cthread->worker_id / 2 == steal_from / 2)
-			  cthread->steals_samel2++;
-		  else if(cthread->worker_id / 8 == steal_from / 8)
-			  cthread->steals_samel3++;
-		  else
-			  cthread->steals_remote++;
+	    if(cthread->worker_id / 2 == steal_from / 2)
+	      inc_wqueue_counter(&cthread->steals_samel2, 1);
+	    else if(cthread->worker_id / 8 == steal_from / 8)
+	      inc_wqueue_counter(&cthread->steals_samel3, 1);
+	    else
+	      inc_wqueue_counter(&cthread->steals_remote, 1);
 	  }
-#endif
 
 	  if(fp != NULL) {
 	    trace_steal(cthread, steal_from, fp->size);
@@ -713,25 +581,22 @@ worker_thread (void)
 	  current_barrier = NULL;
 	  _PAPI_P3B;
 
-#ifdef WQUEUE_PROFILE
-	  unsigned int cpu;
 	  for(cpu = 0; cpu < MAX_CPUS; cpu++) {
 		  if(fp->bytes_cpu[cpu]) {
 			  if(cthread->worker_id == cpu)
-				  cthread->bytes_l1 += fp->bytes_cpu[cpu];
+			    inc_wqueue_counter(&cthread->bytes_l1, fp->bytes_cpu[cpu]);
 			  else if(cthread->worker_id / 2 == cpu / 2)
-				  cthread->bytes_l2 += fp->bytes_cpu[cpu];
+			    inc_wqueue_counter(&cthread->bytes_l2, fp->bytes_cpu[cpu]);
 			  else if(cthread->worker_id / 8 == cpu / 8)
-				  cthread->bytes_l3 += fp->bytes_cpu[cpu];
+			    inc_wqueue_counter(&cthread->bytes_l3, fp->bytes_cpu[cpu]);
 			  else
-				  cthread->bytes_rem += fp->bytes_cpu[cpu];
+			    inc_wqueue_counter(&cthread->bytes_rem, fp->bytes_cpu[cpu]);
 
 #ifdef MATRIX_PROFILE
 			  transfer_matrix[cthread->worker_id][cpu] += fp->bytes_cpu[cpu];
 #endif
 		  }
 	  }
-#endif
 
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
@@ -739,9 +604,7 @@ worker_thread (void)
 	  trace_task_exec_end(cthread);
 	  trace_state_change(cthread, WORKER_STATE_SEEKING);
 
-#ifdef WQUEUE_PROFILE
-	  cthread->tasks_executed++;
-#endif
+	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
 	  _PAPI_P3E;
 
@@ -780,9 +643,7 @@ wstream_df_worker_thread_fn (void *data)
       wstream_init_alloc(&current_thread->slab_cache);
     }
 
-#ifdef WQUEUE_PROFILE
-      init_wqueue_counters ();
-#endif
+  init_wqueue_counters (current_thread);
 
   worker_thread ();
   return NULL;
