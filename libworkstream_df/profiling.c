@@ -40,7 +40,7 @@ init_wqueue_counters (wstream_df_thread_p th)
 	th->tasks_created = 0;
 	th->tasks_executed = 0;
 
-#ifdef ALLOW_PUSHES
+#if ALLOW_PUSHES
 	th->steals_pushed = 0;
 	th->pushes_samel2 = 0;
 	th->pushes_samel3 = 0;
@@ -107,7 +107,7 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 		th->slab_cache.slab_toobig_freed_bytes);
 #endif
 
-#ifdef ALLOW_PUSHES
+#if ALLOW_PUSHES
 	printf ("Thread %d: pushes_samel2 = %lld\n",
 		th->worker_id,
 		th->pushes_samel2);
