@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <time.h>
+#include <string.h>
 
 #include "trace.h"
 #include "wstream_df.h"
