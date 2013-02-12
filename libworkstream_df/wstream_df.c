@@ -7,7 +7,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "papi-defs.h"
 #include "config.h"
 #include "trace.h"
 #include "wstream_df.h"
@@ -83,6 +82,8 @@ wstream_df_taskwait ()
   barrier_p cbar = current_barrier;
   barrier_p save_bar = NULL;
 
+  wqueue_counters_enter_runtime(cthread);
+
   /* If no barrier is associated, then just return, no sync needed.  */
   if (cbar == NULL)
     return;
@@ -152,6 +153,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   __compiler_fence;
 
+  wqueue_counters_enter_runtime(cthread);
   trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
   trace_event(cthread, WQEVENT_TCREATE);
 
@@ -274,6 +276,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 void
 __builtin_ia32_tdecrease (void *data, bool is_write)
 {
+	wqueue_counters_enter_runtime(current_thread);
 	tdecrease_n (data, 1, is_write);
 }
 
@@ -281,6 +284,7 @@ __builtin_ia32_tdecrease (void *data, bool is_write)
 void
 __builtin_ia32_tdecrease_n (void *data, size_t n, bool is_write)
 {
+	wqueue_counters_enter_runtime(current_thread);
 	tdecrease_n (data, n, is_write);
 }
 
@@ -291,6 +295,8 @@ __builtin_ia32_tend (void *fp)
   wstream_df_frame_p cfp = (wstream_df_frame_p) fp;
   barrier_p cbar = current_barrier;
   barrier_p bar = cfp->own_barrier;
+
+  wqueue_counters_enter_runtime(current_thread);
 
   /* If this task spawned some tasks within a barrier, it needs to
      ensure the barrier gets collected.  */
@@ -458,12 +464,6 @@ worker_thread (void)
 	 saves.  */
     }
 
-
-  if (cthread->worker_id != 0)
-    {
-      _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
-    }
-
   while (true)
     {
       wstream_df_frame_p fp = NULL;
@@ -530,7 +530,6 @@ worker_thread (void)
       if (fp != NULL)
 	{
 	  current_barrier = NULL;
-	  _PAPI_P3B;
 
 	  for(cpu = 0; cpu < MAX_CPUS; cpu++)
 	    {
@@ -552,8 +551,6 @@ worker_thread (void)
 
 	  if(wstream_allocator_of(fp) == cthread->worker_id)
 	    inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
-
-	  _PAPI_P3E;
 
 	  __compiler_fence;
 
@@ -794,12 +791,7 @@ void pre_main()
   size_t num_cpu_affinities = 0;
 
   init_transfer_matrix();
-
-#ifdef _PAPI_PROFILE
-  int retval = PAPI_library_init(PAPI_VER_CURRENT);
-  if (retval != PAPI_VER_CURRENT)
-    wstream_df_fatal ("Cannot initialize PAPI library");
-#endif
+  setup_wqueue_counters();
 
   /* Set workers number as the number of cores.  */
 #ifndef _WSTREAM_DF_NUM_THREADS
@@ -835,8 +827,6 @@ void pre_main()
      up with the control program).  */
   current_thread = &wstream_df_worker_threads[0];
   current_barrier = NULL;
-
-  _PAPI_INIT_CTRS (_PAPI_COUNTER_SETS);
 
   openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
   for (i = 1; i < num_workers; ++i)
@@ -875,8 +865,6 @@ void post_main()
   /* Current barrier is the last one, so it allows terminating the
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
-
-  _PAPI_DUMP_CTRS (_PAPI_COUNTER_SETS);
 
   dump_events(num_workers, wstream_df_worker_threads);
   dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
@@ -931,6 +919,8 @@ force_empty_queues (void *s)
   wstream_df_list_p prod_queue = &stream->producer_queue;
   wstream_df_list_p cons_queue = &stream->consumer_queue;
   wstream_df_view_p view;
+
+  wqueue_counters_enter_runtime(current_thread);
 
   if (wstream_df_list_head (cons_queue) != NULL)
     {
@@ -1092,6 +1082,7 @@ broadcast (void *v)
 void
 __builtin_ia32_broadcast (void *v)
 {
+  wqueue_counters_enter_runtime(current_thread);
   broadcast (v);
 }
 
@@ -1100,6 +1091,8 @@ void
 __builtin_ia32_tdecrease_n_vec (size_t num, void *data, size_t n, bool is_write)
 {
   unsigned int i;
+
+  wqueue_counters_enter_runtime(current_thread);
 
   for (i = 0; i < num; ++i)
     {
@@ -1119,6 +1112,8 @@ __builtin_ia32_tick (void *s, size_t burst)
   wstream_df_stream_p stream = (wstream_df_stream_p) s;
   wstream_df_list_p cons_queue = &stream->consumer_queue;
   wstream_df_view_p cons_view;
+
+  wqueue_counters_enter_runtime(current_thread);
 
   /* ASSERT that cons_view->active_peek_chain != NULL !! Otherwise
      this requires passing the matching producers a fake consumer view

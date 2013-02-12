@@ -4,6 +4,12 @@
 #include "config.h"
 #include <stdint.h>
 
+#ifdef WS_PAPI_PROFILE
+#include <papi.h>
+#endif
+
+struct wstream_df_thread;
+
 #if ALLOW_PUSHES
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
 	unsigned long long steals_pushed; \
@@ -11,6 +17,26 @@
 	unsigned long long pushes_fails;
 #else
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
+#endif
+
+#ifdef WS_PAPI_PROFILE
+#define WSTREAM_DF_THREAD_PAPI_FIELDS \
+	long long papi_counters[WS_PAPI_NUM_EVENTS]; \
+	int papi_event_set;
+
+void
+setup_papi(void);
+
+void
+update_papi(struct wstream_df_thread* th);
+
+void
+init_papi(struct wstream_df_thread* th);
+#else
+#define WSTREAM_DF_THREAD_PAPI_FIELDS
+#define setup_papi() do { } while(0)
+#define init_papi(th) do { } while(0)
+#define update_papi(th) do { } while(0)
 #endif
 
 #ifdef WQUEUE_PROFILE
@@ -24,10 +50,17 @@
 	unsigned long long tasks_executed; \
 	unsigned long long tasks_executed_localalloc;
 
-struct wstream_df_thread;
-
 void
 init_wqueue_counters (struct wstream_df_thread* th);
+
+void
+setup_wqueue_counters (void);
+
+void
+stop_wqueue_counters (void);
+
+void
+wqueue_counters_enter_runtime(struct wstream_df_thread* th);
 
 void
 dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
@@ -43,7 +76,10 @@ dump_global_wqueue_counters ();
 #else
 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS
-#define init_wqueue_counters(th) do {} while(0)
+#define init_wqueue_counters(th) do {} while(0
+#define setup_wqueue_counters() do {} while(0)
+#define wqueue_counters_enter_runtime(th) do {} while(0)
+#define stop_wqueue_counters() do {} while(0)
 #define dump_wqueue_counters(num_workers, wstream_df_worker_threads) do {} while(0)
 #define inc_wqueue_counter(ctr, delta) do {} while(0)
 #endif
@@ -68,6 +104,7 @@ void dump_transfer_matrix(unsigned int num_workers);
 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS \
 	WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
-	WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
+	WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
+	WSTREAM_DF_THREAD_PAPI_FIELDS
 
 #endif

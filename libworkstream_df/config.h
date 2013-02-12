@@ -32,6 +32,14 @@
 #define WQEVENT_SAMPLING_OUTFILE "events.prv"
 #define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
 
+//#define WS_PAPI_PROFILE
+#define WS_PAPI_MULTIPLEX
+
+#ifdef WS_PAPI_PROFILE
+#define WS_PAPI_NUM_EVENTS 2
+#define WS_PAPI_EVENTS { PAPI_L1_DCM, PAPI_L2_DCM }
+#endif
+
 /* Description of the memory hierarchy */
 
 #define MEM_NUM_LEVELS 6

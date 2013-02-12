@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "wstream_df.h"
+#include <pthread.h>
 
 #ifdef MATRIX_PROFILE
 unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
@@ -27,7 +28,122 @@ void dump_transfer_matrix(unsigned int num_workers)
 }
 #endif
 
+#ifdef WS_PAPI_PROFILE
+void
+setup_papi(void)
+{
+	int retval;
+
+	retval = PAPI_library_init(PAPI_VER_CURRENT);
+
+	if (retval != PAPI_VER_CURRENT && retval > 0) {
+		fprintf(stderr,"PAPI library version mismatch!\n");
+		exit(1);
+	}
+
+	if (retval < 0) {
+		fprintf(stderr,"Could not init PAPI library: %s (%d) %d!\n", PAPI_strerror(retval), retval, PAPI_VER_CURRENT);
+		exit(1);
+	}
+
+	if (PAPI_is_initialized() != PAPI_LOW_LEVEL_INITED) {
+		fprintf(stderr, "Could not init PAPI library (low-level part)!\n");
+		exit(1);
+	}
+
+	if ((retval = PAPI_thread_init((unsigned long (*)(void)) (pthread_self))) != PAPI_OK) {
+		fprintf(stderr, "Could not init threads: %s\n", PAPI_strerror(retval));
+		exit(1);
+	}
+
+#ifdef WS_PAPI_MULTIPLEX
+		if (PAPI_multiplex_init() != PAPI_OK) {
+			fprintf(stderr, "Could not init multiplexing!\n");
+			exit(1);
+		}
+#endif
+}
+
+void
+init_papi (wstream_df_thread_p th)
+{
+	int err, i;
+	char event_name[PAPI_MAX_STR_LEN];
+	int event_codes[] = WS_PAPI_EVENTS;
+
+	if(sizeof(event_codes) / sizeof(event_codes[0]) > WS_PAPI_NUM_EVENTS) {
+		fprintf(stderr, "Mismatch between WS_PAPI_NUM_EVENTS and the number of elements in WS_PAPI_EVENTS\n");
+		exit(1);
+	}
+
+	memset(th->papi_counters, 0, sizeof(th->papi_counters));
+
+	PAPI_register_thread();
+	th->papi_event_set = PAPI_NULL;
+
+	/* Create event set */
+	if ((err = PAPI_create_eventset(&th->papi_event_set)) != PAPI_OK) {
+		fprintf(stderr, "Could not create event set for thread %d: %s!\n", th->worker_id, PAPI_strerror(err));
+		exit(1);
+	}
+
+	/* Assign CPU component */
+	if ((err = PAPI_assign_eventset_component(th->papi_event_set, 0)) != PAPI_OK) {
+		fprintf(stderr, "Could not assign event set to component 0 for thread %d: %s\n", th->worker_id, PAPI_strerror(err));
+		exit(1);
+	}
+
+#ifdef WS_PAPI_MULTIPLEX
+	/* Enable multiplexing */
+	if((err = PAPI_set_multiplex(th->papi_event_set)) != PAPI_OK) {
+		fprintf(stderr, "Could not enable multiplexing for event set: %s!\n", PAPI_strerror(err));
+		exit(1);
+	}
+#endif
+
+	for(i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
+		PAPI_event_code_to_name (event_codes[i], event_name);
+		if((err = PAPI_add_event(th->papi_event_set, event_codes[i])) != PAPI_OK) {
+			fprintf(stderr, "Could not add event Ox%X (\"%s\") to event set: %s!\n", event_codes[i], event_name, PAPI_strerror(err));
+			exit(1);
+		}
+	}
+
+	/* Start counting */
+	if (PAPI_start(th->papi_event_set) != PAPI_OK) {
+		fprintf(stderr, "Could not start counters!\n");
+		exit(1);
+	}
+}
+
+void
+update_papi(struct wstream_df_thread* th)
+{
+	if(PAPI_read(th->papi_event_set, th->papi_counters) != PAPI_OK) {
+		fprintf(stderr, "Could not read counters for thread %d\n", th->worker_id);
+		exit(1);
+	}
+}
+#endif
+
 #ifdef WQUEUE_PROFILE
+void
+setup_wqueue_counters (void)
+{
+	setup_papi();
+}
+
+void
+stop_wqueue_counters (void)
+{
+}
+
+void
+wqueue_counters_enter_runtime(struct wstream_df_thread* th)
+{
+	update_papi(th);
+}
+
 void
 init_wqueue_counters (wstream_df_thread_p th)
 {
@@ -45,12 +161,20 @@ init_wqueue_counters (wstream_df_thread_p th)
 	th->pushes_fails = 0;
 	memset(th->pushes_mem, 0, sizeof(th->pushes_mem));
 #endif
+
+	init_papi(th);
 }
 
 void
 dump_wqueue_counters_single (wstream_df_thread_p th)
 {
 	int level;
+
+#ifdef WS_PAPI_PROFILE
+	int i;
+	char event_name[PAPI_MAX_STR_LEN];
+	int event_codes[] = WS_PAPI_EVENTS;
+#endif
 
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
@@ -125,6 +249,17 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	}
 #endif
 
+#ifdef WS_PAPI_PROFILE
+	for(i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
+		PAPI_event_code_to_name (event_codes[i], event_name);
+
+		printf ("Thread %d: papi_%s = %lld\n",
+			th->worker_id,
+			event_name,
+			th->papi_counters[i]);
+	}
+#endif
+
 	for(level = 0; level < MEM_NUM_LEVELS; level++) {
 		printf ("Thread %d: bytes_%s = %lld\n",
 		th->worker_id,
@@ -138,6 +273,13 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 	unsigned int i, level;
 	unsigned long long bytes_mem[MEM_NUM_LEVELS];
 	unsigned long long bytes_total = 0;
+
+#ifdef WS_PAPI_PROFILE
+	char event_name[PAPI_MAX_STR_LEN];
+	int event_codes[] = WS_PAPI_EVENTS;
+	long long papi_counters_accum[WS_PAPI_NUM_EVENTS];
+	int evt;
+#endif
 
 	memset(bytes_mem, 0, sizeof(bytes_mem));
 
@@ -157,6 +299,23 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 			bytes_mem[level],
 			100.0*(double)bytes_mem[level]/(double)bytes_total);
 	}
+
+#ifdef WS_PAPI_PROFILE
+	memset(papi_counters_accum, 0, sizeof(papi_counters_accum[evt]));
+
+	for (i = 0; i < num_workers; ++i) {
+		for(evt = 0; evt < WS_PAPI_NUM_EVENTS; evt++) {
+			papi_counters_accum[evt] += wstream_df_worker_threads[i].papi_counters[evt];
+		}
+	}
+
+	for(evt = 0; evt < WS_PAPI_NUM_EVENTS; evt++) {
+		PAPI_event_code_to_name (event_codes[evt], event_name);
+		printf ("Overall papi_%s = %lld\n",
+			event_name,
+			papi_counters_accum[evt]);
+	}
+#endif
 }
 
 #endif

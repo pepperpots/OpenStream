@@ -13,7 +13,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
 #include "cdeque.h"
