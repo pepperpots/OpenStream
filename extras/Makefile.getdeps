@@ -14,6 +14,7 @@ WXWIDGETS_VERSION=2.8.12
 LIBXML2_VERSION=2.9.0
 PARAVER_VERSION=4.3.5
 WXPROPERTYGRID_VERSION=1.4.15
+PAPI_VERSION=5.1.0.2
 CONTRIB_OPT=-O3
 
 EXAMPLE_DEPS=$(CONTRIB_LIBDIR)/libblas.so \
@@ -412,3 +413,28 @@ $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/exdep: $(ARCHIVES_DIR)/libxml2-$(LIBXM
 $(ARCHIVES_DIR)/libxml2-$(LIBXML2_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
 	wget 'ftp://xmlsoft.org/libxml2/libxml2-$(LIBXML2_VERSION).tar.gz' -O $@
+
+################################################################################
+# PAPI                                                                         #
+################################################################################
+
+papi: $(CONTRIB_BINDIR)/papi_avail
+
+$(CONTRIB_BINDIR)/papi_avail: $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src
+	$(MAKE) -C $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src install
+
+$(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src/Makefile: $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep
+	cd $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src; ./configure --prefix=$(INST_DIR)
+
+$(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep: $(ARCHIVES_DIR)/papi-$(PAPI_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/papi-$(PAPI_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/papi-$(PAPI_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	cd $(CONTRIB_DIR); mv `tar tf $< | head -n1 | cut -d/ -f 1` papi-$(PAPI_VERSION)
+	touch $@
+
+$(ARCHIVES_DIR)/papi-$(PAPI_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://icl.cs.utk.edu/projects/papi/downloads/papi-$(PAPI_VERSION).tar.gz' -O $@
