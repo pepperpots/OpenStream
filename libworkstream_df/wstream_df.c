@@ -58,7 +58,7 @@ try_pass_barrier (barrier_p bar)
   if (bar->barrier_counter_created == exec)
     {
       if (bar->barrier_unused == true)
-	wstream_free (&current_thread->slab_cache, bar, sizeof (barrier_t));
+	wstream_free (&current_thread->slab_cache, bar);
       else
 	{
 	  if (ws_setcontext (&bar->continuation_context) == -1)
@@ -130,10 +130,10 @@ wstream_df_taskwait ()
 	 the context that was swapped out (can only happen in TEND).  The
 	 stack-stored variable BAR should have been preserved even if the
 	 thread-local "current_barrier" has not.  */
-      wstream_free (&cthread->slab_cache, cthread->current_stack, WSTREAM_STACK_SIZE);
+      wstream_free (&cthread->slab_cache, cthread->current_stack);
     }
 
-  wstream_free (&cthread->slab_cache, cbar, sizeof (barrier_t));
+  wstream_free (&cthread->slab_cache, cbar);
   /* Restore thread-local variables.  */
   cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
@@ -203,7 +203,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
   if (fp->work_fn == (void *) 1)
     {
-      wstream_free(&cthread->slab_cache, fp, fp->size);
+      wstream_free(&cthread->slab_cache, fp);
       trace_state_restore(cthread);
       return;
     }
@@ -304,7 +304,7 @@ __builtin_ia32_tend (void *fp)
       current_barrier = NULL;
     }
 
-  wstream_free (&current_thread->slab_cache, cfp, cfp->size);
+  wstream_free (&current_thread->slab_cache, cfp);
 
   /* If this task belongs to a barrier, increment the exec count and
      try to pass the barrier.  */
@@ -550,6 +550,9 @@ worker_thread (void)
 
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
+	  if(wstream_allocator_of(fp) == cthread->worker_id)
+	    inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
+
 	  _PAPI_P3E;
 
 	  __compiler_fence;
@@ -581,13 +584,14 @@ void *
 wstream_df_worker_thread_fn (void *data)
 {
   current_thread = ((wstream_df_thread_p) data);
+  wstream_df_thread_p cthread = ((wstream_df_thread_p) data);
 
-  if (((wstream_df_thread_p) data)->worker_id != 0)
+  if (cthread->worker_id != 0)
     {
-      wstream_init_alloc(&current_thread->slab_cache);
+	    wstream_init_alloc(&cthread->slab_cache, cthread->worker_id);
     }
 
-  init_wqueue_counters (current_thread);
+  init_wqueue_counters (cthread);
 
   worker_thread ();
   return NULL;
@@ -813,7 +817,7 @@ void pre_main()
 
   ncores = wstream_df_num_cores ();
 
-  wstream_init_alloc(&wstream_df_worker_threads[0].slab_cache);
+  wstream_init_alloc(&wstream_df_worker_threads[0].slab_cache, 0);
 
 #ifdef _PRINT_STATS
   printf ("Creating %d workers for %d cores\n", num_workers, ncores);
@@ -964,7 +968,7 @@ dec_stream_ref (void *s)
   if (refcount == 0)
     {
       force_empty_queues (s);
-      wstream_free(&current_thread->slab_cache, s, sizeof (wstream_df_stream_t));
+      wstream_free(&current_thread->slab_cache, s);
     }
 #if 0
   int refcount = stream->refcount;

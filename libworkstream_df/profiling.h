@@ -21,7 +21,8 @@
 	unsigned long long steals_mem[MEM_NUM_LEVELS]; \
 	unsigned long long bytes_mem[MEM_NUM_LEVELS]; \
 	unsigned long long tasks_created; \
-	unsigned long long tasks_executed;
+	unsigned long long tasks_executed; \
+	unsigned long long tasks_executed_localalloc;
 
 struct wstream_df_thread;
 
