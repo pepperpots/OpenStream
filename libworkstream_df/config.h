@@ -46,7 +46,7 @@
  * 4: 32 Cores from NUMA domain at a distance of 1 hop
  * 5: 24 Cores from NUMA domain at a distance of 2 hops
  */
-static int mem_cores_at_level(unsigned int level)
+static inline int mem_cores_at_level(unsigned int level)
 {
 	int cores_at_level[] = {1, 2, 8, 8, 32, 24};
 	assert(level < MEM_NUM_LEVELS);
@@ -54,7 +54,7 @@ static int mem_cores_at_level(unsigned int level)
 }
 
 /* Returns the name of a level in the memory hierarchy */
-static const char* mem_level_name(unsigned int level)
+static inline const char* mem_level_name(unsigned int level)
 {
 	const char* level_names[] = {"same_l1",
 				"same_l2",
@@ -68,7 +68,7 @@ static const char* mem_level_name(unsigned int level)
 
 /* Determines how many NUMA hops two cores are
  * away from each other */
-static int mem_numa_num_hops(unsigned int a, unsigned int b)
+static inline int mem_numa_num_hops(unsigned int a, unsigned int b)
 {
 	/* Distance matrix as reported by numactl --hardware */
 	static int node_distances[8][8] = {
@@ -105,7 +105,7 @@ static int mem_numa_num_hops(unsigned int a, unsigned int b)
 	(numa_node*8+7)
 
 /* Returns the n-th sibling of a core at a NUMA hop distance of 1. */
-static int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int sibling_num)
+static inline int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
 	int numa_node = cpu / 8;
 
@@ -124,7 +124,7 @@ static int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int sibling_
 }
 
 /* Returns the n-th sibling of a core at a NUMA hop distance of 2. */
-static int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int sibling_num)
+static inline int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
 	int numa_node = cpu / 8;
 
@@ -143,7 +143,7 @@ static int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int sibling
 }
 
 /* Checks if two cores are siblings at a level */
-static int mem_level_siblings(unsigned int level, unsigned int a, unsigned int b)
+static inline int mem_level_siblings(unsigned int level, unsigned int a, unsigned int b)
 {
 	switch(level) {
 		case 0:
@@ -163,7 +163,7 @@ static int mem_level_siblings(unsigned int level, unsigned int a, unsigned int b
  * two cores. For example, if a and b share the same L2 cache, then
  * the function returns the number of the level for L2 caches.
  */
-static int mem_lowest_common_level(unsigned int a, unsigned int b)
+static inline int mem_lowest_common_level(unsigned int a, unsigned int b)
 {
 	int level;
 
@@ -174,7 +174,7 @@ static int mem_lowest_common_level(unsigned int a, unsigned int b)
 	assert(0);
 }
 
-static int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
+static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
 	unsigned int base = cpu - (cpu % mem_cores_at_level(level));
 	unsigned int sibling = base + sibling_num;
@@ -189,7 +189,7 @@ static int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, 
  * The core ID returned is guaranteed to be different from the core passed
  * as an argument.
  */
-static int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
+static inline int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
 	/* For the cache levels, just determine the base core and add the sibling
 	 * For NUMA levels, we have to look up the siblings in a matrix.
@@ -205,7 +205,7 @@ static int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsign
 }
 
 /* Returns how many steal attempts at a given level should be performed. */
-static int mem_num_steal_attempts_at_level(unsigned int level)
+static inline int mem_num_steal_attempts_at_level(unsigned int level)
 {
 	int steals_at_level[] = {0, 2, 8, 0, 1, 1};
 	assert(level < MEM_NUM_LEVELS);
