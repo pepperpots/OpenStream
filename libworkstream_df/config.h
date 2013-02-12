@@ -8,7 +8,6 @@
 //#define _PRINT_STATS
 
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
-#define MAX_NUM_CORES 1024
 #define WSTREAM_STACK_SIZE 1 << 16
 
 #define _PHARAON_MODE
