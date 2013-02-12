@@ -37,6 +37,7 @@
 
 #define MEM_NUM_LEVELS 6
 
+#ifndef IN_GCC
 /* 5 levels are defined:
  * 0: 1st level cache, private
  * 1: 2nd level cache, shared by 2 cores
@@ -210,4 +211,6 @@ static int mem_num_steal_attempts_at_level(unsigned int level)
 	assert(level < MEM_NUM_LEVELS);
 	return steals_at_level[level];
 }
+#endif /* IN_GCC */
+
 #endif

@@ -45,7 +45,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "optabs.h"
 #include "cfgloop.h"
 
-#define MAX_CPUS 64
+#define IN_GCC
+#include "../../libworkstream_df/config.h"
 
 typedef struct wstream_df_frame
 {
