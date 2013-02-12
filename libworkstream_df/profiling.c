@@ -294,7 +294,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 		bytes_total += bytes_mem[level];
 
 	for(level = 0; level < MEM_NUM_LEVELS; level++) {
-		printf ("Oveall bytes_%s = %lld (%f %%)\n",
+		printf ("Overall bytes_%s = %lld (%f %%)\n",
 			mem_level_name(level),
 			bytes_mem[level],
 			100.0*(double)bytes_mem[level]/(double)bytes_total);
