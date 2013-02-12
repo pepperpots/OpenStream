@@ -91,6 +91,8 @@ static inline int mem_numa_num_hops(unsigned int a, unsigned int b)
 		case 16: return 1;
 		case 22: return 2;
 	}
+
+	return 0;
 }
 
 /* Enumerates all cores of a NUMA node */
