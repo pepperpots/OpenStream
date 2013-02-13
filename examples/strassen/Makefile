@@ -14,7 +14,6 @@ MEM_CST_TESTS_DEPS_X86 = barrier_strassen.c \
 	../../libworkstream_df/error.c \
 	../../libworkstream_df/trace.c \
 	../../libworkstream_df/fibers.c \
-	../../libworkstream_df/papi-defs.c \
 	../../libworkstream_df/profiling.c \
 	../common/common.c
 x86_strassen: CFLAGS_X86 += -D_GNU_SOURCE
