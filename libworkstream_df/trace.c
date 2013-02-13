@@ -216,18 +216,23 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
 
 void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 {
-  uint64_t task_durations[TASK_DURATION_MAX];
-  uint64_t num_tasks[TASK_DURATION_MAX];
+  uint64_t task_durations_push[MEM_NUM_LEVELS];
+  uint64_t task_durations_steal[MEM_NUM_LEVELS];
+  uint64_t num_tasks_push[MEM_NUM_LEVELS];
+  uint64_t num_tasks_steal[MEM_NUM_LEVELS];
   uint64_t duration;
   wstream_df_thread_p th;
   unsigned int i;
   int start_idx, end_idx;
   int type_idx;
+  int level;
   uint64_t total_num_tasks = 0;
   uint64_t total_duration = 0;
 
-  memset(task_durations, 0, sizeof(task_durations));
-  memset(num_tasks, 0, sizeof(num_tasks));
+  memset(task_durations_push, 0, sizeof(task_durations_push));
+  memset(task_durations_steal, 0, sizeof(task_durations_steal));
+  memset(num_tasks_push, 0, sizeof(num_tasks_push));
+  memset(num_tasks_steal, 0, sizeof(num_tasks_steal));
 
   for (i = 0; i < (unsigned int)num_workers; ++i) {
     th = &wstream_df_worker_threads[i];
@@ -240,30 +245,18 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
 	if(end_idx != -1) {
 	  assert(th->events[end_idx].time > th->events[start_idx].time);
 
+	  level = mem_lowest_common_level(th->worker_id, th->events[start_idx].texec.from_node);
 	  duration = th->events[end_idx].time - th->events[start_idx].time;
 
 	  if(th->events[start_idx].texec.type == STEAL_TYPE_PUSH) {
-	    if(th->worker_id == th->events[start_idx].texec.from_node)
-	      type_idx = TASK_DURATION_PUSH_SAMEL1;
-	    else if(th->worker_id / 2 == th->events[start_idx].texec.from_node / 2)
-	      type_idx = TASK_DURATION_PUSH_SAMEL2;
-	    else if(th->worker_id / 8 == th->events[start_idx].texec.from_node / 8)
-	      type_idx = TASK_DURATION_PUSH_SAMEL3;
-	    else
-	      type_idx = TASK_DURATION_PUSH_REMOTE;
+		  task_durations_push[level] += duration;
+		  num_tasks_push[level]++;
 	  } else if(th->events[start_idx].texec.type == STEAL_TYPE_STEAL) {
-	    if(th->worker_id / 2 == th->events[start_idx].texec.from_node / 2)
-	      type_idx = TASK_DURATION_STEAL_SAMEL2;
-	    else if(th->worker_id / 8 == th->events[start_idx].texec.from_node / 8)
-	      type_idx = TASK_DURATION_STEAL_SAMEL3;
-	    else
-	      type_idx = TASK_DURATION_STEAL_REMOTE;
+		  task_durations_steal[level] += duration;
+		  num_tasks_steal[level]++;
 	  } else {
 	    assert(0);
 	  }
-
-	  task_durations[type_idx] += duration;
-	  num_tasks[type_idx]++;
 
 	  total_duration += duration;
 	  total_num_tasks++;
@@ -272,61 +265,27 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
     }
   }
 
-  printf("Overall task num / duration (push, same L1): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%), "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_PUSH_SAMEL1], task_durations[TASK_DURATION_PUSH_SAMEL1],
-	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_SAMEL1]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_PUSH_SAMEL1]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_PUSH_SAMEL1] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_SAMEL1] / num_tasks[TASK_DURATION_PUSH_SAMEL1]);
+  for(level = 0; level < MEM_NUM_LEVELS; level++) {
+	  printf("Overall task num / duration (push, %s): "
+		 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%), "
+		 "%"PRIu64" cycles / task\n",
+		 mem_level_name(level),
+		 num_tasks_push[level], task_durations_push[level],
+		 100.0*(long double)num_tasks_push[level]/(long double)total_num_tasks,
+		 100.0*(long double)task_durations_push[level]/(long double)total_duration,
+		 num_tasks_push[level] == 0 ? 0 : task_durations_push[level] / num_tasks_push[level]);
 
-  printf("Overall task num / duration (push, same L2): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_PUSH_SAMEL2], task_durations[TASK_DURATION_PUSH_SAMEL2],
-	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_SAMEL2]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_PUSH_SAMEL2]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_PUSH_SAMEL2] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_SAMEL2] / num_tasks[TASK_DURATION_PUSH_SAMEL2]);
+	  printf("Overall task num / duration (steal, %s): "
+		 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%), "
+		 "%"PRIu64" cycles / task\n",
+		 mem_level_name(level),
+		 num_tasks_steal[level], task_durations_steal[level],
+		 100.0*(long double)num_tasks_steal[level]/(long double)total_num_tasks,
+		 100.0*(long double)task_durations_steal[level]/(long double)total_duration,
+		 num_tasks_steal[level] == 0 ? 0 : task_durations_steal[level] / num_tasks_steal[level]);
+  }
 
-  printf("Overall task num / duration (push, same L3): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_PUSH_SAMEL3], task_durations[TASK_DURATION_PUSH_SAMEL3],
-	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_SAMEL3]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_PUSH_SAMEL3]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_PUSH_SAMEL3] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_SAMEL3] / num_tasks[TASK_DURATION_PUSH_SAMEL3]);
-
-  printf("Overall task num / duration (push, remote): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_PUSH_REMOTE], task_durations[TASK_DURATION_PUSH_REMOTE],
-	 100.0*(long double)num_tasks[TASK_DURATION_PUSH_REMOTE]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_PUSH_REMOTE]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_PUSH_REMOTE] == 0 ? 0 : task_durations[TASK_DURATION_PUSH_REMOTE] / num_tasks[TASK_DURATION_PUSH_REMOTE]);
-
-  printf("Overall task num / duration (steal, same L2): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_STEAL_SAMEL2], task_durations[TASK_DURATION_STEAL_SAMEL2],
-	 100.0*(long double)num_tasks[TASK_DURATION_STEAL_SAMEL2]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_STEAL_SAMEL2]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_STEAL_SAMEL2] == 0 ? 0 : task_durations[TASK_DURATION_STEAL_SAMEL2] / num_tasks[TASK_DURATION_STEAL_SAMEL2]);
-
-  printf("Overall task num / duration (steal, same L3): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_STEAL_SAMEL3], task_durations[TASK_DURATION_STEAL_SAMEL3],
-	 100.0*(long double)num_tasks[TASK_DURATION_STEAL_SAMEL3]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_STEAL_SAMEL3]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_STEAL_SAMEL3] == 0 ? 0 : task_durations[TASK_DURATION_STEAL_SAMEL3] / num_tasks[TASK_DURATION_STEAL_SAMEL3]);
-
-  printf("Overall task num / duration (steal, remote): "
-	 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%) "
-	 "%"PRIu64" cycles / task\n",
-	 num_tasks[TASK_DURATION_STEAL_REMOTE], task_durations[TASK_DURATION_STEAL_REMOTE],
-	 100.0*(long double)num_tasks[TASK_DURATION_STEAL_REMOTE]/(long double)total_num_tasks,
-	 100.0*(long double)task_durations[TASK_DURATION_STEAL_REMOTE]/(long double)total_duration,
-	 num_tasks[TASK_DURATION_STEAL_REMOTE] == 0 ? 0 : task_durations[TASK_DURATION_STEAL_REMOTE] / num_tasks[TASK_DURATION_STEAL_REMOTE]);
+  printf("Overall average task duration: %"PRIu64" cycles / task\n", total_duration/total_num_tasks);
 }
 
 /* Dumps worker events to a file in paraver format. */
