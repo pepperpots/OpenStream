@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <time.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "trace.h"
 #include "wstream_df.h"
@@ -288,6 +289,17 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
   printf("Overall average task duration: %"PRIu64" cycles / task\n", total_duration/total_num_tasks);
 }
 
+int conditional_fprintf(int do_dump, FILE* fp, const char *format, ...)
+{
+  va_list args;
+
+  if(do_dump) {
+    va_start(args, format);
+    vfprintf(fp, format, args);
+    va_end(args);
+  }
+}
+
 /* Dumps worker events to a file in paraver format. */
 void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 {
@@ -302,6 +314,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
   unsigned int state;
   unsigned long long state_durations[WORKER_STATE_MAX];
   unsigned long long total_duration = 0;
+  int do_dump;
 
   assert(fp != NULL);
 
@@ -325,16 +338,23 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
   for (i = 0; i < (unsigned int)num_workers; ++i) {
     th = &wstream_df_worker_threads[i];
     last_state_idx = -1;
+    do_dump = 1;
 
     if(th->num_events > 0) {
       for(k = 0; k < th->num_events-1; k++) {
+	if(MAX_WQEVENT_PARAVER_CYCLES != -1 &&
+	   th->events[k].time-min_time > (int64_t)MAX_WQEVENT_PARAVER_CYCLES)
+	  {
+	    do_dump = 0;
+	  }
+
 	/* States */
 	if(th->events[k].type == WQEVENT_STATECHANGE) {
 	  if(last_state_idx != -1) {
 	    state = th->events[last_state_idx].state_change.state;
 
 	    /* Not the first state change, so using last_state_idx is safe */
-	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
 		    (th->worker_id+1),
 		    (th->worker_id+1),
 		    th->events[last_state_idx].time-min_time,
@@ -345,7 +365,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 	    total_duration += th->events[k].time - th->events[last_state_idx].time;
 	  } else {
 	    /* First state change, by default the initial state is "seeking" */
-	    fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
 		    (th->worker_id+1),
 		    (th->worker_id+1),
 		    (uint64_t)0,
@@ -359,7 +379,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 	  last_state_idx = k;
 	} else if(th->events[k].type == WQEVENT_STEAL) {
 	  /* Steal events (dumped as communication) */
-	  fprintf(fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
+	  conditional_fprintf(do_dump, fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
 		  th->events[k].steal.src+1,
 		  th->events[k].steal.src+1,
 		  th->events[k].time-min_time,
@@ -371,7 +391,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 		  th->events[k].steal.size);
 	} else if(th->events[k].type == WQEVENT_STEAL) {
 	  /* Push events (dumped as communication) */
-	  fprintf(fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
+	  conditional_fprintf(do_dump, fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
 		  (th->worker_id+1),
 		  (th->worker_id+1),
 		  th->events[k].time-min_time,
@@ -383,7 +403,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 		  th->events[k].push.size);
 	} else if(th->events[k].type == WQEVENT_TCREATE) {
 	  /* Tcreate event (simply dumped as an event) */
-	  fprintf(fp, "2:%d:1:1:%d:%"PRIu64":%d:1\n",
+	  conditional_fprintf(do_dump, fp, "2:%d:1:1:%d:%"PRIu64":%d:1\n",
 		  (th->worker_id+1),
 		  (th->worker_id+1),
 		  th->events[k].time-min_time,
@@ -393,7 +413,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 
       /* Final state is "seeking" (beginning at the last state,
        * finishing at program termination) */
-      fprintf(fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+      conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
 	      (th->worker_id+1),
 	      (th->worker_id+1),
 	      th->events[last_state_idx].time-min_time,
