@@ -833,6 +833,9 @@ void pre_main()
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
 
+  init_wqueue_counters(&wstream_df_worker_threads[0]);
+  trace_init(&wstream_df_worker_threads[0]);
+
 #ifdef _PHARAON_MODE
   /* In order to ensure that all user code is executed by threads
      created through the pthreads interface (PHARAON project specific
