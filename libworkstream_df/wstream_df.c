@@ -547,6 +547,7 @@ worker_thread (void)
 	  trace_task_exec_end(cthread);
 	  trace_state_change(cthread, WORKER_STATE_SEEKING);
 
+	  wqueue_counters_enter_runtime(current_thread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
 	  if(wstream_allocator_of(fp) == cthread->worker_id)
