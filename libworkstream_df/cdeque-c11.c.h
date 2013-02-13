@@ -1,7 +1,6 @@
 #include <stdatomic.h>
 #include <stddef.h>
 
-#include "papi-defs.h"
 #include "wstream_df.h"
 #include "error.h"
 #include "cdeque.h"
@@ -11,8 +10,6 @@
 CDEQUE_API void
 cdeque_push_bottom (cdeque_p cdeque, wstream_df_type elem)
 {
-  _PAPI_P0B;
-
   size_t bottom = atomic_load_explicit (&cdeque->bottom, relaxed);
   size_t top = atomic_load_explicit (&cdeque->top, acquire);
 
@@ -25,15 +22,12 @@ cdeque_push_bottom (cdeque_p cdeque, wstream_df_type elem)
   cbuffer_set (buffer, bottom, elem, relaxed);
   thread_fence (release);
   atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
-
-  _PAPI_P0E;
 }
 
 /* Get one task from CDEQUE for execution.  */
 CDEQUE_API wstream_df_type
 cdeque_take (cdeque_p cdeque)
 {
-  _PAPI_P1B;
   size_t bottom, top;
   wstream_df_type task;
   cbuffer_p buffer;
@@ -44,7 +38,6 @@ cdeque_take (cdeque_p cdeque)
 	 bottom - 1 would wrap around and allow steals to succeed
 	 even though they should not. Double-loading bottom is OK
 	 as we are the only thread that alters its value. */
-      _PAPI_P1E;
       return NULL;
     }
 
@@ -59,7 +52,6 @@ cdeque_take (cdeque_p cdeque)
   if (bottom < top)
     {
       atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
-      _PAPI_P1E;
       return NULL;
     }
 
@@ -67,7 +59,6 @@ cdeque_take (cdeque_p cdeque)
 
   if (bottom > top)
     {
-      _PAPI_P1E;
       return task;
     }
 
@@ -77,7 +68,6 @@ cdeque_take (cdeque_p cdeque)
     task = NULL;
   atomic_store_explicit (&cdeque->bottom, bottom + 1, relaxed);
 
-  _PAPI_P1E;
   return task;
 }
 
@@ -85,7 +75,6 @@ cdeque_take (cdeque_p cdeque)
 CDEQUE_API wstream_df_type
 cdeque_steal (cdeque_p remote_cdeque)
 {
-  _PAPI_P2B;
   size_t bottom, top;
   wstream_df_type elem;
   cbuffer_p buffer;
@@ -98,7 +87,6 @@ cdeque_steal (cdeque_p remote_cdeque)
 
   if (top >= bottom)
     {
-      _PAPI_P2E;
       return NULL;
     }
 
@@ -109,6 +97,5 @@ cdeque_steal (cdeque_p remote_cdeque)
 						top + 1, seq_cst, relaxed))
     elem = NULL;
 
-  _PAPI_P2E;
   return elem;
 }
