@@ -14,16 +14,13 @@ static const char* state_names[] = {
   "tcreate",
   "resdep",
   "tdec",
-  "broadcast"
+  "broadcast",
+  "init"
 };
 
 void trace_init(struct wstream_df_thread* cthread)
 {
-	cthread->events[0].time = rdtsc();
-	cthread->events[0].type = WQEVENT_STATECHANGE;
-	cthread->events[0].state_change.state = WORKER_STATE_SEEKING;
-	cthread->events[0].state_change.previous_state_idx = -1;
-	cthread->num_events = 1;
+	cthread->num_events = 0;
 	cthread->previous_state_idx = 0;
 }
 
@@ -364,6 +361,15 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 	    state_durations[state] += th->events[k].time - th->events[last_state_idx].time;
 	    total_duration += th->events[k].time - th->events[last_state_idx].time;
 	  } else {
+#ifdef TRACE_RT_INIT_STATE
+	  /* First state change, by default the initial state is "initialization" */
+	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
+		    (th->worker_id+1),
+		    (th->worker_id+1),
+		    (uint64_t)0,
+		    th->events[k].time-min_time,
+		    WORKER_STATE_RT_INIT);
+#else
 	    /* First state change, by default the initial state is "seeking" */
 	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
 		    (th->worker_id+1),
@@ -371,7 +377,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 		    (uint64_t)0,
 		    th->events[k].time-min_time,
 		    WORKER_STATE_SEEKING);
-
+#endif
 	    state_durations[WORKER_STATE_SEEKING] += th->events[k].time-min_time;
 	    total_duration += th->events[k].time-min_time;
 	  }

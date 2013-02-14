@@ -709,7 +709,12 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
 #endif
 
+#ifdef TRACE_RT_INIT_STATE
+  if(wstream_df_worker->worker_id != 0)
+    trace_init(wstream_df_worker);
+#else
   trace_init(wstream_df_worker);
+#endif
 
 #ifdef _PRINT_STATS
   printf ("worker %d mapped to core %d\n", id, core);
@@ -829,13 +834,17 @@ void pre_main()
   current_thread = &wstream_df_worker_threads[0];
   current_barrier = NULL;
 
+#ifdef TRACE_RT_INIT_STATE
+  trace_init(&wstream_df_worker_threads[0]);
+  trace_state_change(current_thread, WORKER_STATE_RT_INIT);
+#endif
+
   openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
   for (i = 1; i < num_workers; ++i)
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
 
   init_wqueue_counters(&wstream_df_worker_threads[0]);
-  trace_init(&wstream_df_worker_threads[0]);
 
 #ifdef _PHARAON_MODE
   /* In order to ensure that all user code is executed by threads

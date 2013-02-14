@@ -19,7 +19,8 @@
 #define WORKER_STATE_RT_RESDEP 3
 #define WORKER_STATE_RT_TDEC 4
 #define WORKER_STATE_RT_BCAST 5
-#define WORKER_STATE_MAX 6
+#define WORKER_STATE_RT_INIT 6
+#define WORKER_STATE_MAX 7
 
 typedef struct worker_event {
   uint64_t time;
