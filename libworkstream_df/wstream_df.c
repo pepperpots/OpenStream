@@ -293,6 +293,7 @@ void
 __builtin_ia32_tend (void *fp)
 {
   wstream_df_frame_p cfp = (wstream_df_frame_p) fp;
+  wstream_df_thread_p cthread = current_thread;
   barrier_p cbar = current_barrier;
   barrier_p bar = cfp->own_barrier;
 
@@ -310,7 +311,10 @@ __builtin_ia32_tend (void *fp)
       current_barrier = NULL;
     }
 
-  wstream_free (&current_thread->slab_cache, cfp);
+  if(wstream_allocator_of(fp) == cthread->worker_id)
+    inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
+
+  wstream_free (&cthread->slab_cache, cfp);
 
   /* If this task belongs to a barrier, increment the exec count and
      try to pass the barrier.  */
@@ -549,9 +553,6 @@ worker_thread (void)
 
 	  wqueue_counters_enter_runtime(current_thread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
-
-	  if(wstream_allocator_of(fp) == cthread->worker_id)
-	    inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
 
 	  __compiler_fence;
 

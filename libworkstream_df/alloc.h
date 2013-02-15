@@ -145,9 +145,9 @@ slab_free (slab_cache_p slab_cache, void *e)
 
   if (idx > __slab_max_size)
     {
-      free (slab_metainfo(e));
       slab_cache->slab_toobig_frees++;
       slab_cache->slab_toobig_freed_bytes += metainfo->size;
+      free (slab_metainfo(e));
     }
   else
     {
