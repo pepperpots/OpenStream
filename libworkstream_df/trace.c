@@ -174,6 +174,7 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
   uint64_t last_time_interval = min_time;
   uint64_t interval_length = (max_time-min_time)/max_intervals;
   worker_state_change_p curr_event;
+  uint64_t num_tasks_executed = 0;
   FILE* fp = fopen(WQEVENT_SAMPLING_PARFILE, "w+");
 
   assert(fp != NULL);
@@ -206,8 +207,19 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
     }
   }
 
-  printf("Overall average parallelism: %.6f\n",
+  printf("Overall average parallelism for state %s: %.6f\n",
+	 state_names[state],
 	 (double)parallelism_time / (double)(max_time - min_time));
+
+#ifdef WQUEUE_PROFILE
+  for(i = 0; i < num_workers; i++) {
+    num_tasks_executed += wstream_df_worker_threads[i].tasks_executed;
+  }
+
+  printf("Overall state duration per task for state %s: %.6f\n",
+	 state_names[state],
+	 (double)parallelism_time / (double)num_tasks_executed);
+#endif
 
   fclose(fp);
 }
