@@ -5,6 +5,7 @@ STATES
 3    Resolve dependencies
 4    Tdecrease
 5    Broadcast
+6    Thread / runtime initialization
 
 EVENT_TYPE
 0    3    Tcreate
