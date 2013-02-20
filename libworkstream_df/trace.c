@@ -234,7 +234,6 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
   wstream_df_thread_p th;
   unsigned int i;
   int start_idx, end_idx;
-  int type_idx;
   int level;
   uint64_t total_num_tasks = 0;
   uint64_t total_duration = 0;
