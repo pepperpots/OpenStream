@@ -301,12 +301,15 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
 int conditional_fprintf(int do_dump, FILE* fp, const char *format, ...)
 {
   va_list args;
+  int ret = 0;
 
   if(do_dump) {
     va_start(args, format);
-    vfprintf(fp, format, args);
+    ret = vfprintf(fp, format, args);
     va_end(args);
   }
+
+  return ret;
 }
 
 /* Dumps worker events to a file in paraver format. */
