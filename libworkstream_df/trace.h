@@ -33,8 +33,10 @@ typedef struct worker_event {
     } steal;
 
     struct {
-      uint32_t from_node;
-      uint32_t type;
+      uint16_t from_node;
+      uint16_t type;
+      uint64_t creation_timestamp;
+      uint64_t ready_timestamp;
     } texec;
 
     struct {
@@ -60,7 +62,7 @@ struct wstream_df_thread;
 
 void trace_init(struct wstream_df_thread* cthread);
 void trace_event(struct wstream_df_thread* cthread, unsigned int type);
-void trace_task_exec_start(struct wstream_df_thread* cthread, unsigned int from_node, unsigned int type);
+void trace_task_exec_start(struct wstream_df_thread* cthread, unsigned int from_node, unsigned int type, uint64_t creation_timestamp, uint64_t ready_timestamp);
 void trace_task_exec_end(struct wstream_df_thread* cthread);
 void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
 void trace_state_restore(struct wstream_df_thread* cthread);
@@ -69,7 +71,6 @@ void trace_push(struct wstream_df_thread* cthread, unsigned int dst, unsigned in
 
 void dump_events(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_average_task_durations(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-void get_task_duration_stats(int num_workers, struct wstream_df_thread* wstream_df_worker_threads, uint64_t* total_duration, uint64_t* num_tasks, uint64_t* max_duration);
 void dump_task_duration_histogram(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 
@@ -79,7 +80,7 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
 
 #define trace_init(cthread)  do { } while(0)
 #define trace_task_exec_end(cthread) do { } while(0)
-#define trace_task_exec_start(cthread, from_node, type) do { } while(0)
+#define trace_task_exec_start(cthread, from_node, type, creation_timestamp, ready_timestamp) do { } while(0)
 #define trace_event(cthread, type) do { } while(0)
 #define trace_state_change(cthread, state) do { } while(0)
 #define trace_steal(cthread, src, size) do { } while(0)

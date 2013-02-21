@@ -33,12 +33,15 @@ void trace_event(wstream_df_thread_p cthread, unsigned int type)
   cthread->num_events++;
 }
 
-void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, unsigned int type)
+void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, unsigned int type,
+			   uint64_t creation_timestamp, uint64_t ready_timestamp)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].texec.from_node = from_node;
   cthread->events[cthread->num_events].texec.type = type;
+  cthread->events[cthread->num_events].texec.creation_timestamp = creation_timestamp;
+  cthread->events[cthread->num_events].texec.ready_timestamp = ready_timestamp;
   cthread->events[cthread->num_events].type = WQEVENT_START_TASKEXEC;
   cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
@@ -161,15 +164,21 @@ int64_t get_max_time(int num_workers, wstream_df_thread_p wstream_df_worker_thre
   return max;
 }
 
-void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_worker_threads, uint64_t* total_duration, uint64_t* num_tasks, uint64_t* max_duration)
+void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_worker_threads,
+			     uint64_t* total_duration, uint64_t* num_tasks, uint64_t* max_duration,
+			     uint64_t* max_create_to_exec_time, uint64_t* max_create_to_ready_time,
+			     uint64_t* max_ready_to_exec_time)
 {
-  uint64_t duration;
+  uint64_t duration, create_to_exec_time, create_to_ready_time, ready_to_exec_time;
   int i, idx_start, idx_end, idx;
   wstream_df_thread_p th;
 
   *max_duration = 0;
   *num_tasks = 0;
   *total_duration = 0;
+  *max_ready_to_exec_time = 0;
+  *max_create_to_exec_time = 0;
+  *max_create_to_ready_time = 0;
 
   for(i = 0; i < num_workers; i++) {
     idx = -1;
@@ -180,6 +189,9 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
     while((idx_start = get_next_event(th, idx_start, WQEVENT_START_TASKEXEC)) != -1) {
       idx_end = get_next_event(th, idx_start, WQEVENT_END_TASKEXEC);
       if(idx_end != -1) {
+	create_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.creation_timestamp;
+	create_to_ready_time = th->events[idx_start].texec.ready_timestamp - th->events[idx_start].texec.creation_timestamp;
+	ready_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.ready_timestamp;
 	duration = 0;
 
 	for(idx = idx_start+1; idx < idx_end; idx++) {
@@ -193,6 +205,15 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
 
 	if(duration > *max_duration)
 	  *max_duration = duration;
+
+	if(create_to_exec_time > *max_create_to_exec_time)
+	  *max_create_to_exec_time = create_to_exec_time;
+
+	if(create_to_ready_time > *max_create_to_ready_time)
+	  *max_create_to_ready_time = create_to_ready_time;
+
+	if(ready_to_exec_time > *max_ready_to_exec_time)
+	  *max_ready_to_exec_time = ready_to_exec_time;
       }
     }
   }
@@ -210,16 +231,26 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   uint64_t histogram_all[NUM_WQEVENT_TASKHIST_BINS];
   uint64_t histogram_dur[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_dur_all[NUM_WQEVENT_TASKHIST_BINS];
+  uint64_t histogram_ctet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_ctrt[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_rtet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t curr_bin;
   FILE* fp;
   int common_level;
   int steal_type;
   int level;
 
+  uint64_t create_to_exec_time;
+  uint64_t create_to_ready_time;
+  uint64_t ready_to_exec_time;
+
   memset(histogram, 0, sizeof(histogram));
   memset(histogram_all, 0, sizeof(histogram_all));
   memset(histogram_dur, 0, sizeof(histogram_dur));
   memset(histogram_dur_all, 0, sizeof(histogram_dur_all));
+  memset(histogram_ctet, 0, sizeof(histogram_ctet));
+  memset(histogram_ctrt, 0, sizeof(histogram_ctrt));
+  memset(histogram_rtet, 0, sizeof(histogram_rtet));
 
   for(i = worker_start; i < worker_end; i++) {
     idx = -1;
@@ -231,6 +262,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
       idx_end = get_next_event(th, idx_start, WQEVENT_END_TASKEXEC);
       if(idx_end != -1) {
 	duration = 0;
+
 	common_level = mem_lowest_common_level(i, th->events[idx_start].texec.from_node);
 	steal_type = th->events[idx_start].texec.type;
 	assert(th->events[idx_start].texec.type != STEAL_TYPE_UNKNOWN);
@@ -244,6 +276,14 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	idx_hist = (duration*(NUM_WQEVENT_TASKHIST_BINS-1)) / max_duration;
 	histogram[idx_hist][common_level][steal_type]++;
 	histogram_dur[idx_hist][common_level][steal_type] += duration;
+
+	create_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.creation_timestamp;
+	create_to_ready_time = th->events[idx_start].texec.ready_timestamp - th->events[idx_start].texec.creation_timestamp;
+	ready_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.ready_timestamp;
+
+	histogram_ctet[idx_hist][common_level][steal_type] += create_to_exec_time;
+	histogram_rtet[idx_hist][common_level][steal_type] += ready_to_exec_time;
+	histogram_ctrt[idx_hist][common_level][steal_type] += create_to_ready_time;
       }
     }
   }
@@ -273,6 +313,21 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	fprintf(fp, "# %d: Duration [%%] (%s, %s)\n",
 		i, mem_level_name(level),
 		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Average create to exec time [cycles] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Average ready to exec time [cycles] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Average create to ready time [cycles] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
       }
   }
 
@@ -283,11 +338,14 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 
     for(level = 0; level < MEM_NUM_LEVELS; level++) {
       for(steal_type = 0; steal_type < 2; steal_type++) {
-	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf ",
+	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf %Lf %Lf %Lf ",
 		histogram[i][level][steal_type],
 		100.0 * ((long double)histogram[i][level][steal_type]) / ((long double)num_tasks),
 		histogram_dur[i][level][steal_type],
-		100.0 * ((long double)histogram_dur[i][level][steal_type]) / ((long double)total_duration));
+		100.0 * ((long double)histogram_dur[i][level][steal_type]) / ((long double)total_duration),
+		((long double)histogram_ctet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]),
+		((long double)histogram_rtet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]),
+		((long double)histogram_ctrt[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]));
       }
     }
 
@@ -302,9 +360,14 @@ void dump_task_duration_histogram(int num_workers, wstream_df_thread_p wstream_d
   uint64_t total_duration = 0;
   uint64_t num_tasks = 0;
   uint64_t max_duration = 0;
+  uint64_t max_create_to_exec_time = 0;
+  uint64_t max_create_to_ready_time = 0;
+  uint64_t max_ready_to_exec_time = 0;
 
   get_task_duration_stats(num_workers, wstream_df_worker_threads,
-			  &total_duration, &num_tasks, &max_duration);
+			  &total_duration, &num_tasks, &max_duration,
+			  &max_create_to_exec_time, &max_create_to_ready_time,
+			  &max_ready_to_exec_time);
 
   dump_task_duration_histogram_worker(0, num_workers, wstream_df_worker_threads,
 				      total_duration, num_tasks, max_duration);

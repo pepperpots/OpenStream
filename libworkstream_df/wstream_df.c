@@ -164,6 +164,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->last_owner = cthread->worker_id;
   frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
+  frame_pointer->creation_timestamp = rdtsc();
 
   inc_wqueue_counter(&current_thread->tasks_created, 1);
 
@@ -545,7 +546,7 @@ worker_thread (void)
 		}
 	    }
 
-	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type);
+	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 	  fp->work_fn (fp);
 	  trace_task_exec_end(cthread);
