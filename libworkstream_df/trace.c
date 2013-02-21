@@ -2,6 +2,7 @@
 #include <time.h>
 #include <string.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include "trace.h"
 #include "wstream_df.h"
@@ -158,6 +159,155 @@ int64_t get_max_time(int num_workers, wstream_df_thread_p wstream_df_worker_thre
 	max = wstream_df_worker_threads[i].events[wstream_df_worker_threads[i].num_events-1].time;
 
   return max;
+}
+
+void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_worker_threads, uint64_t* total_duration, uint64_t* num_tasks, uint64_t* max_duration)
+{
+  uint64_t duration;
+  int i, idx_start, idx_end, idx;
+  wstream_df_thread_p th;
+
+  *max_duration = 0;
+  *num_tasks = 0;
+  *total_duration = 0;
+
+  for(i = 0; i < num_workers; i++) {
+    idx = -1;
+    idx_start = -1;
+
+    th = &wstream_df_worker_threads[i];
+
+    while((idx_start = get_next_event(th, idx_start, WQEVENT_START_TASKEXEC)) != -1) {
+      idx_end = get_next_event(th, idx_start, WQEVENT_END_TASKEXEC);
+      if(idx_end != -1) {
+	duration = 0;
+
+	for(idx = idx_start+1; idx < idx_end; idx++) {
+	  if(th->events[idx].type == WQEVENT_STATECHANGE && th->events[idx].state_change.state == WORKER_STATE_TASKEXEC) {
+	    duration += th->events[idx+1].time - th->events[idx].time;
+	  }
+	}
+
+	*total_duration += duration;
+	(*num_tasks)++;
+
+	if(duration > *max_duration)
+	  *max_duration = duration;
+      }
+    }
+  }
+}
+
+void dump_task_duration_histogram_worker(int worker_start, int worker_end,
+					 wstream_df_thread_p wstream_df_worker_threads,
+					 uint64_t total_duration, uint64_t num_tasks,
+					 uint64_t max_duration)
+{
+  uint64_t duration;
+  int i, idx_start, idx_end, idx, idx_hist;
+  wstream_df_thread_p th;
+  uint64_t histogram[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_all[NUM_WQEVENT_TASKHIST_BINS];
+  uint64_t histogram_dur[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_dur_all[NUM_WQEVENT_TASKHIST_BINS];
+  uint64_t curr_bin;
+  FILE* fp;
+  int common_level;
+  int steal_type;
+  int level;
+
+  memset(histogram, 0, sizeof(histogram));
+  memset(histogram_all, 0, sizeof(histogram_all));
+  memset(histogram_dur, 0, sizeof(histogram_dur));
+  memset(histogram_dur_all, 0, sizeof(histogram_dur_all));
+
+  for(i = worker_start; i < worker_end; i++) {
+    idx = -1;
+    idx_start = -1;
+
+    th = &wstream_df_worker_threads[i];
+
+    while((idx_start = get_next_event(th, idx_start, WQEVENT_START_TASKEXEC)) != -1) {
+      idx_end = get_next_event(th, idx_start, WQEVENT_END_TASKEXEC);
+      if(idx_end != -1) {
+	duration = 0;
+	common_level = mem_lowest_common_level(i, th->events[idx_start].texec.from_node);
+	steal_type = th->events[idx_start].texec.type;
+	assert(th->events[idx_start].texec.type != STEAL_TYPE_UNKNOWN);
+
+	for(idx = idx_start+1; idx < idx_end; idx++) {
+	  if(th->events[idx].type == WQEVENT_STATECHANGE && th->events[idx].state_change.state == WORKER_STATE_TASKEXEC) {
+	    duration += th->events[idx+1].time - th->events[idx].time;
+	  }
+	}
+
+	idx_hist = (duration*(NUM_WQEVENT_TASKHIST_BINS-1)) / max_duration;
+	histogram[idx_hist][common_level][steal_type]++;
+	histogram_dur[idx_hist][common_level][steal_type] += duration;
+      }
+    }
+  }
+
+  fp = fopen(WQEVENT_SAMPLING_TASKHISTFILE, "w+");
+  assert(fp != NULL);
+
+  i = 1;
+  fprintf(fp, "# %d: task length\n", i);
+  for(level = 0; level < MEM_NUM_LEVELS; level++) {
+      for(steal_type = 0; steal_type < 2; steal_type++) {
+	i++;
+	fprintf(fp, "# %d: Number of tasks (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Number of tasks [%%] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Duration [cycles] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+	i++;
+	fprintf(fp, "# %d: Duration [%%] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+      }
+  }
+
+  for(i = 0; i < NUM_WQEVENT_TASKHIST_BINS; i++) {
+    curr_bin = (max_duration*i) / NUM_WQEVENT_TASKHIST_BINS;
+
+    fprintf(fp, "%"PRIu64" ", curr_bin);
+
+    for(level = 0; level < MEM_NUM_LEVELS; level++) {
+      for(steal_type = 0; steal_type < 2; steal_type++) {
+	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf ",
+		histogram[i][level][steal_type],
+		100.0 * ((long double)histogram[i][level][steal_type]) / ((long double)num_tasks),
+		histogram_dur[i][level][steal_type],
+		100.0 * ((long double)histogram_dur[i][level][steal_type]) / ((long double)total_duration));
+      }
+    }
+
+    fprintf(fp, "\n");
+  }
+
+  fclose(fp);
+}
+
+void dump_task_duration_histogram(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+{
+  uint64_t total_duration = 0;
+  uint64_t num_tasks = 0;
+  uint64_t max_duration = 0;
+
+  get_task_duration_stats(num_workers, wstream_df_worker_threads,
+			  &total_duration, &num_tasks, &max_duration);
+
+  dump_task_duration_histogram_worker(0, num_workers, wstream_df_worker_threads,
+				      total_duration, num_tasks, max_duration);
 }
 
 void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int num_workers, wstream_df_thread_p wstream_df_worker_threads)

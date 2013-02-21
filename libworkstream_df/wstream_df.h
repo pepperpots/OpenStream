@@ -13,9 +13,18 @@
 #include "trace.h"
 #include "profiling.h"
 
-#define STEAL_TYPE_UNKNOWN 0
-#define STEAL_TYPE_PUSH 1
-#define STEAL_TYPE_STEAL 2
+#define STEAL_TYPE_PUSH 0
+#define STEAL_TYPE_STEAL 1
+#define STEAL_TYPE_UNKNOWN 2
+
+static inline const char* steal_type_str(int steal_type) {
+  switch(steal_type) {
+  case STEAL_TYPE_STEAL: return "steal";
+  case STEAL_TYPE_PUSH: return "push";
+  case STEAL_TYPE_UNKNOWN: return "unknown";
+  default: return NULL;
+  }
+};
 
 /* Create a new thread, with frame pointer size, and sync counter */
 extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool);

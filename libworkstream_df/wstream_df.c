@@ -883,6 +883,7 @@ void post_main()
   dump_events(num_workers, wstream_df_worker_threads);
   dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
   dump_average_task_durations(num_workers, wstream_df_worker_threads);
+  dump_task_duration_histogram(num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(num_workers, wstream_df_worker_threads);
   dump_transfer_matrix(num_workers);
 }
