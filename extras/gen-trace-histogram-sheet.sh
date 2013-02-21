@@ -12,6 +12,7 @@ do
     echo "set title '$TITLE'" ;
     echo "set xlabel '$XLABEL'" ;
     echo "set ylabel ''" ;
+    echo "set boxwidth 1" ;
     echo "set output \"$i.ps\"" ;
     echo "plot \"$HISTOGRAM_FILE\" using 1:$i with boxes title ''") | gnuplot
     ps2pdf $i.ps
