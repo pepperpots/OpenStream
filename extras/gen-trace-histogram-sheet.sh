@@ -3,6 +3,13 @@
 HISTOGRAM_FILE="task_histogram.gpdata"
 NUM_GRAPHS=`grep '#' $HISTOGRAM_FILE | wc -l`
 
+if [ -z "$1" -o "$1" = "--keep" ]
+then
+    KEEP="true"
+else
+    KEEP="false"
+fi
+
 XLABEL=`awk "NR==1{print;exit}" $HISTOGRAM_FILE | sed 's/#[0-9 ]*: \(.*\)/\1/'`
 
 for i in `seq 2 $NUM_GRAPHS`
@@ -20,4 +27,8 @@ do
 done
 
 pdfjoin --outfile histograms.pdf `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
-rm `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
+
+if [ $KEEP = "false" ]
+then
+    rm `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
+fi
