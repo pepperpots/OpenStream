@@ -119,7 +119,7 @@ init_papi (wstream_df_thread_p th)
 void
 update_papi(struct wstream_df_thread* th)
 {
-	if(PAPI_read(th->papi_event_set, th->papi_counters) != PAPI_OK) {
+	if(PAPI_accum(th->papi_event_set, th->papi_counters) != PAPI_OK) {
 		fprintf(stderr, "Could not read counters for thread %d\n", th->worker_id);
 		exit(1);
 	}
