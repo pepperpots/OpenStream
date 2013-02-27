@@ -343,9 +343,9 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 		100.0 * ((long double)histogram[i][level][steal_type]) / ((long double)num_tasks),
 		histogram_dur[i][level][steal_type],
 		100.0 * ((long double)histogram_dur[i][level][steal_type]) / ((long double)total_duration),
-		((long double)histogram_ctet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]),
-		((long double)histogram_rtet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]),
-		((long double)histogram_ctrt[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]));
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_rtet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctrt[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0);
       }
     }
 
