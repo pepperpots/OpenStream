@@ -301,7 +301,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 	}
 
 #ifdef WS_PAPI_PROFILE
-	memset(papi_counters_accum, 0, sizeof(papi_counters_accum[evt]));
+	memset(papi_counters_accum, 0, sizeof(papi_counters_accum));
 
 	for (i = 0; i < num_workers; ++i) {
 		for(evt = 0; evt < WS_PAPI_NUM_EVENTS; evt++) {
