@@ -90,26 +90,27 @@ do
     rm -f gnuplotlog
 
     tput_restore
-    tput_save
-
-    echo -n "Generating $i.pdf..."
-    ps2pdf $i.ps
-    rm $i.ps
-    tput_restore
 done
 
-echo "Generating $OUTPUT_FILE"
-pdfjoin --outfile "$OUTPUT_FILE" `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs` > pdfjoinlog 2>&1
+echo "Concatenating postscript files..."
+gs -sDEVICE=pswrite -dAutoRotatePages="/None" -dOrient1=false -sOutputFile="$OUTPUT_FILE.ps" -dNOPAUSE -dBATCH `seq 2 $NUM_GRAPHS | sed 's/$/.ps/' | xargs` > gslog 2>&1
 
 if [ $? -ne 0 ]
 then
-    cat pdfjoinlog >&2
+    cat gslog >&2
     exit 1
 fi
+rm -f gslog
 
-rm -f pdfjoinlog
+echo "Generating $OUTPUT_FILE..."
+ps2pdf "$OUTPUT_FILE.ps" "$OUTPUT_FILE"
+rm -f "$OUTPUT_FILE.ps"
+
+echo "Rotating pages..."
+pdf270 --suffix "turned" "$OUTPUT_FILE" > /dev/null 2>&1
+mv `basename "$OUTPUT_FILE" ".pdf"`"-turned.pdf" $OUTPUT_FILE
 
 if [ $KEEP != "true" ]
 then
-    rm `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
+    rm `seq 2 $NUM_GRAPHS | sed 's/$/.ps/' | xargs`
 fi
