@@ -35,6 +35,11 @@ do
 	    MAX_X=`echo $1 | cut -d= -f2`
 	    check_option_empty "$OPTION" "$MAX_X"
 	    ;;
+	--infile=*)
+	    OPTION=`echo $1 | cut -d= -f1`
+	    HISTOGRAM_FILE=`echo $1 | cut -d= -f2`
+	    check_option_empty "$OPTION" "$HISTOGRAM_FILE"
+	    ;;
 	*)
 	    echo "Unknown option $1."
 	    exit 1
