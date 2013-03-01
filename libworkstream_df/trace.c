@@ -165,13 +165,33 @@ int64_t get_max_time(int num_workers, wstream_df_thread_p wstream_df_worker_thre
   return max;
 }
 
+int64_t get_state_duration(wstream_df_thread_p th, int* idx, int max_idx)
+{
+  int new_idx;
+  int64_t duration = 0;
+
+  new_idx = get_next_state_change(th, *idx);
+
+  if(new_idx == -1)
+    new_idx = th->num_events-1;
+
+  if(new_idx < max_idx) {
+    duration = th->events[new_idx].time - th->events[*idx].time;
+    *idx = new_idx;
+    return duration;
+  }
+
+  return -1;
+}
+
 void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_worker_threads,
 			     uint64_t* total_duration, uint64_t* num_tasks, uint64_t* max_duration,
 			     uint64_t* max_create_to_exec_time, uint64_t* max_create_to_ready_time,
 			     uint64_t* max_ready_to_exec_time)
 {
   uint64_t duration, create_to_exec_time, create_to_ready_time, ready_to_exec_time;
-  int i, idx_start, idx_end, idx;
+  int64_t state_duration;
+  int i, idx_start, idx_end, idx, idx_tmp;
   wstream_df_thread_p th;
 
   *max_duration = 0;
@@ -194,12 +214,10 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
 	create_to_ready_time = th->events[idx_start].texec.ready_timestamp - th->events[idx_start].texec.creation_timestamp;
 	ready_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.ready_timestamp;
 	duration = 0;
+	idx_tmp = idx_start+1;
 
-	for(idx = idx_start+1; idx < idx_end; idx++) {
-	  if(th->events[idx].type == WQEVENT_STATECHANGE && th->events[idx].state_change.state == WORKER_STATE_TASKEXEC) {
-	    duration += th->events[idx+1].time - th->events[idx].time;
-	  }
-	}
+	while((state_duration = get_state_duration(th, &idx_tmp, idx_end)) != -1)
+	  duration += state_duration;
 
 	*total_duration += duration;
 	(*num_tasks)++;
@@ -215,6 +233,8 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
 
 	if(ready_to_exec_time > *max_ready_to_exec_time)
 	  *max_ready_to_exec_time = ready_to_exec_time;
+
+	idx_start = idx_end;
       }
     }
   }
@@ -226,7 +246,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 					 uint64_t max_duration)
 {
   uint64_t duration;
-  int i, idx_start, idx_end, idx, idx_hist;
+  int i, idx_start, idx_end, idx_hist, idx_tmp;
   wstream_df_thread_p th;
   uint64_t histogram[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_all[NUM_WQEVENT_TASKHIST_BINS];
@@ -237,6 +257,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   uint64_t histogram_rtet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_size[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t curr_bin;
+  int64_t state_duration;
   FILE* fp;
   int common_level;
   int steal_type;
@@ -256,7 +277,6 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   memset(histogram_size, 0, sizeof(histogram_size));
 
   for(i = worker_start; i < worker_end; i++) {
-    idx = -1;
     idx_start = -1;
 
     th = &wstream_df_worker_threads[i];
@@ -264,17 +284,14 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
     while((idx_start = get_next_event(th, idx_start, WQEVENT_START_TASKEXEC)) != -1) {
       idx_end = get_next_event(th, idx_start, WQEVENT_END_TASKEXEC);
       if(idx_end != -1) {
-	duration = 0;
-
 	common_level = mem_lowest_common_level(i, th->events[idx_start].texec.from_node);
 	steal_type = th->events[idx_start].texec.type;
 	assert(th->events[idx_start].texec.type != STEAL_TYPE_UNKNOWN);
 
-	for(idx = idx_start+1; idx < idx_end; idx++) {
-	  if(th->events[idx].type == WQEVENT_STATECHANGE && th->events[idx].state_change.state == WORKER_STATE_TASKEXEC) {
-	    duration += th->events[idx+1].time - th->events[idx].time;
-	  }
-	}
+	idx_tmp = idx_start+1;
+	duration = 0;
+	while((state_duration = get_state_duration(th, &idx_tmp, idx_end)) != -1)
+	  duration += state_duration;
 
 	idx_hist = (duration*(NUM_WQEVENT_TASKHIST_BINS-1)) / max_duration;
 	histogram[idx_hist][common_level][steal_type]++;
@@ -288,6 +305,8 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	histogram_rtet[idx_hist][common_level][steal_type] += ready_to_exec_time;
 	histogram_ctrt[idx_hist][common_level][steal_type] += create_to_ready_time;
 	histogram_size[idx_hist][common_level][steal_type] += th->events[idx_start].texec.size;
+
+	idx_start = idx_end;
       }
     }
   }
