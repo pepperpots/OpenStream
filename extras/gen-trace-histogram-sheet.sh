@@ -1,6 +1,7 @@
 #!/bin/sh
 
 HISTOGRAM_FILE="task_histogram.gpdata"
+OUTPUT_FILE="histogram.pdf"
 NUM_GRAPHS=`grep '#' $HISTOGRAM_FILE | wc -l`
 
 KEEP="false"
@@ -40,6 +41,11 @@ do
 	    HISTOGRAM_FILE=`echo $1 | cut -d= -f2`
 	    check_option_empty "$OPTION" "$HISTOGRAM_FILE"
 	    ;;
+	--outfile=*)
+	    OPTION=`echo $1 | cut -d= -f1`
+	    OUTPUT_FILE=`echo $1 | cut -d= -f2`
+	    check_option_empty "$OPTION" "$OUTPUT_FILE"
+	    ;;
 	*)
 	    echo "Unknown option $1."
 	    exit 1
@@ -65,7 +71,7 @@ do
     rm $i.ps
 done
 
-pdfjoin --outfile histograms.pdf `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
+pdfjoin --outfile "$OUTPUT_FILE" `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
 
 if [ $KEEP != "true" ]
 then
