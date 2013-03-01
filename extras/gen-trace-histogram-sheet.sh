@@ -25,6 +25,17 @@ check_option_empty()
     fi
 }
 
+tput_save()
+{
+    tput sc
+}
+
+tput_restore()
+{
+    tput el1
+    tput rc
+}
+
 while [ $# -gt 0 ]
 do
     case $1 in
@@ -58,6 +69,8 @@ XLABEL=`awk "NR==1{print;exit}" $HISTOGRAM_FILE | sed 's/#[0-9 ]*: \(.*\)/\1/'`
 
 for i in `seq 2 $NUM_GRAPHS`
 do
+    tput_save
+    echo -n "Generating $i.ps..."
     TITLE=`awk "NR==$i{print;exit}" $HISTOGRAM_FILE | sed 's/#[0-9 ]*: \(.*\)/\1/'`
     ( echo "set terminal postscript color";
     echo "set title '$TITLE'" ;
@@ -66,12 +79,35 @@ do
     echo "set xrange [0:$MAX_X]" ;
     echo "set boxwidth 1" ;
     echo "set output \"$i.ps\"" ;
-    echo "plot \"$HISTOGRAM_FILE\" using 1:$i with boxes title ''") | gnuplot
+    echo "plot \"$HISTOGRAM_FILE\" using 1:$i with boxes title ''") | gnuplot > gnuplotlog 2>&1
+
+    if [ $? -ne 0 ]
+    then
+	cat gnuplotlog >&2
+	exit 1
+    fi
+
+    rm -f gnuplotlog
+
+    tput_restore
+    tput_save
+
+    echo -n "Generating $i.pdf..."
     ps2pdf $i.ps
     rm $i.ps
+    tput_restore
 done
 
-pdfjoin --outfile "$OUTPUT_FILE" `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs`
+echo "Generating $OUTPUT_FILE"
+pdfjoin --outfile "$OUTPUT_FILE" `seq 2 $NUM_GRAPHS | sed 's/$/.pdf/' | xargs` > pdfjoinlog 2>&1
+
+if [ $? -ne 0 ]
+then
+    cat pdfjoinlog >&2
+    exit 1
+fi
+
+rm -f pdfjoinlog
 
 if [ $KEEP != "true" ]
 then
