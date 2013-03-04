@@ -256,8 +256,10 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   uint64_t histogram_ctrt[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_rtet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_size[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_otherstates[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t curr_bin;
   int64_t state_duration;
+  int64_t duration_other_states;
   FILE* fp;
   int common_level;
   int steal_type;
@@ -275,6 +277,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   memset(histogram_ctrt, 0, sizeof(histogram_ctrt));
   memset(histogram_rtet, 0, sizeof(histogram_rtet));
   memset(histogram_size, 0, sizeof(histogram_size));
+  memset(histogram_otherstates, 0, sizeof(histogram_otherstates));
 
   for(i = worker_start; i < worker_end; i++) {
     idx_start = -1;
@@ -293,6 +296,8 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	while((state_duration = get_state_duration(th, &idx_tmp, idx_end)) != -1)
 	  duration += state_duration;
 
+	duration_other_states = th->events[idx_end].time - th->events[idx_start].time - duration;
+
 	idx_hist = (duration*(NUM_WQEVENT_TASKHIST_BINS-1)) / max_duration;
 	histogram[idx_hist][common_level][steal_type]++;
 	histogram_dur[idx_hist][common_level][steal_type] += duration;
@@ -305,6 +310,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	histogram_rtet[idx_hist][common_level][steal_type] += ready_to_exec_time;
 	histogram_ctrt[idx_hist][common_level][steal_type] += create_to_ready_time;
 	histogram_size[idx_hist][common_level][steal_type] += th->events[idx_start].texec.size;
+	histogram_otherstates[idx_hist][common_level][steal_type] += duration_other_states;
 
 	idx_start = idx_end;
       }
@@ -338,6 +344,15 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 		steal_type_str(steal_type));
 
 	i++;
+	fprintf(fp, "# %d: Duration, other states than Texec [cycles] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+	i++;
+	fprintf(fp, "# %d: Duration per task, other states than Texec [cycles] (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+
+	i++;
 	fprintf(fp, "# %d: Average create to exec time [cycles] (%s, %s)\n",
 		i, mem_level_name(level),
 		steal_type_str(steal_type));
@@ -366,11 +381,13 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 
     for(level = 0; level < MEM_NUM_LEVELS; level++) {
       for(steal_type = 0; steal_type < 2; steal_type++) {
-	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf %Lf %Lf %Lf %Lf ",
+	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf %"PRIu64" %Lf %Lf %Lf %Lf %Lf ",
 		histogram[i][level][steal_type],
 		100.0 * ((long double)histogram[i][level][steal_type]) / ((long double)num_tasks),
 		histogram_dur[i][level][steal_type],
 		100.0 * ((long double)histogram_dur[i][level][steal_type]) / ((long double)total_duration),
+		histogram_otherstates[i][level][steal_type],
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_otherstates[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
 		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
 		histogram[i][level][steal_type] != 0 ? ((long double)histogram_rtet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
 		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctrt[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
