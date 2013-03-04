@@ -51,7 +51,7 @@ setup_papi(void)
 		exit(1);
 	}
 
-	if ((retval = PAPI_thread_init((unsigned long (*)(void)) (pthread_self))) != PAPI_OK) {
+	if ((retval = PAPI_thread_init((unsigned long (*)(void)) (wstream_self))) != PAPI_OK) {
 		fprintf(stderr, "Could not init threads: %s\n", PAPI_strerror(retval));
 		exit(1);
 	}

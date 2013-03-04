@@ -34,6 +34,14 @@ static volatile bool master_ctx_swap_p = false;
 
 static void worker_thread ();
 
+int wstream_self(void)
+{
+  if(current_thread == NULL)
+    return 0;
+
+  return current_thread->worker_id;
+}
+
 static inline barrier_p
 wstream_df_create_barrier ()
 {

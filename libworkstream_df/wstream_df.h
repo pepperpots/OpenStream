@@ -150,4 +150,6 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   void *current_stack; // BUG in swap/get context: stack is not set
 } wstream_df_thread_t, *wstream_df_thread_p;
 
+int wstream_self(void);
+
 #endif
