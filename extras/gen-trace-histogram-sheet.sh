@@ -77,7 +77,7 @@ do
     echo "set xlabel '$XLABEL'" ;
     echo "set ylabel ''" ;
     echo "set xrange [0:$MAX_X]" ;
-    echo "set boxwidth 1" ;
+    echo "set style fill solid 1.0" ;
     echo "set output \"$i.ps\"" ;
     echo "plot \"$HISTOGRAM_FILE\" using 1:$i with boxes title ''") | gnuplot > gnuplotlog 2>&1
 
