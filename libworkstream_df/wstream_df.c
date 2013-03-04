@@ -807,7 +807,6 @@ void pre_main()
   size_t num_cpu_affinities = 0;
 
   init_transfer_matrix();
-  setup_wqueue_counters();
 
   /* Set workers number as the number of cores.  */
 #ifndef _WSTREAM_DF_NUM_THREADS
@@ -849,12 +848,12 @@ void pre_main()
   trace_state_change(current_thread, WORKER_STATE_RT_INIT);
 #endif
 
+  setup_wqueue_counters();
+
   openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
   for (i = 1; i < num_workers; ++i)
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
-
-  init_wqueue_counters(&wstream_df_worker_threads[0]);
 
 #ifdef _PHARAON_MODE
   /* In order to ensure that all user code is executed by threads
@@ -880,6 +879,7 @@ void pre_main()
   }
 #endif
   free (cpu_affinities);
+  init_wqueue_counters(&wstream_df_worker_threads[0]);
 }
 
 __attribute__((destructor))
