@@ -2,7 +2,6 @@
 
 HISTOGRAM_FILE="task_histogram.gpdata"
 OUTPUT_FILE="histogram.pdf"
-NUM_GRAPHS=`grep '#' $HISTOGRAM_FILE | wc -l`
 
 KEEP="false"
 MAX_X="*"
@@ -65,6 +64,7 @@ do
     shift
 done
 
+NUM_GRAPHS=`grep '#' $HISTOGRAM_FILE | wc -l`
 XLABEL=`awk "NR==1{print;exit}" $HISTOGRAM_FILE | sed 's/#[0-9 ]*: \(.*\)/\1/'`
 
 for i in `seq 2 $NUM_GRAPHS`
