@@ -494,10 +494,11 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
   uint64_t duration;
   wstream_df_thread_p th;
   unsigned int i;
-  int start_idx, end_idx;
+  int start_idx, end_idx, tmp_idx;
   int level;
   uint64_t total_num_tasks = 0;
   uint64_t total_duration = 0;
+  int64_t state_duration;
 
   memset(task_durations_push, 0, sizeof(task_durations_push));
   memset(task_durations_steal, 0, sizeof(task_durations_steal));
@@ -516,7 +517,10 @@ void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df
 	  assert(th->events[end_idx].time > th->events[start_idx].time);
 
 	  level = mem_lowest_common_level(th->worker_id, th->events[start_idx].texec.from_node);
-	  duration = th->events[end_idx].time - th->events[start_idx].time;
+	  duration = 0;
+	  tmp_idx = start_idx+1;
+	  while((state_duration = get_state_duration(th, &tmp_idx, end_idx)) != -1)
+	    duration += state_duration;
 
 	  if(th->events[start_idx].texec.type == STEAL_TYPE_PUSH) {
 		  task_durations_push[level] += duration;
