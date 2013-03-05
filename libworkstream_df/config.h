@@ -35,6 +35,7 @@
 #define WQEVENT_SAMPLING_OUTFILE "events.prv"
 #define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
+#define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
 //#define WS_PAPI_PROFILE
 #define WS_PAPI_MULTIPLEX

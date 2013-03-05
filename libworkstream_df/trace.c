@@ -485,7 +485,91 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
   fclose(fp);
 }
 
-void dump_average_task_durations(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+void dump_average_task_duration(unsigned int num_intervals, int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+{
+  int curr_idx[num_workers];
+  int end_idx, tmp_idx;
+  int i;
+  int curr_worker = -1;
+  uint64_t min_texec_time;
+  uint64_t duration = 0;
+  int64_t texec_duration;
+  uint64_t min_time = get_min_time(num_workers, wstream_df_worker_threads);
+  uint64_t max_time = get_max_time(num_workers, wstream_df_worker_threads);
+  uint64_t interval_length = (max_time - min_time) / num_intervals;
+  uint64_t interval_end = min_time + interval_length;
+  unsigned int tasks_in_interval = 0;
+  wstream_df_thread_p th;
+  FILE* fp = fopen(WQEVENT_SAMPLING_TASKLENGTHFILE, "w+");
+  assert(fp != NULL);
+
+  /* Initialize curr_idx with indexes of the first task executions */
+  for(i = 0; i < num_workers; i++) {
+    th = &wstream_df_worker_threads[i];
+    curr_idx[i] = get_next_event(th, -1, WQEVENT_START_TASKEXEC);
+  }
+
+  do {
+    min_texec_time = UINT64_MAX;
+    curr_worker = -1;
+
+    /* Find worker whose next task execution has the lowest timestamp */
+    for(i = 0; i < num_workers; i++) {
+      if(curr_idx[i] != -1) {
+	th = &wstream_df_worker_threads[i];
+
+	if(th->events[curr_idx[i]].time < min_texec_time) {
+	  min_texec_time = th->events[curr_idx[i]].time;
+	  curr_worker = i;
+	}
+      }
+    }
+
+    /* If there still is a worker executing a task, then process */
+    if(curr_worker != -1) {
+      th = &wstream_df_worker_threads[curr_worker];
+
+      /* Find end of the task execution */
+      end_idx = get_next_event(th, curr_idx[curr_worker], WQEVENT_END_TASKEXEC);
+
+      if(end_idx != -1) {
+	/* If we enter a new interval, dump information of the previous interval */
+	if(th->events[curr_idx[curr_worker]].time > interval_end
+	   && tasks_in_interval > 0)
+	  {
+	    fprintf(fp, "%"PRIu64" %"PRIu64"\n",
+		    (interval_end - interval_length/2) - min_time,
+		    duration/(uint64_t)tasks_in_interval);
+	    interval_end += interval_length;
+	    duration = 0;
+	    tasks_in_interval = 0;
+	  }
+
+	/* Cumulate duration of texec states between start and end of the execution */
+	tmp_idx = curr_idx[curr_worker];
+	while((texec_duration = get_state_duration(th, &tmp_idx, end_idx)) != -1)
+	    duration += texec_duration;
+
+	/* Update worker's index */
+	curr_idx[curr_worker] = get_next_event(th, end_idx, WQEVENT_START_TASKEXEC);
+	tasks_in_interval++;
+      } else {
+	curr_idx[curr_worker] = -1;
+      }
+    }
+  } while(curr_worker != -1);
+
+  /* Dump last interval */
+  if(tasks_in_interval > 0) {
+    fprintf(fp, "%"PRIu64" %"PRIu64"\n",
+	    (interval_end - interval_length/2) - min_time,
+	    duration/(uint64_t)tasks_in_interval);
+  }
+
+  fclose(fp);
+}
+
+void dump_average_task_duration_summary(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 {
   uint64_t task_durations_push[MEM_NUM_LEVELS];
   uint64_t task_durations_steal[MEM_NUM_LEVELS];

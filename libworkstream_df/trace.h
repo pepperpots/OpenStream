@@ -71,7 +71,8 @@ void trace_steal(struct wstream_df_thread* cthread, unsigned int src, unsigned i
 void trace_push(struct wstream_df_thread* cthread, unsigned int dst, unsigned int size);
 
 void dump_events(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-void dump_average_task_durations(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
+void dump_average_task_duration_summary(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
+void dump_average_task_duration(unsigned int num_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_task_duration_histogram(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 
@@ -89,7 +90,8 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
 #define trace_state_restore(cthread) do { } while(0)
 
 #define dump_events(num_workers, wstream_df_worker_threads)  do { } while(0)
-#define dump_average_task_durations(num_workers, wstream_df_worker_threads) do { } while(0)
+#define dump_average_task_duration_summary(num_workers, wstream_df_worker_threads) do { } while(0)
+#define dump_average_task_duration(num_intervals, num_workers, wstream_df_worker_threads) do { } while(0)
 #define dump_avg_state_parallelism(state, max_intervals, num_workers, wstream_df_worker_threads) do { } while(0)
 #define dump_task_duration_histogram(num_workers, wstream_df_worker_threads) do { } while(0)
 #endif
