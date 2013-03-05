@@ -270,6 +270,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   int common_level;
   int steal_type;
   int level;
+  char filename[256];
 
   uint64_t create_to_exec_time;
   uint64_t create_to_ready_time;
@@ -327,7 +328,8 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
     }
   }
 
-  fp = fopen(WQEVENT_SAMPLING_TASKHISTFILE, "w+");
+  snprintf(filename, sizeof(filename), "%d-%d-%s", worker_start, worker_end, WQEVENT_SAMPLING_TASKHISTFILE);
+  fp = fopen(filename, "w+");
   assert(fp != NULL);
 
   i = 1;
