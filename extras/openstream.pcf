@@ -6,6 +6,7 @@ STATES
 4    Tdecrease
 5    Broadcast
 6    Thread / runtime initialization
+7    Estimate costs
 
 EVENT_TYPE
 0    3    Tcreate

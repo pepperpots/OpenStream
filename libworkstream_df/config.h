@@ -37,19 +37,22 @@
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
-//#define WS_PAPI_PROFILE
+#define WS_PAPI_PROFILE
 #define WS_PAPI_MULTIPLEX
 
 #ifdef WS_PAPI_PROFILE
 #define WS_PAPI_NUM_EVENTS 2
 #define WS_PAPI_EVENTS { PAPI_L1_DCM, PAPI_L2_DCM }
+#define MEM_CACHE_MISS_POS 0 /* Use L1_DCM as cache miss indicator */
 #endif
 
 /* Description of the memory hierarchy */
-
 #define MEM_NUM_LEVELS 6
+#define MEM_CACHE_LINE_SIZE 64
 
 #ifndef IN_GCC
+#include <string.h>
+
 /* 5 levels are defined:
  * 0: 1st level cache, private
  * 1: 2nd level cache, shared by 2 cores
@@ -188,6 +191,16 @@ static inline int mem_lowest_common_level(unsigned int a, unsigned int b)
 	assert(0);
 }
 
+static inline int mem_transfer_costs(unsigned int a, unsigned int b)
+{
+	static int level_transfer_costs[MEM_NUM_LEVELS] = {
+		0, 3, 10, 10, 100, 200
+	};
+
+	int common_level = mem_lowest_common_level(a, b);
+	return level_transfer_costs[common_level];
+}
+
 static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
 	unsigned int base = cpu - (cpu % mem_cores_at_level(level));
@@ -225,6 +238,49 @@ static inline int mem_num_steal_attempts_at_level(unsigned int level)
 	assert(level < MEM_NUM_LEVELS);
 	return steals_at_level[level];
 }
+
+
+static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* bytes_cpu, long long* cache_misses, long long* cache_misses_now, int allocator, unsigned long long* costs)
+{
+	int i, j;
+	unsigned long long cost;
+	unsigned long long cost_allocator;
+	unsigned long long bytes;
+	unsigned long long bytes_at_allocator = 0;
+	unsigned long long cache_miss_diff;
+
+	memset(costs, 0, sizeof(*costs)*MAX_CPUS);
+
+	for(i = 0; i < MAX_CPUS; i++) {
+		for(j = 0; j < MAX_CPUS; j++) {
+			bytes = bytes_cpu[i];
+
+			if(i == metadata_owner)
+				bytes += 1024;
+
+			if(bytes) {
+				cost = mem_transfer_costs(i, j);
+				cost_allocator = mem_transfer_costs(j, allocator);
+
+				cache_miss_diff = cache_misses_now[i] - cache_misses[i];
+
+				if(cache_miss_diff*30 < bytes/MEM_CACHE_LINE_SIZE)
+					bytes_at_allocator = cache_miss_diff*MEM_CACHE_LINE_SIZE/30;
+				else
+					bytes_at_allocator = 0;
+
+				costs[j] += cost * (bytes-bytes_at_allocator);
+				costs[j] += cost_allocator * bytes_at_allocator;
+			}
+		}
+	}
+}
+
+#ifdef WS_PAPI_PROFILE
+#define mem_cache_misses(th) ((th)->papi_counters[MEM_CACHE_MISS_POS])
+#else
+#define mem_cache_misses(th) 0
+#endif
 #endif /* IN_GCC */
 
 #endif

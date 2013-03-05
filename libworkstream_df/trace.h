@@ -20,7 +20,8 @@
 #define WORKER_STATE_RT_TDEC 4
 #define WORKER_STATE_RT_BCAST 5
 #define WORKER_STATE_RT_INIT 6
-#define WORKER_STATE_MAX 7
+#define WORKER_STATE_RT_ESTIMATE_COSTS 7
+#define WORKER_STATE_MAX 8
 
 typedef struct worker_event {
   uint64_t time;
@@ -37,6 +38,8 @@ typedef struct worker_event {
       uint16_t type;
       uint64_t creation_timestamp;
       uint64_t ready_timestamp;
+      uint64_t cache_misses;
+      uint64_t allocator_cache_misses;
       uint32_t size;
     } texec;
 
@@ -63,7 +66,7 @@ struct wstream_df_thread;
 
 void trace_init(struct wstream_df_thread* cthread);
 void trace_event(struct wstream_df_thread* cthread, unsigned int type);
-void trace_task_exec_start(struct wstream_df_thread* cthread, unsigned int from_node, unsigned int type, uint64_t creation_timestamp, uint64_t ready_timestamp, uint32_t size);
+void trace_task_exec_start(struct wstream_df_thread* cthread, unsigned int from_node, unsigned int type, uint64_t creation_timestamp, uint64_t ready_timestamp, uint32_t size, uint64_t cache_misses, uint64_t allocator_cache_misses);
 void trace_task_exec_end(struct wstream_df_thread* cthread);
 void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
 void trace_state_restore(struct wstream_df_thread* cthread);
@@ -82,7 +85,7 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
 
 #define trace_init(cthread)  do { } while(0)
 #define trace_task_exec_end(cthread) do { } while(0)
-#define trace_task_exec_start(cthread, from_node, type, creation_timestamp, ready_timestamp, size) do { } while(0)
+#define trace_task_exec_start(cthread, from_node, type, creation_timestamp, ready_timestamp, size, cache_misses, allocator_cache_misses) do { } while(0)
 #define trace_event(cthread, type) do { } while(0)
 #define trace_state_change(cthread, state) do { } while(0)
 #define trace_steal(cthread, src, size) do { } while(0)

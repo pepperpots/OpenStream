@@ -16,7 +16,8 @@ static const char* state_names[] = {
   "resdep",
   "tdec",
   "broadcast",
-  "init"
+  "init",
+  "estimate_costs"
 };
 
 void trace_init(struct wstream_df_thread* cthread)
@@ -34,7 +35,8 @@ void trace_event(wstream_df_thread_p cthread, unsigned int type)
 }
 
 void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, unsigned int type,
-			   uint64_t creation_timestamp, uint64_t ready_timestamp, uint32_t size)
+			   uint64_t creation_timestamp, uint64_t ready_timestamp, uint32_t size,
+			   uint64_t cache_misses, uint64_t allocator_cache_misses)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
@@ -43,6 +45,8 @@ void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, 
   cthread->events[cthread->num_events].texec.creation_timestamp = creation_timestamp;
   cthread->events[cthread->num_events].texec.ready_timestamp = ready_timestamp;
   cthread->events[cthread->num_events].texec.size = size;
+  cthread->events[cthread->num_events].texec.cache_misses = cache_misses;
+  cthread->events[cthread->num_events].texec.allocator_cache_misses = allocator_cache_misses;
   cthread->events[cthread->num_events].type = WQEVENT_START_TASKEXEC;
   cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
@@ -257,6 +261,8 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   uint64_t histogram_rtet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_size[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t histogram_otherstates[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_misses[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
+  uint64_t histogram_allocator_misses[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
   uint64_t curr_bin;
   int64_t state_duration;
   int64_t duration_other_states;
@@ -278,6 +284,8 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
   memset(histogram_rtet, 0, sizeof(histogram_rtet));
   memset(histogram_size, 0, sizeof(histogram_size));
   memset(histogram_otherstates, 0, sizeof(histogram_otherstates));
+  memset(histogram_misses, 0, sizeof(histogram_misses));
+  memset(histogram_allocator_misses, 0, sizeof(histogram_allocator_misses));
 
   for(i = worker_start; i < worker_end; i++) {
     idx_start = -1;
@@ -311,6 +319,8 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	histogram_ctrt[idx_hist][common_level][steal_type] += create_to_ready_time;
 	histogram_size[idx_hist][common_level][steal_type] += th->events[idx_start].texec.size;
 	histogram_otherstates[idx_hist][common_level][steal_type] += duration_other_states;
+	histogram_misses[idx_hist][common_level][steal_type] += th->events[idx_start].texec.cache_misses;
+	histogram_allocator_misses[idx_hist][common_level][steal_type] += th->events[idx_start].texec.allocator_cache_misses;
 
 	idx_start = idx_end;
       }
@@ -371,6 +381,16 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 	fprintf(fp, "# %d: Average frame size [bytes] (%s, %s)\n",
 		i, mem_level_name(level),
 		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Misses (sum) on writing nodes since first write (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
+
+	i++;
+	fprintf(fp, "# %d: Misses on allocating node since task creation (%s, %s)\n",
+		i, mem_level_name(level),
+		steal_type_str(steal_type));
       }
   }
 
@@ -381,7 +401,7 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 
     for(level = 0; level < MEM_NUM_LEVELS; level++) {
       for(steal_type = 0; steal_type < 2; steal_type++) {
-	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf %"PRIu64" %Lf %Lf %Lf %Lf %Lf ",
+	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf %"PRIu64" %Lf %Lf %Lf %Lf %Lf %Lf %Lf ",
 		histogram[i][level][steal_type],
 		100.0 * ((long double)histogram[i][level][steal_type]) / ((long double)num_tasks),
 		histogram_dur[i][level][steal_type],
@@ -391,9 +411,9 @@ void dump_task_duration_histogram_worker(int worker_start, int worker_end,
 		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
 		histogram[i][level][steal_type] != 0 ? ((long double)histogram_rtet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
 		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctrt[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_size[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0);
-
-	printf("hg_size[%d] = %"PRIu64"\n", i, histogram_size[i][level][steal_type]);
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_size[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_misses[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
+		histogram[i][level][steal_type] != 0 ? ((long double)histogram_allocator_misses[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0);
       }
     }
 
