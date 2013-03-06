@@ -22,6 +22,7 @@ static __thread barrier_p current_barrier = NULL;
 
 static wstream_df_thread_p wstream_df_worker_threads;
 static int num_workers;
+static int* wstream_df_worker_cpus;
 
 #ifdef _PHARAON_MODE
 static ws_ctx_t master_ctx;
@@ -206,7 +207,7 @@ static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
-  int i, j, level;
+  int i, level;
   wstream_df_thread_p cthread = current_thread;
   unsigned int min_worker;
   unsigned long long min_costs;
@@ -214,6 +215,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
   unsigned long long xfer_costs[MAX_CPUS];
   int fp_size;
   int curr_owner;
+  int cpu;
+  int allocator_id, allocator_cpu, worker_id;
 
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
@@ -225,10 +228,10 @@ tdecrease_n (void *data, size_t n, bool is_write)
     }
 
   if(is_write) {
-    inc_wqueue_counter(&fp->bytes_cpu[cthread->worker_id], n);
+    inc_wqueue_counter(&fp->bytes_cpu[cthread->cpu], n);
 
-    if(fp->cache_misses[cthread->worker_id] == 0)
-      fp->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
+    if(fp->cache_misses[cthread->cpu] == 0)
+      fp->cache_misses[cthread->cpu] = mem_cache_misses(cthread);
   }
 
   int sc = 0;
@@ -249,14 +252,27 @@ tdecrease_n (void *data, size_t n, bool is_write)
 #if ALLOW_PUSHES
       trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
       long long cache_misses_now[MAX_CPUS];
-      for(i = 0; i < MAX_CPUS; i++)
-	cache_misses_now[i] = mem_cache_misses(&wstream_df_worker_threads[i]);
+      memset(cache_misses_now, 0, sizeof(cache_misses_now));
 
-      mem_estimate_frame_transfer_costs(cthread->worker_id, fp->bytes_cpu, fp->cache_misses, cache_misses_now, wstream_allocator_of(fp), xfer_costs);
+      for(worker_id = 0; worker_id < num_workers; worker_id++) {
+	cpu = worker_id_to_cpu(worker_id);
+	cache_misses_now[cpu] = mem_cache_misses(&wstream_df_worker_threads[worker_id]);
+      }
+
+      allocator_id = wstream_allocator_of(fp);
+      allocator_cpu = worker_id_to_cpu(allocator_id);
+
+      mem_estimate_frame_transfer_costs(cthread->cpu,
+					fp->bytes_cpu,
+					fp->cache_misses,
+					cache_misses_now,
+					allocator_cpu,
+					xfer_costs);
 
       if(cthread->work_deque.bottom - cthread->work_deque.top > 20) {
 	cthread->rands = cthread->rands * 1103515245 + 12345;
-	xfer_costs[(cthread->rands >> 16) % num_workers] = 0;
+	cpu = worker_id_to_cpu((cthread->rands >> 16) % num_workers);
+	xfer_costs[cpu] = 0;
 	xfer_costs[cthread->worker_id] += 100000000;
       }
 
@@ -264,27 +280,29 @@ tdecrease_n (void *data, size_t n, bool is_write)
       min_costs = xfer_costs[cthread->worker_id];
 
       int max_worker = cthread->worker_id;
-      int max_data = fp->bytes_cpu[cthread->worker_id];
+      int max_data = fp->bytes_cpu[cthread->cpu];
 
       /* Which worker has the lowest transfer costs? */
-      for(i = 0; i < MAX_CPUS; i++) {
-	  if(xfer_costs[i] < min_costs) {
-		  min_costs = xfer_costs[i];
-		  min_worker = i;
-	  }
+      for(worker_id = 0; worker_id < num_workers; worker_id++) {
+	cpu = worker_id_to_cpu(worker_id);
 
-	  if(fp->bytes_cpu[i] > max_data) {
-		  max_data = fp->bytes_cpu[i];
-		  max_worker = i;
-	  }
+	if(xfer_costs[cpu] < min_costs) {
+	  min_costs = xfer_costs[cpu];
+	  min_worker = worker_id;
+	}
+
+	if(fp->bytes_cpu[cpu] > max_data) {
+	  max_data = fp->bytes_cpu[cpu];
+	  max_worker = worker_id;
+	}
       }
 
       //min_worker = max_worker;
       trace_state_restore(cthread);
 
       /* Check whether the frame should be pushed somewhere else */
-      if(max_data != 0 && min_worker != cthread->worker_id && mem_lowest_common_level(cthread->worker_id, min_worker) >= PUSH_MIN_MEM_LEVEL) {
-	for(j = 0; j < NUM_PUSH_ATTEMPTS; j++) {
+      if(max_data != 0 && min_worker != cthread->worker_id && mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(min_worker)) >= PUSH_MIN_MEM_LEVEL) {
+	for(i = 0; i < NUM_PUSH_ATTEMPTS; i++) {
 	  cthread->rands = cthread->rands * 1103515245 + 12345;
 	  push_slot = (cthread->rands >> 16)% NUM_PUSH_SLOTS;
 	  curr_owner = fp->last_owner;
@@ -293,8 +311,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
 	  /* Try to push */
 	  if(compare_and_swap((size_t *)&wstream_df_worker_threads[min_worker].pushed_threads[push_slot], 0, (size_t)fp)) {
-
-	    level = mem_lowest_common_level(cthread->worker_id, min_worker);
+	    level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(min_worker));
 	    inc_wqueue_counter(&current_thread->pushes_mem[level], 1);
 
 	    trace_push(cthread, min_worker, fp_size);
@@ -497,11 +514,12 @@ worker_thread (void)
 {
   wstream_df_thread_p cthread = current_thread;
   unsigned int steal_from = 0;
+  unsigned int steal_from_cpu = 0;
   int i, level, attempt, sibling_num;
   unsigned int cpu;
   int last_steal_from = -1;
   uint64_t misses, allocator_misses;
-  int allocator;
+  int allocator, allocator_cpu;
 
   current_barrier = NULL;
 
@@ -536,7 +554,7 @@ worker_thread (void)
 	  if(cthread->own_next_cached_thread == NULL)
 	    cthread->own_next_cached_thread = import;
 	  else {
-	    if(import->cache_misses[cthread->worker_id] > cthread->own_next_cached_thread->cache_misses[cthread->worker_id]) {
+	    if(import->cache_misses[cthread->cpu] > cthread->own_next_cached_thread->cache_misses[cthread->cpu]) {
 	      cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
 	      cthread->own_next_cached_thread = import;
 	    } else {
@@ -581,12 +599,16 @@ worker_thread (void)
 		{
 		  cthread->rands = cthread->rands * 1103515245 + 12345;
 		  sibling_num = (cthread->rands >> 16) % mem_cores_at_level(level);
-		  steal_from = mem_nth_sibling_at_level(level, cthread->worker_id, sibling_num);
-		  fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+		  steal_from_cpu = mem_nth_sibling_at_level(level, cthread->cpu, sibling_num);
 
-		  if(fp == NULL) {
-		    inc_wqueue_counter(&cthread->steals_fails, 1);
-		    last_steal_from = -1;
+		  if(cpu_used(steal_from_cpu)) {
+		    steal_from = cpu_to_worker_id(steal_from_cpu);
+		    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+
+		    if(fp == NULL) {
+		      inc_wqueue_counter(&cthread->steals_fails, 1);
+		      last_steal_from = -1;
+		    }
 		  }
 		}
 	    }
@@ -610,16 +632,17 @@ worker_thread (void)
 	    {
 	      if(fp->bytes_cpu[cpu])
 		{
-		  level = mem_lowest_common_level(cthread->worker_id, cpu);
+		  level = mem_lowest_common_level(cthread->cpu, cpu);
 		  inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu[cpu]);
-		  inc_transfer_matrix_entry(cthread->worker_id, cpu, fp->bytes_cpu[cpu]);
+		  inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu[cpu]);
 
-		  misses += mem_cache_misses(&wstream_df_worker_threads[cpu]) - fp->cache_misses[cpu];
+		  misses += mem_cache_misses(&wstream_df_worker_threads[cpu_to_worker_id(cpu)]) - fp->cache_misses[cpu];
 		}
 	    }
 
 	  allocator = wstream_allocator_of(fp);
-	  allocator_misses = mem_cache_misses(&wstream_df_worker_threads[allocator]) - fp->cache_misses[allocator];
+	  allocator_cpu = worker_id_to_cpu(allocator);
+	  allocator_misses = mem_cache_misses(&wstream_df_worker_threads[allocator]) - fp->cache_misses[allocator_cpu];
 
 	  wqueue_counters_enter_runtime(current_thread);
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
@@ -767,21 +790,35 @@ openstream_parse_affinity (unsigned short **cpus_out, size_t *num_cpus_out)
   return false;
 }
 
+int worker_id_to_cpu(unsigned int worker_id)
+{
+  return wstream_df_worker_threads[worker_id].cpu;
+}
+
+int cpu_to_worker_id(int cpu)
+{
+  return wstream_df_worker_cpus[cpu];
+}
+
+int cpu_used(int cpu)
+{
+  return (cpu_to_worker_id(cpu) != -1);
+}
+
 static void
 start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 	      unsigned short *cpu_affinities, size_t num_cpu_affinities,
 	      void *(*work_fn) (void *))
 {
   pthread_attr_t thread_attr;
-  int i;
+  unsigned int i;
 
   int id = wstream_df_worker->worker_id;
-  int core;
 
   if (cpu_affinities == NULL)
-    core = id % ncores;
+    wstream_df_worker->cpu = id % ncores;
   else
-    core = cpu_affinities[id % num_cpu_affinities];
+    wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
 
 #if ALLOW_PUSHES
   memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
@@ -795,7 +832,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 #endif
 
 #ifdef _PRINT_STATS
-  printf ("worker %d mapped to core %d\n", id, core);
+  printf ("worker %d mapped to core %d\n", id, wstream_df_worker->cpu);
 #endif
 
   pthread_attr_init (&thread_attr);
@@ -805,7 +842,10 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 
   cpu_set_t cs;
   CPU_ZERO (&cs);
-  CPU_SET (core, &cs);
+  CPU_SET (wstream_df_worker->cpu, &cs);
+
+  assert(!cpu_used(wstream_df_worker->cpu));
+  wstream_df_worker_cpus[wstream_df_worker->cpu] = wstream_df_worker->worker_id;
 
   int errno = pthread_attr_setaffinity_np (&thread_attr, sizeof (cs), &cs);
   if (errno < 0)
@@ -825,11 +865,11 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     wstream_df_fatal ("pthread_getaffinity_np error: %s\n", strerror (errno));
 
   for (i = 0; i < CPU_SETSIZE; i++)
-    if (CPU_ISSET (i, &cs) && i != core)
-      wstream_df_error ("got affinity to core %d, expecting %d\n", i, core);
+    if (CPU_ISSET (i, &cs) && i != wstream_df_worker->cpu)
+      wstream_df_error ("got affinity to core %d, expecting %d\n", i, wstream_df_worker->cpu);
 
-  if (!CPU_ISSET (core, &cs))
-    wstream_df_error ("no affinity to core %d\n", core);
+  if (!CPU_ISSET (wstream_df_worker->cpu, &cs))
+    wstream_df_error ("no affinity to core %d\n", wstream_df_worker->cpu);
 
   pthread_attr_destroy (&thread_attr);
 }
@@ -889,6 +929,13 @@ void pre_main()
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
 		      num_workers * sizeof (wstream_df_thread_t)))
     wstream_df_fatal ("Out of memory ...");
+
+  if (posix_memalign ((void **)&wstream_df_worker_cpus, 64,
+		      MAX_CPUS * sizeof (unsigned int)))
+    wstream_df_fatal ("Out of memory ...");
+
+  for(i = 0; i < MAX_CPUS; i++)
+    wstream_df_worker_cpus[i] = -1;
 
   ncores = wstream_df_num_cores ();
 

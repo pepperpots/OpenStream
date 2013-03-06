@@ -141,6 +141,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
   unsigned int rands;
+  unsigned int cpu;
 
   WSTREAM_DF_THREAD_SLAB_FIELDS;
   WSTREAM_DF_THREAD_PUSH_FIELDS;
@@ -152,5 +153,9 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 } wstream_df_thread_t, *wstream_df_thread_p;
 
 int wstream_self(void);
+
+int worker_id_to_cpu(unsigned int worker_id);
+int cpu_to_worker_id(int cpu);
+int cpu_used(int cpu);
 
 #endif
