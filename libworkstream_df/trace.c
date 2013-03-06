@@ -31,6 +31,7 @@ void trace_event(wstream_df_thread_p cthread, unsigned int type)
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].type = type;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->num_events++;
 }
 
@@ -48,6 +49,7 @@ void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, 
   cthread->events[cthread->num_events].texec.cache_misses = cache_misses;
   cthread->events[cthread->num_events].texec.allocator_cache_misses = allocator_cache_misses;
   cthread->events[cthread->num_events].type = WQEVENT_START_TASKEXEC;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
 }
@@ -63,6 +65,7 @@ void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].state_change.state = state;
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
 
   cthread->events[cthread->num_events].state_change.previous_state_idx =
     cthread->previous_state_idx;
@@ -76,6 +79,7 @@ void trace_state_restore(wstream_df_thread_p cthread)
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
 
   cthread->events[cthread->num_events].state_change.state =
     cthread->events[cthread->previous_state_idx].state_change.state;
@@ -87,23 +91,27 @@ void trace_state_restore(wstream_df_thread_p cthread)
   cthread->num_events++;
 }
 
-void trace_steal(wstream_df_thread_p cthread, unsigned int src, unsigned int size)
+void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
-  cthread->events[cthread->num_events].steal.src = src;
+  cthread->events[cthread->num_events].steal.src_worker = src_worker;
+  cthread->events[cthread->num_events].steal.src_cpu = src_cpu;
   cthread->events[cthread->num_events].steal.size = size;
   cthread->events[cthread->num_events].type = WQEVENT_STEAL;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->num_events++;
 }
 
-void trace_push(wstream_df_thread_p cthread, unsigned int dst, unsigned int size)
+void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
-  cthread->events[cthread->num_events].push.dst = dst;
+  cthread->events[cthread->num_events].push.dst_worker = dst_worker;
+  cthread->events[cthread->num_events].push.dst_cpu = dst_cpu;
   cthread->events[cthread->num_events].push.size = size;
   cthread->events[cthread->num_events].type = WQEVENT_PUSH;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->num_events++;
 }
 
@@ -683,7 +691,7 @@ int conditional_fprintf(int do_dump, FILE* fp, const char *format, ...)
 }
 
 /* Dumps worker events to a file in paraver format. */
-void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+void dump_events(int num_workers, int num_cpus, wstream_df_thread_p wstream_df_worker_threads)
 {
   unsigned int i, k;
   wstream_df_thread_p th;
@@ -713,7 +721,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 	  now->tm_hour,
 	  now->tm_min,
 	  max_time-min_time,
-	  num_workers,
+	  num_cpus,
 	  num_workers);
 
   /* Dump events and states */
@@ -737,7 +745,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 
 	    /* Not the first state change, so using last_state_idx is safe */
 	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
-		    (th->worker_id+1),
+		    th->events[k].cpu+1,
 		    (th->worker_id+1),
 		    th->events[last_state_idx].time-min_time,
 		    th->events[k].time-min_time,
@@ -749,7 +757,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 #ifdef TRACE_RT_INIT_STATE
 	  /* First state change, by default the initial state is "initialization" */
 	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
-		    (th->worker_id+1),
+		    th->events[k].cpu+1,
 		    (th->worker_id+1),
 		    (uint64_t)0,
 		    th->events[k].time-min_time,
@@ -757,7 +765,7 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 #else
 	    /* First state change, by default the initial state is "seeking" */
 	    conditional_fprintf(do_dump, fp, "1:%d:1:1:%d:%"PRIu64":%"PRIu64":%d\n",
-		    (th->worker_id+1),
+		    th->events[k].cpu+1,
 		    (th->worker_id+1),
 		    (uint64_t)0,
 		    th->events[k].time-min_time,
@@ -771,11 +779,11 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 	} else if(th->events[k].type == WQEVENT_STEAL) {
 	  /* Steal events (dumped as communication) */
 	  conditional_fprintf(do_dump, fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
-		  th->events[k].steal.src+1,
-		  th->events[k].steal.src+1,
+		  th->events[k].steal.src_cpu+1,
+		  th->events[k].steal.src_worker+1,
 		  th->events[k].time-min_time,
 		  th->events[k].time-min_time,
-		  (th->worker_id+1),
+		  th->events[k].cpu+1,
 		  (th->worker_id+1),
 		  th->events[k].time-min_time,
 		  th->events[k].time-min_time,
@@ -783,19 +791,19 @@ void dump_events(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 	} else if(th->events[k].type == WQEVENT_STEAL) {
 	  /* Push events (dumped as communication) */
 	  conditional_fprintf(do_dump, fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
-		  (th->worker_id+1),
+		  th->events[k].cpu+1,
 		  (th->worker_id+1),
 		  th->events[k].time-min_time,
 		  th->events[k].time-min_time,
-		  th->events[k].push.dst+1,
-		  th->events[k].push.dst+1,
+		  th->events[k].push.dst_cpu+1,
+		  th->events[k].push.dst_worker+1,
 		  th->events[k].time-min_time,
 		  th->events[k].time-min_time,
 		  th->events[k].push.size);
 	} else if(th->events[k].type == WQEVENT_TCREATE) {
 	  /* Tcreate event (simply dumped as an event) */
 	  conditional_fprintf(do_dump, fp, "2:%d:1:1:%d:%"PRIu64":%d:1\n",
-		  (th->worker_id+1),
+		  th->events[k].cpu+1,
 		  (th->worker_id+1),
 		  th->events[k].time-min_time,
 		  WQEVENT_TCREATE);

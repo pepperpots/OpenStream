@@ -314,7 +314,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	    level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(min_worker));
 	    inc_wqueue_counter(&current_thread->pushes_mem[level], 1);
 
-	    trace_push(cthread, min_worker, fp_size);
+	    trace_push(cthread, min_worker, worker_id_to_cpu(min_worker), fp_size);
 	    trace_state_restore(cthread);
 	    return;
 	  }
@@ -616,7 +616,7 @@ worker_thread (void)
 	  if(fp != NULL)
 	    {
 	      inc_wqueue_counter(&cthread->steals_mem[level], 1);
-	      trace_steal(cthread, steal_from, fp->size);
+	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
 	      fp->steal_type = STEAL_TYPE_STEAL;
 	      last_steal_from = steal_from;
 	      fp->last_owner = steal_from;
@@ -1004,7 +1004,7 @@ void post_main()
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
 
-  dump_events(num_workers, wstream_df_worker_threads);
+  dump_events(num_workers, wstream_df_num_cores(), wstream_df_worker_threads);
   dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
   dump_average_task_duration_summary(num_workers, wstream_df_worker_threads);
   dump_average_task_duration(1000, num_workers, wstream_df_worker_threads);
