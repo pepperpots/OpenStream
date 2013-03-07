@@ -1,0 +1,7 @@
+all: mem_level_names
+
+mem_level_names: mem_level_names.c ../install/lib64/libwstream_df.so
+	gcc -std=c99 -D_GNU_SOURCE -o $@ $<
+
+clean:
+	rm mem_level_names

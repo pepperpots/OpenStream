@@ -3,6 +3,24 @@
 GNUPLOT_MAJOR=$(gnuplot --version | awk '{ print $2; }' | awk -F. '{ print $1; }')
 GNUPLOT_MINOR=$(gnuplot --version | awk '{ print $2; }' | awk -F. '{ print $2; }')
 
+MEM_LEVEL_NAMES=$(dirname $0)/mem_level_names
+
+if [ ! -x "$MEM_LEVEL_NAMES" ]
+then
+    make -C $(dirname $0) -f Makefile.mem_level_names
+fi
+
+STEAL_COUNTERS_BY_LEVEL=""
+PUSH_COUNTERS_BY_LEVEL=""
+BYTE_COUNTERS_BY_LEVEL=""
+
+for LEVEL_NAME in $($MEM_LEVEL_NAMES)
+do
+    STEAL_COUNTERS_BY_LEVEL="$STEAL_COUNTERS_BY_LEVEL steals_$LEVEL_NAME"
+    PUSH_COUNTERS_BY_LEVEL="$PUSH_COUNTERS_BY_LEVEL pushes_$LEVEL_NAME"
+    BYTE_COUNTERS_BY_LEVEL="$BYTE_COUNTERS_BY_LEVEL bytes_$LEVEL_NAME"
+done
+
 if [ $GNUPLOT_MAJOR -lt 4 -o \( $GNUPLOT_MAJOR -eq 4 -a $GNUPLOT_MINOR -lt 6 \) ]
 then
     echo "This script needs gnuplot version 4.6 or higher" >&2
@@ -77,9 +95,10 @@ fi
 
 mv wqueue_matrix.out $CONFIG_NAME/wqueue_matrix.out
 
-for type in pushes_samel2 pushes_samel3 pushes_remote \
-    steals_owncached steals_ownqueue steals_samel2 steals_samel3 steals_remote steals_pushed \
-    bytes_l1 bytes_l2 bytes_l3 bytes_rem \
+for type in $PUSH_COUNTERS_BY_LEVEL \
+    $STEAL_COUNTERS_BY_LEVEL \
+    $BYTE_COUNTERS_BY_LEVEL \
+    steals_owncached steals_ownqueue steals_pushed \
     tasks_executed tasks_created \
     slab_bytes slab_refills slab_allocations slab_frees slab_hits slab_toobig slab_toobig_frees slab_freed_bytes slab_toobig_freed_bytes
 do
@@ -149,17 +168,26 @@ fi
 
 NUM_TASKS=$(echo "0" $(cat $CONFIG_NAME/all-cpus/data/tasks_executed.out | awk '{print $2;}' | sed 's/^/+ /') "0" | bc)
 
-MAX_TASKS=$(cat $CONFIG_NAME/all-cpus/data/{steals_owncached,steals_ownqueue,steals_samel2,steals_samel3,steals_remote,steals_pushed}.out | \
-    awk '{print $2;}' | awk '$0>x{x=$0};END{print x}')
+FILES="$CONFIG_NAME/all-cpus/data/steals_owncached.out $CONFIG_NAME/all-cpus/data/steals_ownqueue.out $CONFIG_NAME/all-cpus/data/steals_pushed.out"
+for CTR in $STEAL_COUNTERS_BY_LEVEL
+do
+    FILES="$FILES $CONFIG_NAME/all-cpus/data/$CTR.out"
+done
+MAX_TASKS=$(cat $FILES | awk '{print $2;}' | awk '$0>x{x=$0};END{print x}')
 
-MAX_BYTES=$(cat $CONFIG_NAME/all-cpus/data/{bytes_l1,bytes_l2,bytes_l3,bytes_rem}.out | \
-    awk '{print $2;}' | awk '$0>x{x=$0};END{print x}')
+FILES=""
+for CTR in $BYTE_COUNTERS_BY_LEVEL
+do
+    FILES="$FILES $CONFIG_NAME/all-cpus/data/$CTR.out"
+done
+MAX_BYTES=$(cat $FILES | awk '{print $2;}' | awk '$0>x{x=$0};END{print x}')
 
-for type in pushes_samel2 pushes_samel3 pushes_remote \
-    steals_pushed steals_owncached steals_ownqueue steals_samel2 steals_samel3 steals_remote \
-    bytes_l1 bytes_l2 bytes_l3 bytes_rem tasks_executed tasks_created \
-    slab_bytes slab_refills slab_allocations slab_frees slab_hits slab_toobig slab_toobig_frees slab_freed_bytes slab_toobig_freed_bytes \
-    $IBS_COUNTERS
+for type in $PUSH_COUNTERS_BY_LEVEL \
+    $STEAL_COUNTERS_BY_LEVEL \
+    $BYTE_COUNTERS_BY_LEVEL \
+    steals_pushed steals_owncached steals_ownqueue \
+    tasks_executed tasks_created \
+    slab_bytes slab_refills slab_allocations slab_frees slab_hits slab_toobig slab_toobig_frees slab_freed_bytes slab_toobig_freed_bytes $IBS_COUNTERS
 do
     TYPE_PREFIX=$(echo -n $type | sed 's/\([^_]*\)_.*/\1/')
     if [ $TYPE_PREFIX = "steals" -o $TYPE_PREFIX = "pushes" -o $TYPE_PREFIX = "tasks" ]
