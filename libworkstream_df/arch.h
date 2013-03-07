@@ -2,6 +2,10 @@
 #define ARCH_H
 
 #include <stdint.h>
+#include <sched.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <stdbool.h>
 
 #define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
 
@@ -140,4 +144,14 @@ store_conditional (volatile size_t *ptr, size_t value)
 }
 #endif
 
+/* Count the number of cores this process has.  */
+static inline int
+wstream_df_num_cores ()
+{
+  cpu_set_t cs;
+  CPU_ZERO (&cs);
+  sched_getaffinity (getpid (), sizeof (cs), &cs);
+
+  return CPU_COUNT (&cs);
+}
 #endif

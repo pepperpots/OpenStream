@@ -497,17 +497,6 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 /* Threads and scheduling.  */
 /***************************************************************************/
 
-/* Count the number of cores this process has.  */
-static int
-wstream_df_num_cores ()
-{
-  cpu_set_t cs;
-  CPU_ZERO (&cs);
-  sched_getaffinity (getpid (), sizeof (cs), &cs);
-
-  return CPU_COUNT (&cs);
-}
-
 int compare_frame_costs(const void* a, const void* b)
 {
   const wstream_df_frame_cost_p fca = (const wstream_df_frame_cost_p)a;
