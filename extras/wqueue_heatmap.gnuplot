@@ -5,7 +5,7 @@ set tic scale 0
 set palette defined (0 1.0 1.0 1.0, 0 0 0 0)
 set view map
 
-set title "Workqueue data transfers between workers [bytes]"
+set title "Workqueue data transfers between CPUs [bytes]"
 set xlabel "Consumer"
 set ylabel "Producer"
 splot '@@INFILE_MATRIX@@' matrix with image title ""
