@@ -508,6 +508,19 @@ wstream_df_num_cores ()
   return CPU_COUNT (&cs);
 }
 
+int compare_frame_costs(const void* a, const void* b)
+{
+  const wstream_df_frame_cost_p fca = (const wstream_df_frame_cost_p)a;
+  const wstream_df_frame_cost_p fcb = (const wstream_df_frame_cost_p)b;
+
+  if(fca->cost < fcb->cost)
+    return -1;
+  else if(fca->cost > fcb->cost)
+    return 1;
+
+  return 0;
+}
+
 __attribute__((__optimize__("O1")))
 static void
 worker_thread (void)
@@ -541,6 +554,7 @@ worker_thread (void)
       wstream_df_frame_p fp = NULL;
 
 #if ALLOW_PUSHES
+   #if !ALLOW_PUSH_REORDER
       wstream_df_frame_p import;
       int imported = 0;
 
@@ -567,6 +581,52 @@ worker_thread (void)
 	  inc_wqueue_counter(&cthread->steals_pushed, 1);
 	}
       }
+   #else
+      wstream_df_frame_p import;
+      int insert_pos = 0;
+      memset(cthread->push_reorder_slots, 0, sizeof(cthread->push_reorder_slots));
+
+      for(i = 0; i < NUM_PUSH_SLOTS; i++) {
+	if((import = cthread->pushed_threads[i]) != NULL) {
+	  cthread->push_reorder_slots[insert_pos].frame = import;
+	  cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+	  cthread->pushed_threads[i] = NULL;
+	  insert_pos++;
+	}
+      }
+
+      if(cthread->own_next_cached_thread && insert_pos < NUM_PUSH_REORDER_SLOTS) {
+	import = cthread->own_next_cached_thread;
+	cthread->push_reorder_slots[insert_pos].frame = import;
+	cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+	insert_pos++;
+	cthread->own_next_cached_thread = NULL;
+      }
+
+      if(insert_pos > 0) {
+	trace_state_change(cthread, WORKER_STATE_RT_REORDER);
+	while(insert_pos < NUM_PUSH_REORDER_SLOTS) {
+	  import = cdeque_take(&cthread->work_deque);
+
+	  if(import != NULL) {
+	    cthread->push_reorder_slots[insert_pos].frame = import;
+	    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+	    insert_pos++;
+	  } else {
+	    break;
+	  }
+	}
+
+	qsort(cthread->push_reorder_slots, insert_pos, sizeof(wstream_df_frame_cost_t), compare_frame_costs);
+
+	cthread->own_next_cached_thread = cthread->push_reorder_slots[0].frame;
+
+	for(i = insert_pos-1; i >= 1; i--)
+	  cdeque_push_bottom (&cthread->work_deque, cthread->push_reorder_slots[i].frame);
+
+	trace_state_restore(cthread);
+      }
+   #endif
 #endif
 
       fp = cthread->own_next_cached_thread;

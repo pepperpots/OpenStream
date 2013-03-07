@@ -21,7 +21,8 @@
 #define WORKER_STATE_RT_BCAST 5
 #define WORKER_STATE_RT_INIT 6
 #define WORKER_STATE_RT_ESTIMATE_COSTS 7
-#define WORKER_STATE_MAX 8
+#define WORKER_STATE_RT_REORDER 8
+#define WORKER_STATE_MAX 9
 
 typedef struct worker_event {
   uint64_t time;

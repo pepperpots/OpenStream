@@ -7,6 +7,7 @@ STATES
 5    Broadcast
 6    Thread / runtime initialization
 7    Estimate costs
+8    Reorder push slots
 
 EVENT_TYPE
 0    3    Tcreate

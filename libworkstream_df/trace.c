@@ -17,7 +17,8 @@ static const char* state_names[] = {
   "tdec",
   "broadcast",
   "init",
-  "estimate_costs"
+  "estimate_costs",
+  "reorder"
 };
 
 void trace_init(struct wstream_df_thread* cthread)

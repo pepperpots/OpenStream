@@ -118,8 +118,28 @@ typedef struct barrier
   struct barrier *save_barrier;
 } barrier_t, *barrier_p;
 
+
+typedef struct wstream_df_frame_cost {
+  wstream_df_frame_p frame;
+  unsigned long long cost;
+} wstream_df_frame_cost_t, *wstream_df_frame_cost_p;
+
 #if ALLOW_PUSHES
-  #define WSTREAM_DF_THREAD_PUSH_FIELDS wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)))
+  #define WSTREAM_DF_THREAD_PUSH_SLOTS wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)))
+
+  #if ALLOW_PUSH_REORDER
+    #if NUM_PUSH_SLOTS > NUM_PUSH_REORDER_SLOTS
+      #error "NUM_PUSH_REORDER_SLOTS must be greater or equal to NUM_PUSH_REORDER_SLOTS"
+    #endif
+
+    #define WSTREAM_DF_THREAD_PUSH_REORDER_SLOTS wstream_df_frame_cost_t push_reorder_slots[NUM_PUSH_REORDER_SLOTS]
+  #else
+    #define WSTREAM_DF_THREAD_PUSH_REORDER_SLOTS
+  #endif
+
+  #define WSTREAM_DF_THREAD_PUSH_FIELDS \
+    WSTREAM_DF_THREAD_PUSH_SLOTS; \
+    WSTREAM_DF_THREAD_PUSH_REORDER_SLOTS
 #else
   #define WSTREAM_DF_THREAD_PUSH_FIELDS
 #endif
