@@ -523,6 +523,7 @@ void dump_average_task_duration(unsigned int num_intervals, int num_workers, wst
   int curr_worker = -1;
   uint64_t min_texec_time;
   uint64_t duration = 0;
+  uint64_t duration_gross = 0;
   int64_t texec_duration;
   uint64_t min_time = get_min_time(num_workers, wstream_df_worker_threads);
   uint64_t max_time = get_max_time(num_workers, wstream_df_worker_threads);
@@ -567,11 +568,13 @@ void dump_average_task_duration(unsigned int num_intervals, int num_workers, wst
 	if(th->events[curr_idx[curr_worker]].time > interval_end
 	   && tasks_in_interval > 0)
 	  {
-	    fprintf(fp, "%"PRIu64" %"PRIu64"\n",
+	    fprintf(fp, "%"PRIu64" %"PRIu64" %"PRIu64"\n",
 		    (interval_end - interval_length/2) - min_time,
-		    duration/(uint64_t)tasks_in_interval);
+		    duration/(uint64_t)tasks_in_interval,
+		    duration_gross/(uint64_t)tasks_in_interval);
 	    interval_end += interval_length;
 	    duration = 0;
+	    duration_gross = 0;
 	    tasks_in_interval = 0;
 	  }
 
@@ -579,6 +582,8 @@ void dump_average_task_duration(unsigned int num_intervals, int num_workers, wst
 	tmp_idx = curr_idx[curr_worker];
 	while((texec_duration = get_state_duration(th, &tmp_idx, end_idx)) != -1)
 	    duration += texec_duration;
+
+	duration_gross += th->events[end_idx].time - th->events[curr_idx[curr_worker]].time;
 
 	/* Update worker's index */
 	curr_idx[curr_worker] = get_next_event(th, end_idx, WQEVENT_START_TASKEXEC);
@@ -591,9 +596,10 @@ void dump_average_task_duration(unsigned int num_intervals, int num_workers, wst
 
   /* Dump last interval */
   if(tasks_in_interval > 0) {
-    fprintf(fp, "%"PRIu64" %"PRIu64"\n",
+    fprintf(fp, "%"PRIu64" %"PRIu64" %"PRIu64"\n",
 	    (interval_end - interval_length/2) - min_time,
-	    duration/(uint64_t)tasks_in_interval);
+	    duration/(uint64_t)tasks_in_interval,
+	    duration_gross/(uint64_t)tasks_in_interval);
   }
 
   fclose(fp);
