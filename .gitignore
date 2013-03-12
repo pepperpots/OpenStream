@@ -70,4 +70,6 @@ examples/strassen/x86_strassen_nofences
 *.out
 examples/fmradio/*.raw
 examples/fmradio/*.txt
+examples/mergesort/mergesort
+examples/mergesort/stream_df_mergesort
 *.c.*t*
