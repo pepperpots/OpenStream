@@ -4,6 +4,12 @@ MEM_CST_TESTS_X86 = x86_knapsack x86_knapsack_c11 x86_knapsack_dumbc11 x86_knaps
 CFLAGS_X86 = $(CFLAGS) -fopenmp -O3 -ffast-math -std=c99 -Wall -Wextra -I../../libworkstream_df/ -D_GNU_SOURCE -fPIC
 LDFLAGS_X86 = $(LDFLAGS) -lm
 
+ifneq ($(wildcard ../../install/bin/papi_avail),)
+PAPI_DIR = ../../install/
+CFLAGS_X86 += -I$(PAPI_DIR)/include
+LDFLAGS_X86 += -L$(PAPI_DIR)/lib -lpapi
+endif
+
 all: $(MEM_CST_TESTS_X86)
 
 clean:

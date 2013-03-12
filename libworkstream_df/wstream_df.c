@@ -269,13 +269,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
 					allocator_cpu,
 					xfer_costs);
 
-      if(cthread->work_deque.bottom - cthread->work_deque.top > 20) {
-	cthread->rands = cthread->rands * 1103515245 + 12345;
-	cpu = worker_id_to_cpu((cthread->rands >> 16) % num_workers);
-	xfer_costs[cpu] = 0;
-	xfer_costs[cthread->worker_id] += 100000000;
-      }
-
       min_worker = cthread->worker_id;
       min_costs = xfer_costs[cthread->worker_id];
 
