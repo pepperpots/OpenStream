@@ -38,7 +38,7 @@ int main(int argc, char** argv)
   int option;
   int check = 0;
 
-  while ((option = getopt(argc, argv, "n:s:hc")) != -1)
+  while ((option = getopt(argc, argv, "s:hc")) != -1)
     {
       switch(option)
 	{
