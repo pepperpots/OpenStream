@@ -356,8 +356,7 @@ stream_ntaps_filter_ffd (ntaps_filter_conf* conf, int size, int decimation,
 
 void
 stream_source_raw_data (float *data_in, int in_samples, int grain8, int grain16, int iter, int pos,
-			float in_raw __attribute__((stream_ref)),
-			int serializer __attribute__((stream_ref)))
+			float in_raw __attribute__((stream_ref)))
 {
   float in_raw_v[grain16+2];
   int sin, sout, i;
@@ -370,7 +369,7 @@ stream_source_raw_data (float *data_in, int in_samples, int grain8, int grain16,
 
   /* 0.0 case.  */
   if (iter == 0 && pos == 0)
-#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2]) input (serializer >> sin) output (serializer << sout)
+#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2])
     {
       /* Peeled first iteration.  */
       in_raw_v[0] = 0.0;
@@ -385,7 +384,7 @@ stream_source_raw_data (float *data_in, int in_samples, int grain8, int grain16,
     }
   /* wrap-around history case.  */
   else if (iter != 0 && pos == 0)
-#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2]) input (serializer >> sin) output (serializer << sout)
+#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2])
     {
       /* Peeled first iteration.  */
       in_raw_v[0] = data_in[in_samples - 2];
@@ -400,7 +399,7 @@ stream_source_raw_data (float *data_in, int in_samples, int grain8, int grain16,
     }
   /* Default case.  */
   else /* Importantly: pos != 0  */
-#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2]) input (serializer >> sin) output (serializer << sout)
+#pragma omp task firstprivate (data_in) output (in_raw << in_raw_v[grain16+2])
     for (i = 0; i <= grain8; i++)
       {
 	in_raw_v[2*i] = data_in[pos + 2*i - 2];
@@ -539,7 +538,10 @@ main(int argc, char* argv[])
     float fm_qd_buffer __attribute__((stream)), fm_qd_buffer_v[grain8];
     float ffd_buffer __attribute__((stream)), ffd_buffer_v[grain8];
 
-    int serializer[7] __attribute__((stream));
+    int serializer[6] __attribute__((stream));
+    int finalizer __attribute__((stream));
+    int finalizer_view_size = in_samples / grain16;
+    int finalizer_view[finalizer_view_size];
 
     int sin, sout;
 
@@ -547,26 +549,31 @@ main(int argc, char* argv[])
 
     gettimeofday (start, NULL);
 
-    for (i = 0; i < 7; ++i)
+    for (i = 0; i < 6; ++i)
 #pragma omp task output (serializer[i] << sout)
       sout = 0;
 
 
     for (j = 0; j < niter; ++j)
       {
+	if (j != 0)
+	  {
+#pragma omp tick (finalizer >> finalizer_view_size)
+	  }
+
 	for (k = 0; k < in_samples; k += grain16)
 	  {
-	    stream_source_raw_data (data_in, in_samples, grain8, grain16, j, k, in_raw, serializer[0]);
+	    stream_source_raw_data (data_in, in_samples, grain8, grain16, j, k, in_raw);
 
 #pragma omp task input (in_raw >> in_raw_v[grain16+2]) output (fm_qd_buffer << fm_qd_buffer_v[grain8])
 	    for (i = 0; i < grain8; i++)
 	      fm_quad_demod (&in_raw_v[2*i], &fm_qd_buffer_v[i]);
 
 
-	    stream_ntaps_filter_ffd (lp_11_conf_p, grain8, 1, fm_qd_buffer, band_11, serializer[1]);
-	    stream_ntaps_filter_ffd (lp_12_conf_p, grain8, 1, fm_qd_buffer, band_12, serializer[2]);
-	    stream_ntaps_filter_ffd (lp_21_conf_p, grain8, 1, fm_qd_buffer, band_21, serializer[3]);
-	    stream_ntaps_filter_ffd (lp_22_conf_p, grain8, 1, fm_qd_buffer, band_22, serializer[4]);
+	    stream_ntaps_filter_ffd (lp_11_conf_p, grain8, 1, fm_qd_buffer, band_11, serializer[0]);
+	    stream_ntaps_filter_ffd (lp_12_conf_p, grain8, 1, fm_qd_buffer, band_12, serializer[1]);
+	    stream_ntaps_filter_ffd (lp_21_conf_p, grain8, 1, fm_qd_buffer, band_21, serializer[2]);
+	    stream_ntaps_filter_ffd (lp_22_conf_p, grain8, 1, fm_qd_buffer, band_22, serializer[3]);
 
 #pragma omp task input (band_11 >> band_11_v[grain8], band_12 >> band_12_v[grain8]) output (resume_1 << resume_1_v[grain8])
 	    for (i = 0; i < grain8; i++)
@@ -579,9 +586,9 @@ main(int argc, char* argv[])
 	      multiply_square (resume_1_v[i], resume_2_v[i], &ffd_buffer_v[i]);
 
 
-	    stream_ntaps_filter_ffd (lp_2_conf_p, grain8, 8, fm_qd_buffer, band_2, serializer[5]);
+	    stream_ntaps_filter_ffd (lp_2_conf_p, grain8, 8, fm_qd_buffer, band_2, serializer[4]);
 #pragma omp tick (fm_qd_buffer >> grain8)
-	    stream_ntaps_filter_ffd (lp_3_conf_p, grain8, 8, ffd_buffer, band_3, serializer[6]);
+	    stream_ntaps_filter_ffd (lp_3_conf_p, grain8, 8, ffd_buffer, band_3, serializer[5]);
 #pragma omp tick (ffd_buffer >> grain8)
 
 
@@ -589,7 +596,7 @@ main(int argc, char* argv[])
 	    for (i = 0; i < grain; i++)
 	      stereo_sum (band_2_v[i], band_3_v[i], &output1_v[i], &output2_v[i]);
 
-#pragma omp task input (output1 >> output1_v[grain], output2 >> output2_v[grain])
+#pragma omp task input (output1 >> output1_v[grain], output2 >> output2_v[grain]) output (finalizer)
 	    for (i = 0; i < grain; i++)
 	      {
 		short a, b;
@@ -603,28 +610,29 @@ main(int argc, char* argv[])
 	  }
       }
 
-    for (i = 0; i < 7; ++i)
+    for (i = 0; i < 6; ++i)
       {
 #pragma omp tick (serializer[i])
       }
 
-#pragma omp taskwait
-    gettimeofday (end, NULL);
+#pragma omp task input (finalizer >> finalizer_view[finalizer_view_size])
+    {
+      gettimeofday (end, NULL);
 
-    printf ("%.5f\n", tdiff (end, start));
-  }
+      printf ("%.5f\n", tdiff (end, start));
 
 #if _WITH_OUTPUT
-  int i;
+      int i;
 
-  fwrite (data_out_raw, sizeof (short), out_samples, output_file);
-  for (i = 0; i < out_samples; i += 2)
-    fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
+      fwrite (data_out_raw, sizeof (short), out_samples, output_file);
+      for (i = 0; i < out_samples; i += 2)
+	fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
 
-  fclose (input_file);
-  fclose (output_file);
-  fclose (text_file);
-
+      fclose (input_file);
+      fclose (output_file);
+      fclose (text_file);
+    }
+  }
   return 0;
 }
