@@ -90,4 +90,15 @@ static inline void sort_block(key_t* keys_in, key_t* keys_out, long num_keys)
     memcpy(keys_out, keys_in, num_keys*sizeof(key_t));
 }
 
+/* Check if keys are in ascending order */
+static inline int check_ascending(key_t* keys, long num_keys)
+{
+  for(long i = 1; i < num_keys; i++) {
+    if(keys[i-1] > keys[i])
+      return 0;
+  }
+
+  return 1;
+}
+
 #endif

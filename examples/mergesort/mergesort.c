@@ -89,12 +89,7 @@ int main(int argc, char** argv)
   printf("%.5f\n", tdiff(&end, &start));
 
   if(check) {
-    /* Check if keys are in ascending order */
-    for(long i = 0; i < num_keys; i++) {
-      if(i < num_keys-1)
-	assert(keys_out[i] <= keys_out[i+1]);
-    }
-
+    assert(check_ascending(keys_out, num_keys));
     printf("Check: OK\n");
   }
 
