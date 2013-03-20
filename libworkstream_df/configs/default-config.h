@@ -81,7 +81,7 @@ static inline int mem_level_siblings(unsigned int level, unsigned int a, unsigne
 	if(level == 0)
 		return a == b;
 
-	return 0;
+	return 1;
 }
 
 /* Returns the lowest common level in the memory hierarchy between
