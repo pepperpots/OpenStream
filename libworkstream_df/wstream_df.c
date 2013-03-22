@@ -9,7 +9,7 @@
 
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
-#define _PHARAON_MODE
+//#define _PHARAON_MODE
 
 #include "papi-defs.h"
 
@@ -397,6 +397,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   __compiler_fence;
 
   wstream_alloc(&frame_pointer, 64, size);
+  memset (frame_pointer, 0, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -439,10 +440,19 @@ tdecrease_n (void *data, size_t n)
     {
       wstream_df_thread_p cthread = current_thread;
 
-      if (cthread->own_next_cached_thread != NULL)
-	cdeque_push_bottom (&cthread->work_deque,
-			    (wstream_df_type) cthread->own_next_cached_thread);
-      cthread->own_next_cached_thread = fp;
+      if (fp->work_fn == (void *) 1)
+	{
+	  wstream_free(fp, fp->size);
+	  return;
+	}
+      else
+	{
+	  if (cthread->own_next_cached_thread != NULL)
+	    cdeque_push_bottom (&cthread->work_deque,
+				(wstream_df_type) cthread->own_next_cached_thread);
+	  cthread->own_next_cached_thread = fp;
+ 	  //cdeque_push_bottom (&cthread->work_deque, fp);
+	}
     }
 }
 
@@ -1162,6 +1172,11 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       view->burst = dummy_view->burst;
       view->horizon = dummy_view->horizon;
       view->owner = dummy_view->owner;
+      /* FIXME-apop: this is quite tricky, read views may be impacted
+	 by old variadic write views' overloaded "reached_position"
+	 values.  Fixed for now by clearing the frames on
+	 allocation.  */
+      //view->reached_position = 0;
 
       wstream_df_resolve_dependences ((void *) view, (void *) stream, is_read_view_p);
     }
@@ -1220,6 +1235,8 @@ __builtin_ia32_tick (void *s, size_t burst)
      where to write at least during the producers' execution ... */
   if (cons_queue->active_peek_chain == NULL)
     {
+      wstream_df_frame_p cons_frame;
+
       /* Normally an error, but for OMPSs expansion, we need to allow
 	 it.  */
       /*  wstream_df_fatal ("TICK (%d) matches no PEEK view, which is unsupported at this time.",
@@ -1227,13 +1244,26 @@ __builtin_ia32_tick (void *s, size_t burst)
       */
       /* Allocate a fake view, with a fake data block, that allows to
 	 keep the same dependence resolution algorithm.  */
-      size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size;
-      wstream_alloc(&cons_view, 64, size);
-      memset (cons_view, 0, size);
+      size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size + sizeof (wstream_df_frame_t);
+      wstream_alloc(&cons_frame, 64, size);
+      memset (cons_frame, 0, size);
 
+      /* Avoid one atomic operation by setting the "next" field (which
+        is the SC in the frame) to the size, which means TDEC won't
+        do anything.  */
+      cons_frame->synchronization_counter = burst * stream->elem_size;
+      cons_frame->size = size;
+
+      /* Guard for TDEC: use "work_fn" field as a marker that this
+        frame is not to be considered in optimizations and should be
+        deallocated if it's TDEC'd.  We assume a function pointer
+        cannot be "0x1".  */
+      cons_frame->work_fn = (void *)1;
+
+      cons_view = (wstream_df_view_p) (((char *) cons_frame) + sizeof (wstream_df_frame_t));
       cons_view->horizon = burst * stream->elem_size;
       cons_view->burst = cons_view->horizon;
-      cons_view->owner = cons_view;
+      cons_view->owner = cons_frame;
       cons_view->data = ((char *) cons_view) + sizeof (wstream_df_view_t);
     }
   else
