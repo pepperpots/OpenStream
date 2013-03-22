@@ -174,16 +174,18 @@ int main(int argc, char** argv)
   /* Fill keys_in with random keys */
   init_sequence(keys_in, num_keys);
 
+  printf("Start sorting %ld keys...\n", num_keys);
+
   gettimeofday (&start, NULL);
   PROFILER_NOTIFY_RECORD(&sync);
-  printf("Start sorting %ld keys...\n", num_keys);
 
   /* Sort the array in parallel */
   sort_block_df(keys_in, keys_out, num_keys_log, block_size_log);
 
-  printf("End sorting...\n");
   PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (&end, NULL);
+
+  printf("End sorting...\n");
 
   printf("%.5f\n", tdiff(&end, &start));
 
