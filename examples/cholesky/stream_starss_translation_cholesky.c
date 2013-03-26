@@ -64,26 +64,15 @@
 #include <getopt.h>
 #include <string.h>
 #include <assert.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
-#define _SPEEDUPS 1
-#define _VERIFY 1
+#define _SPEEDUPS 0
+#define _VERIFY 0
 
 #define MAX_CONNECTIONS 1000
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
-static inline bool
-double_equal (double a, double b)
-{
-  return (fabs (a - b) < 1e-7);
-}
 
 /* Mockup implementation of region management, considering here that
    regions are perfectly matching.  */
