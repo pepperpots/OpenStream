@@ -4,6 +4,9 @@ all:
 	$(MAKE) -f extras/Makefile.getdeps
 	$(MAKE) -C examples
 
+paraver_support:
+	$(MAKE) -f extras/Makefile.getdeps osparaver
+
 check:
 	echo "To be implemented"
 
