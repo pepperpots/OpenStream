@@ -1,30 +1,20 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <math.h>
 #include <getopt.h>
 #include <malloc.h>
 #include <assert.h>
 #include <string.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_SPEEDUPS 0
 #define _CHECK_STREAM 0
 #define _CHECK_SEQUENTIAL 0
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-static inline bool
-double_equal (double a, double b)
-{
-  return (abs (a - b) < 1e-7);
-}
 
 static inline void *
 allocate_block (int block_size)
@@ -522,6 +512,7 @@ sequential_factorize (int num_blocks, int block_size,
     }
 }
 
+struct profiler_sync sync;
 
 int
 main (int argc, char* argv[])
@@ -530,18 +521,18 @@ main (int argc, char* argv[])
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
   int option;
-  int i, j, iter;
+  int i;
   int N = 64;
 
-  int numiters = 10;
   int block_size = 8;
 
   FILE *res_file = NULL;
-  FILE *in_file = NULL;
 
   int volatile res = 0;
 
-  while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
+  PROFILER_NOTIFY_PREPARE(&sync);
+
+  while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
       switch(option)
 	{
@@ -553,12 +544,6 @@ main (int argc, char* argv[])
 	  break;
 	case 'b':
 	  block_size = 1 << atoi (optarg);
-	  break;
-	case 'r':
-	  numiters = atoi (optarg);
-	  break;
-	case 'i':
-	  in_file = fopen(optarg, "r");
 	  break;
 	case 'o':
 	  res_file = fopen(optarg, "w");
@@ -620,6 +605,7 @@ main (int argc, char* argv[])
   duplicate (num_blocks, block_size, bckp_data, data);
 
   gettimeofday (start, NULL);
+  PROFILER_NOTIFY_RECORD(&sync);
   stream_factorize (num_blocks, block_size, data, Rstreams, Wstreams, counters);
 
 #pragma omp task input (Wstreams >> final_view[all_blocks][1])
@@ -627,6 +613,7 @@ main (int argc, char* argv[])
     void * seq_data;
     double stream_time, seq_time;
 
+    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (end, NULL);
     stream_time = tdiff (end, start);
 
@@ -670,5 +657,9 @@ main (int argc, char* argv[])
 	    matrix_diff (num_blocks, block_size, bckp_data, seq_data);
 	  }
       }
+
+    PROFILER_NOTIFY_FINISH(&sync);
   }
+
+  return 0;
 }

@@ -3,18 +3,11 @@
 #include <math.h>
 #include <complex.h>
 #include <getopt.h>
-#include <sys/time.h>
 #include <unistd.h>
+#include "../common/sync.h"
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 int
 main (int argc, char **argv)
@@ -29,6 +22,10 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
+
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -56,7 +53,7 @@ main (int argc, char **argv)
 		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		 "  -b <block size power>        Set the block size 1 << <block size power>, default is %d\n"
 		 "  -r <iterations>              Number of iterations\n"
-		 "  -o <output file>             Write data to output file, default is openmp_task_seidel.out\n",
+		 "  -o <output file>             Write data to output file, default is ompss_seidel.out\n",
 		 argv[0], N, block_size);
 	  exit(0);
 	  break;
@@ -100,6 +97,8 @@ main (int argc, char **argv)
     /************ begin kernel *************/
     /***************************************/
     gettimeofday (&start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
+
     for (iter = 0; iter < numiters; iter++)
       for (i = padding + 1; i < N - 1 + padding; i += block_size)
 	for (j = padding + 1; j < N - 1 + padding; j += block_size)
@@ -119,6 +118,7 @@ main (int argc, char **argv)
 
 #pragma omp taskwait
 
+    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (&end, NULL);
     /***************************************/
     /************  end kernel  *************/
@@ -139,5 +139,9 @@ main (int argc, char **argv)
 	    fprintf (res_file, "\n");
 	  }
       }
+
+    PROFILER_NOTIFY_FINISH(&sync);
   }
+
+  return 0;
 }

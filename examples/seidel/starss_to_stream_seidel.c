@@ -1,20 +1,15 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <complex.h>
-
+#include "../common/common.h"
+#include "../common/sync.h"
 #include <getopt.h>
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 /* Simple ad hoc dependence resolver for Seidel.  */
 static inline void
@@ -102,6 +97,8 @@ gauss_seidel (int N, double a[N][N], int block_size)
 }
 
 
+struct profiler_sync sync;
+
 int
 main (int argc, char **argv)
 {
@@ -115,6 +112,8 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -142,7 +141,7 @@ main (int argc, char **argv)
 		 "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		 "  -b <block size power>        Set the block size 1 << <block size power>, default is %d\n"
 		 "  -r <iterations>              Number of iterations\n"
-		 "  -o <output file>             Write data to output file, default is openmp_task_seidel.out\n",
+		 "  -o <output file>             Write data to output file, default is starss_to_stream_seidel.out\n",
 		 argv[0], N, block_size);
 	  exit(0);
 	  break;
@@ -199,6 +198,7 @@ main (int argc, char **argv)
       }
 
     gettimeofday (start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
 
     /* Main kernel start.  ------------------------------------------------------------ */
     for (iter = 0; iter < numiters; iter++)
@@ -258,6 +258,7 @@ main (int argc, char **argv)
 #pragma omp task input (streams[(num_blocks * num_blocks - 1) * 5] >> output) firstprivate (res_file, data, N) firstprivate (start, end)
     {
       gettimeofday (end, NULL);
+      PROFILER_NOTIFY_PAUSE(&sync);
 
       printf ("%.5f\n", tdiff (end, start));
 
@@ -273,6 +274,10 @@ main (int argc, char **argv)
 	      fprintf (res_file, "\n");
 	    }
 	}
+
+      PROFILER_NOTIFY_FINISH(&sync);
     }
   }
+
+  return 0;
 }

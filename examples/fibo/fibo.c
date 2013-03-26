@@ -2,20 +2,13 @@
 #include <stdlib.h>
 #include <math.h>
 #include <complex.h>
-
 #include <getopt.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 int
 fibo (int n)
@@ -30,13 +23,16 @@ int
 main (int argc, char **argv)
 {
   int option;
-  int i, j, iter;
   int n = 15;
 
   int result;
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
+
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:h")) != -1)
     {
@@ -65,11 +61,17 @@ main (int argc, char **argv)
   }
 
   gettimeofday (start, NULL);
+  PROFILER_NOTIFY_RECORD(&sync);
   result = fibo (n);
+  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (end, NULL);
 
   printf ("%.5f\n", tdiff (end, start));
 
   if (_WITH_OUTPUT)
     printf ("Fibo (%d) = %d\n", n, result);
+
+  PROFILER_NOTIFY_FINISH(&sync);
+
+  return 0;
 }

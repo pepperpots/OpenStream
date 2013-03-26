@@ -1,39 +1,32 @@
+#define _POSIX_C_SOURCE 200112L
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <math.h>
 #include <cblas.h>
 #include <getopt.h>
+#include "../common/sync.h"
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
-static inline bool
-double_equal (double a, double b)
-{
-  return (abs (a - b) < 1e-7);
-}
+/* Missing declarations from liblapack */
+int dlarnv_(long *idist, long *iseed, int *n, double *x);
+void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 int
 main(int argc, char *argv[])
 {
   int option;
-  int i, j, iter;
+  int i, iter;
   int size;
 
   int N = 4096;
 
   int numiters = 10;
-  int block_size = 256;
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
@@ -41,6 +34,9 @@ main(int argc, char *argv[])
   double * data;
   int nfo;
   unsigned char lower = 'L';
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:r:i:o:h")) != -1)
     {
@@ -127,7 +123,9 @@ main(int argc, char *argv[])
       memcpy (seq_data, data, size * sizeof (double));
 
       gettimeofday (&sstart[iter], NULL);
+      PROFILER_NOTIFY_RECORD(&sync);
       dpotrf_(&lower, &N, seq_data, &N, &nfo);
+      PROFILER_NOTIFY_PAUSE(&sync);
       gettimeofday (&send[iter], NULL);
 
       free (seq_data);
@@ -140,6 +138,10 @@ main(int argc, char *argv[])
     }
 
   printf ("%.5f \n", seq_time);
+
+  PROFILER_NOTIFY_FINISH(&sync);
+
+  return 0;
 }
 
 

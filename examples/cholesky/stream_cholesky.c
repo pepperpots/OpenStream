@@ -1,30 +1,22 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <math.h>
 #include <cblas.h>
 #include <getopt.h>
 #include <string.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _SPEEDUPS 0
 #define _VERIFY 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
-static inline bool
-double_equal (double a, double b)
-{
-  return (abs (a - b) < 1e-7);
-}
-
+/* Missing declarations from liblapack */
+int dlarnv_(long *idist, long *iseed, int *n, double *x);
+void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 void
 stream_dpotrf (int block_size, int blocks,
@@ -207,7 +199,7 @@ static void
 blockify (int block_size, int blocks, int N,
 	  double *data, double *blocked_data[blocks][blocks])
 {
-  int ii, i, jj, j;
+  int ii, i, jj;
 
   for (ii = 0; ii < blocks; ++ii)
     for (jj = 0; jj < blocks; ++jj)
@@ -221,7 +213,7 @@ int
 main(int argc, char *argv[])
 {
   int option;
-  int i, j, iter;
+  int i, iter;
   int N = 4096;
 
   int numiters = 10;
@@ -229,6 +221,10 @@ main(int argc, char *argv[])
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
+
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
@@ -349,6 +345,7 @@ main(int argc, char *argv[])
 
       /* Only effectively can start once the previous task completes.  */
       gettimeofday (&start[iter], NULL);
+      PROFILER_NOTIFY_RECORD(&sync);
       stream_dpotrf (block_size, blocks, (void *)blocked_data, streams, Rstreams, counters);
 
       for (i = 0; i < num_blocks; ++i)
@@ -359,6 +356,7 @@ main(int argc, char *argv[])
 	}
 
 #pragma omp taskwait
+      PROFILER_NOTIFY_PAUSE(&sync);
       gettimeofday (&end[iter], NULL);
 
 
@@ -390,8 +388,6 @@ main(int argc, char *argv[])
       }
     }
 
-  unsigned char lower = 'L';
-  int nfo;
   double stream_time = 0, seq_time = 0;
 
   for (iter = 0; iter < numiters; ++iter)
@@ -408,6 +404,10 @@ main(int argc, char *argv[])
     {
       printf ("%.5f \n", stream_time);
     }
+
+  PROFILER_NOTIFY_FINISH(&sync);
+
+  return 0;
 }
 
 

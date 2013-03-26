@@ -45,15 +45,22 @@ along with GCC; see the file COPYING3.  If not see
 #include "optabs.h"
 #include "cfgloop.h"
 
-
+#define IN_GCC
+#include "../../libworkstream_df/config.h"
 
 typedef struct wstream_df_frame
 {
   tree wstream_df_frame_type;
   tree wstream_df_frame_field_work_fn;
+  tree wstream_df_frame_field_bytes_cpu;
+  tree wstream_df_frame_field_cache_misses;
+  tree wstream_df_frame_field_last_owner;
+  tree wstream_df_frame_field_steal_type;
   tree wstream_df_frame_field_sc;
   tree wstream_df_frame_field_size;
   tree wstream_df_frame_field_own_barrier;
+  tree wstream_df_frame_field_creation_timestamp;
+  tree wstream_df_frame_field_ready_timestamp;
 } wstream_df_frame;
 
 
@@ -2508,7 +2515,7 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 					      view_ref, v->wstream_df_view_field_owner, NULL);
 			  burst_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst),
 					      view_ref, v->wstream_df_view_field_burst, NULL);
-			  x = build_call_expr (tdec_fn, 2, owner_ref, burst_ref);
+			  x = build_call_expr (tdec_fn, 3, owner_ref, burst_ref, build_int_cst (integer_type_node, 1));
 			  gimplify_stmt (&x, &tseq);
 
 			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
@@ -2532,8 +2539,8 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 					      view_ref, v->wstream_df_view_field_burst, NULL);
 			  size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
 					      view_ref, v->wstream_df_view_field_reached_pos, NULL);
-			  x = build_call_expr (tdec_fn, 3, size_ref,
-					       build_fold_addr_expr (view_ref), burst_ref);
+			  x = build_call_expr (tdec_fn, 4, size_ref,
+					       build_fold_addr_expr (view_ref), burst_ref, build_int_cst (integer_type_node, 1));
 			  gimplify_stmt (&x, &tseq);
 			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
 			}
@@ -3295,7 +3302,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
       if (synch_ctr == size_zero_node)
 	{
 	  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE);
-	  t = build_call_expr (tdec_fn, 1, frame_ptr);
+	  t = build_call_expr (tdec_fn, 2, frame_ptr, build_int_cst (integer_type_node, 0));
 	  gimplify_and_add (t, &post_tcreate_list);
 
 	  synch_ctr = size_one_node;
@@ -7752,6 +7759,7 @@ static void
 build_wstream_df_frame_base_type (omp_context *ctx)
 {
   tree name, field, type;
+  int i;
   /* The type built for copying openmp task parameters need to be
      added afterwards to ensure that the first three fields are the
      ones used by the runtime:
@@ -7762,6 +7770,72 @@ build_wstream_df_frame_base_type (omp_context *ctx)
 
      Reversed order to ensure the above order is actually obtained.
   */
+
+  name = create_tmp_var_name ("ready_timestamp");
+  type = uint64_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_ready_timestamp = field;
+
+  name = create_tmp_var_name ("creation_timestamp");
+  type = uint64_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_creation_timestamp = field;
+
+  name = create_tmp_var_name ("cache_misses");
+  type = build_array_type_nelts (long_long_integer_type_node, MAX_CPUS);
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /*  insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_cache_misses = field;
+
+  name = create_tmp_var_name ("bytes_cpu");
+  type = build_array_type_nelts (integer_type_node, MAX_CPUS);
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /*  insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_bytes_cpu = field;
+
+  name = create_tmp_var_name ("last_owner");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_last_owner = field;
+
+  name = create_tmp_var_name ("steal_type");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_steal_type = field;
 
   name = create_tmp_var_name ("own_barrier");
   type = ptr_type_node;

@@ -3,18 +3,12 @@
 #include <math.h>
 #include <complex.h>
 #include <getopt.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
+#include "../common/sync.h"
 
 void
 gauss_seidel (int N, double a[N][N], int block_size)
@@ -41,6 +35,10 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
+
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -101,6 +99,7 @@ main (int argc, char **argv)
 	data[N*i + j] = (double) ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
 
     gettimeofday (&start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
 
 #pragma omp parallel
     {
@@ -130,6 +129,7 @@ main (int argc, char **argv)
 	  }
       }
     }
+    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (&end, NULL);
 
     printf ("%.5f\n", tdiff (&end, &start));
@@ -146,5 +146,9 @@ main (int argc, char **argv)
 	    fprintf (res_file, "\n");
 	  }
       }
+
+    PROFILER_NOTIFY_FINISH(&sync);
   }
+
+  return 0;
 }

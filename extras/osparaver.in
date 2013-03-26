@@ -1,0 +1,5 @@
+#!/bin/sh
+
+LD_LIBRARY_PATH="@@CONTRIB_LIBDIR@@/paraver-kernel/:@@CONTRIB_LIBDIR@@/" \
+    OSPARAVER_CONFIG_FILE="@@INST_DIR@@/openstream.pcf" \
+    @@CONTRIB_BINDIR@@/wxparaver.bin $@

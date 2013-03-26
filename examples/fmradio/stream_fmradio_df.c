@@ -13,20 +13,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-
 #include <getopt.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
 #include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-
 
 #define KSMPS 1024
 #define FM_MAX       5
@@ -440,6 +434,9 @@ main(int argc, char* argv[])
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "i:o:t:f:n:g:h")) != -1)
     {
@@ -548,6 +545,7 @@ main(int argc, char* argv[])
     int i, j, k;
 
     gettimeofday (start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
 
     for (i = 0; i < 6; ++i)
 #pragma omp task output (serializer[i] << sout)
@@ -617,6 +615,7 @@ main(int argc, char* argv[])
 
 #pragma omp task input (finalizer >> finalizer_view[finalizer_view_size])
     {
+      PROFILER_NOTIFY_PAUSE(&sync);
       gettimeofday (end, NULL);
 
       printf ("%.5f\n", tdiff (end, start));
@@ -628,6 +627,8 @@ main(int argc, char* argv[])
       for (i = 0; i < out_samples; i += 2)
 	fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
+
+      PROFILER_NOTIFY_FINISH(&sync);
 
       fclose (input_file);
       fclose (output_file);

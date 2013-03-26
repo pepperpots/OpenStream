@@ -1,0 +1,15 @@
+STATES
+0    Seeking fo a task
+1    Task execution
+2    Task creation
+3    Resolve dependencies
+4    Tdecrease
+5    Broadcast
+6    Thread / runtime initialization
+7    Estimate costs
+8    Reorder push slots
+
+EVENT_TYPE
+0    3    Tcreate
+VALUES
+1      Task creation

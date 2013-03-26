@@ -34,18 +34,13 @@
 #include <stdlib.h>
 #include <math.h>
 #include <getopt.h>
+#include "../common/sync.h"
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 #define _CHECK_DIFFS 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
 
 #ifndef NB
 # define NB 128
@@ -507,6 +502,10 @@ int main(int argc, char* argv[])
 
   int volatile res = 0;
 
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
+
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:")) != -1)
     {
       switch(option)
@@ -542,7 +541,9 @@ int main(int argc, char* argv[])
    D_print_mat("reference A", origA);
 
    gettimeofday (start, NULL);
+   PROFILER_NOTIFY_RECORD(&sync);
    LU (A);
+   PROFILER_NOTIFY_PAUSE(&sync);
 #pragma omp taskwait
    gettimeofday (end, NULL);
    printf ("%.5f\n", tdiff (end, start));
@@ -561,5 +562,8 @@ int main(int argc, char* argv[])
        D_print_mat("LxU", A);
        compare_mat (origA, A);
      }
+
+   PROFILER_NOTIFY_FINISH(&sync);
+   return 0;
 }
 

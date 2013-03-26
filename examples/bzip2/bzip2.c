@@ -1,5 +1,6 @@
 #define SPEC_CPU2000
 #include "common.h"
+#include "../common/common.h"
 /*-----------------------------------------------------------*/
 /*--- A block-sorting, lossless compressor        bzip2.c ---*/
 /*-----------------------------------------------------------*/

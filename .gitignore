@@ -6,11 +6,13 @@ gcc/mpc/
 gcc/mpfr/
 install/
 TAGS
+extras/mem_level_names
 libworkstream_df/libwstream_df.so
 examples/bzip2/bzip2
 examples/bzip2/stream_bzip2
 examples/cholesky/cholesky
 examples/cholesky/stream_cholesky
+examples/cholesky/block_seq_cholesky
 examples/fft_1d/barrier_fft
 examples/fft_1d/radix_fft_stream_pure
 examples/fft_1d/seq_fftw
@@ -26,6 +28,7 @@ examples/seidel/openmp_task_seidel
 examples/seidel/seidel
 examples/seidel/starss_to_stream_seidel
 examples/seidel/stream_seidel
+examples/seidel/stream_df_seidel
 examples/seidel/topsort_deps_stream_seidel
 examples/sparse_lu/sparse_lu
 examples/sparse_lu/stream_sparse_lu
@@ -64,6 +67,11 @@ examples/strassen/x86_strassen
 examples/strassen/x86_strassen_c11
 examples/strassen/x86_strassen_dumbc11
 examples/strassen/x86_strassen_nofences
+examples/bitonic/bitonic
+examples/bitonic/stream_df_bitonic
 *.out
 examples/fmradio/*.raw
 examples/fmradio/*.txt
+examples/mergesort/mergesort
+examples/mergesort/stream_df_mergesort
+*.c.*t*

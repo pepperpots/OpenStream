@@ -2585,7 +2585,7 @@ omp-low.o : omp-low.c $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TM_H) $(TREE_H) \
    $(RTL_H) $(GIMPLE_H) $(TREE_INLINE_H) langhooks.h $(DIAGNOSTIC_CORE_H) \
    $(TREE_FLOW_H) $(TIMEVAR_H) $(FLAGS_H) $(EXPR_H) $(DIAGNOSTIC_CORE_H) \
    $(TREE_PASS_H) $(GGC_H) $(EXCEPT_H) $(SPLAY_TREE_H) $(OPTABS_H) \
-   $(CFGLOOP_H) tree-iterator.h gt-omp-low.h
+   $(CFGLOOP_H) tree-iterator.h gt-omp-low.h ../../libworkstream_df/config.h
 tree-browser.o : tree-browser.c tree-browser.def $(CONFIG_H) $(SYSTEM_H) \
    coretypes.h $(TREE_H) tree-pretty-print.h
 omega.o : omega.c omega.h $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TREE_H) \

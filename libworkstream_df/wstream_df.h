@@ -5,19 +5,34 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define WSTREAM_DF_DEQUE_LOG_SIZE 8
-#define MAX_NUM_CORES 1024
-#define WSTREAM_STACK_SIZE 1 << 16
+#include "fibers.h"
+#include "alloc.h"
+#include "cdeque.h"
+#include "config.h"
+#include "list.h"
+#include "trace.h"
+#include "profiling.h"
 
-#define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
+#define STEAL_TYPE_PUSH 0
+#define STEAL_TYPE_STEAL 1
+#define STEAL_TYPE_UNKNOWN 2
+
+static inline const char* steal_type_str(int steal_type) {
+  switch(steal_type) {
+  case STEAL_TYPE_STEAL: return "steal";
+  case STEAL_TYPE_PUSH: return "push";
+  case STEAL_TYPE_UNKNOWN: return "unknown";
+  default: return NULL;
+  }
+};
 
 /* Create a new thread, with frame pointer size, and sync counter */
 extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool);
 /* Decrease the synchronization counter by one */
-extern void __builtin_ia32_tdecrease (void *);
+extern void __builtin_ia32_tdecrease (void *, bool);
 /* Decrease the synchronization counter by one */
-extern void __builtin_ia32_tdecrease_n (void *, size_t);
-extern void __builtin_ia32_tdecrease_n_vec (size_t, void *, size_t);
+extern void __builtin_ia32_tdecrease_n (void *, size_t, bool);
+extern void __builtin_ia32_tdecrease_n_vec (size_t, void *, size_t, bool);
 /* Destroy (free) the current thread */
 extern void __builtin_ia32_tend (void *);
 
@@ -39,129 +54,128 @@ extern void wstream_df_stream_dtor (void **, size_t);
 extern void wstream_df_stream_reference (void *, size_t);
 
 
-/* Memory fences.  */
-static inline void
-load_load_fence (uintptr_t dep)
+/***************************************************************************/
+/* Data structures for T*.  */
+/***************************************************************************/
+
+typedef struct wstream_df_view
 {
-#if !NO_FENCES && defined(__arm__)
-  /* Fences the load that produced DEP. */
-  __asm__ __volatile__ ("teq %0, %0; beq 0f; 0: isb" :: "r" (dep) : "memory");
-#else
-  (void) dep;
-  __compiler_fence;
-#endif
-}
+  /* MUST always be 1st field.  */
+  void *next;
+  /* MUST always be 2nd field.  */
+  void *data;
+  /* MUST always be 3rd field.  */
+  void *sibling;
+  size_t burst;
+  size_t horizon;
+  void *owner;
+  /* re-use the dummy view's reached position to store the size of an
+     array of views.  */
+  size_t reached_position;
+} wstream_df_view_t, *wstream_df_view_p;
 
-static inline void
-load_store_fence (uintptr_t dep)
+/* The stream data structure.  It only relies on two linked lists of
+   views in the case of a sequential control program (or at least
+   sequential with respect to production and consumption of data in
+   any given stream), or two single-producer single-consumer queues if
+   the production and consumption of data is scheduled by independent
+   control program threads.  */
+typedef struct wstream_df_stream
 {
-#if !NO_FENCES && defined(__arm__)
-  /* Fences the load that produced DEP. */
-  __asm__ __volatile__ ("teq %0, %0; beq 0f; 0:" :: "r" (dep) : "memory");
-#else
-  (void) dep;
-  __compiler_fence;
-#endif
-}
+  wstream_df_list_t producer_queue __attribute__((aligned (64)));
+  wstream_df_list_t consumer_queue __attribute__((aligned (64)));
 
-static inline void
-store_load_fence ()
+  size_t elem_size;
+  int refcount;
+} wstream_df_stream_t, *wstream_df_stream_p;
+
+
+typedef struct wstream_df_frame
 {
-#if !NO_FENCES && defined(__arm__)
-  __asm__ __volatile__ ("dmb" ::: "memory");
-#elif !NO_FENCES
-  __sync_synchronize ();
-#else
-  __compiler_fence;
-#endif
-}
+  int synchronization_counter;
+  int size;
+  void (*work_fn) (void *);
+  struct barrier *own_barrier;
 
-static inline void
-store_store_fence ()
+  int steal_type;
+  int last_owner;
+  int bytes_cpu[MAX_CPUS];
+  long long cache_misses[MAX_CPUS];
+  uint64_t creation_timestamp;
+  uint64_t ready_timestamp;
+
+  /* Variable size struct */
+  //char buf [];
+} wstream_df_frame_t, *wstream_df_frame_p;
+
+typedef struct barrier
 {
-#if !NO_FENCES && defined(__arm__)
-  __asm__ __volatile__ ("dmb" ::: "memory");
-#else
-  __compiler_fence;
-#endif
-}
+  int barrier_counter_executed __attribute__((aligned (64)));
+  int barrier_counter_created __attribute__((aligned (64)));
+  bool barrier_unused;
+  ws_ctx_t continuation_context;
 
-#if defined(__arm__)
-static inline size_t
-load_linked (volatile size_t *ptr)
+  struct barrier *save_barrier;
+} barrier_t, *barrier_p;
+
+
+typedef struct wstream_df_frame_cost {
+  wstream_df_frame_p frame;
+  unsigned long long cost;
+} wstream_df_frame_cost_t, *wstream_df_frame_cost_p;
+
+#if ALLOW_PUSHES
+  #define WSTREAM_DF_THREAD_PUSH_SLOTS wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)))
+
+  #if ALLOW_PUSH_REORDER
+    #if NUM_PUSH_SLOTS > NUM_PUSH_REORDER_SLOTS
+      #error "NUM_PUSH_REORDER_SLOTS must be greater or equal to NUM_PUSH_REORDER_SLOTS"
+    #endif
+
+    #define WSTREAM_DF_THREAD_PUSH_REORDER_SLOTS wstream_df_frame_cost_t push_reorder_slots[NUM_PUSH_REORDER_SLOTS]
+  #else
+    #define WSTREAM_DF_THREAD_PUSH_REORDER_SLOTS
+  #endif
+
+  #define WSTREAM_DF_THREAD_PUSH_FIELDS \
+    WSTREAM_DF_THREAD_PUSH_SLOTS; \
+    WSTREAM_DF_THREAD_PUSH_REORDER_SLOTS
+#else
+  #define WSTREAM_DF_THREAD_PUSH_FIELDS
+#endif
+
+/* T* worker threads have each their own private work queue, which
+   contains the frames that are ready to be executed.  For now the
+   control program will be distributing work round-robin, later we
+   will add work-sharing to make this more load-balanced.  A
+   single-producer single-consumer concurrent dequeue could be used in
+   this preliminary stage, which would require no atomic operations,
+   but we'll directly use a multi-producer single-consumer queue
+   instead.  */
+typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 {
-  size_t value;
-  __asm__ __volatile__ ("ldrex %0, [%1]" : "=r" (value) : "r" (ptr));
-  return value;
-}
+  pthread_t posix_thread_id;
+  unsigned int worker_id;
 
-static inline bool
-store_conditional (volatile size_t *ptr, size_t value)
-{
-  size_t status = 1;
-  __asm__ __volatile__ ("strex %0, %2, [%1]"
-			: "+r" (status)
-			: "r" (ptr), "r" (value));
-  return status == 0;
-}
-#endif
+  cdeque_t work_deque __attribute__((aligned (64)));
+  wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
 
-static inline bool
-compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
-{
-#if !NO_FENCES || !NO_SYNC
-#if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
-  int status = 1;
-  __asm__ __volatile__ ("0: ldrex r0, [%1]\n\t"
-                        "teq r0, %2\n\t"
-			"bne 1f\n\t"
-                        "strex %0, %3, [%1]\n\t"
-                        "teq %0, #1\n\t"
-                        "beq 0b\n\t"
-                        "1:"
-                        : "+r" (status)
-                        : "r" (ptr), "r" (oldval), "r" (newval)
-                        : "r0");
-  return status == 0;
-#else
-  return __sync_bool_compare_and_swap (ptr, oldval, newval);
-#endif
-#else
-  if (*ptr == oldval)
-    {
-      *ptr = newval;
-      return true;
-    }
-  else
-    return false;
-#endif
-}
+  unsigned int rands;
+  unsigned int cpu;
 
-static inline bool
-weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
-{
-#if !NO_FENCES || !NO_SYNC
-#if !NO_LIGHTWEIGHT_CAS && defined(__arm__)
-  int status = 1;
-  __asm__ __volatile__ ("ldrex r0, [%1]\n\t"
-			"teq r0, %2\n\t"
-			"strexeq %0, %3, [%1]"
-			: "+r" (status)
-			: "r" (ptr), "r" (oldval), "r" (newval)
-			: "r0");
-  return !status;
-#else
-  return __sync_bool_compare_and_swap (ptr, oldval, newval);
-#endif
-#else
-  return compare_and_swap (ptr, oldval, newval);
-#endif
-}
+  WSTREAM_DF_THREAD_SLAB_FIELDS;
+  WSTREAM_DF_THREAD_PUSH_FIELDS;
+  WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS;
+  WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS;
 
+  barrier_p swap_barrier;
+  void *current_stack; // BUG in swap/get context: stack is not set
+} wstream_df_thread_t, *wstream_df_thread_p;
 
-void dump_papi_counters (int);
-void init_papi_counters (int);
-void start_papi_counters (int);
-void stop_papi_counters (int);
-void accum_papi_counters (int);
+int wstream_self(void);
+
+int worker_id_to_cpu(unsigned int worker_id);
+int cpu_to_worker_id(int cpu);
+int cpu_used(int cpu);
+
 #endif

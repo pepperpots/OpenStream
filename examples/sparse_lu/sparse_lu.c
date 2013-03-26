@@ -1,28 +1,18 @@
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <math.h>
 #include <getopt.h>
 #include <malloc.h>
 #include <assert.h>
 #include <string.h>
+#include "../common/common.h"
+#include "../common/sync.h"
 
 #define _CHECK_SEQUENTIAL 0
 #define _WITH_OUTPUT 0
 
-#include <sys/time.h>
 #include <unistd.h>
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
-static inline bool
-double_equal (double a, double b)
-{
-  return (abs (a - b) < 1e-7);
-}
 
 static inline void *
 allocate_block (int block_size)
@@ -379,18 +369,19 @@ main (int argc, char* argv[])
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
   int option;
-  int i, j, iter;
   int N = 64;
 
-  int numiters = 10;
   int block_size = 8;
 
   FILE *res_file = NULL;
-  FILE *in_file = NULL;
 
   int volatile res = 0;
 
-  while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
+  struct profiler_sync sync;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
+
+  while ((option = getopt(argc, argv, "n:s:b:o:h")) != -1)
     {
       switch(option)
 	{
@@ -403,12 +394,6 @@ main (int argc, char* argv[])
 	case 'b':
 	  block_size = 1 << atoi (optarg);
 	  break;
-	case 'r':
-	  numiters = atoi (optarg);
-	  break;
-	case 'i':
-	  in_file = fopen(optarg, "r");
-	  break;
 	case 'o':
 	  res_file = fopen(optarg, "w");
 	  break;
@@ -418,8 +403,6 @@ main (int argc, char* argv[])
 		  "  -n <size>                    Number of colums of the square matrix, default is %d\n"
 		  "  -s <power>                   Set the number of colums of the square matrix to 1 << <power>\n"
 		  "  -b <block size power>        Set the block size 1 << <block size power>\n"
-		  "  -r <number of iterations>    Number of repetitions of the execution\n"
-		  "  -i <input file>              Read matrix data from an input file\n"
 		  "  -o <output file>             Write matrix data to an output file\n",
 		  argv[0], N);
 	  exit(0);
@@ -454,7 +437,9 @@ main (int argc, char* argv[])
   generate_block_sparse_matrix (num_blocks, block_size, data);
 
   gettimeofday (start, NULL);
+  PROFILER_NOTIFY_RECORD(&sync);
   sequential_factorize (num_blocks, block_size, data);
+  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (end, NULL);
 
   double seq_time = tdiff (end, start);
@@ -477,5 +462,8 @@ main (int argc, char* argv[])
       sparse_matmult (num_blocks, block_size, l_mat, u_mat, data);
       matrix_diff (num_blocks, block_size, bckp_data, data);
     }
+
+  PROFILER_NOTIFY_FINISH(&sync);
+  return 0;
 }
 

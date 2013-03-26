@@ -2,9 +2,19 @@ include Makefile.config
 
 MIRROR=ftp://gcc.gnu.org/pub/gcc/infrastructure/
 CONTRIB_LIBDIR=$(INST_DIR)/lib
+CONTRIB_LIB64DIR=$(INST_DIR)/lib64
+CONTRIB_BINDIR=$(INST_DIR)/bin
 CONTRIB_INCDIR=$(INST_DIR)/include
 LAPACK_VERSION=3.3.1
 FFTW_VERSION=3.3.2
+SCOREP_VERSION=1.1
+OTF2_VERSION=1.1
+BOOST_VERSION=1_52_0
+WXWIDGETS_VERSION=2.8.12
+LIBXML2_VERSION=2.9.0
+PARAVER_VERSION=4.3.5
+WXPROPERTYGRID_VERSION=1.4.15
+PAPI_VERSION=5.1.0.2
 CONTRIB_OPT=-O3
 
 EXAMPLE_DEPS=$(CONTRIB_LIBDIR)/libblas.so \
@@ -193,3 +203,238 @@ $(CONTRIB_DIR)/fftw-$(FFTW_VERSION)/exdep: $(ARCHIVES_DIR)/fftw-$(FFTW_VERSION).
 $(ARCHIVES_DIR)/fftw-$(FFTW_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
 	wget 'http://www.fftw.org/fftw-$(FFTW_VERSION).tar.gz' -O $@
+
+################################################################################
+# Dependencies of paraver                                                      #
+################################################################################
+
+#
+# Paraver
+#
+
+osparaver: $(CONTRIB_BINDIR)/osparaver
+
+$(CONTRIB_BINDIR)/osparaver: \
+		$(EXTRAS_DIR)/osparaver.in \
+		$(CONTRIB_BINDIR)/wxparaver.bin \
+		$(INST_DIR)/openstream.pcf
+	sed 's|@@CONTRIB_LIBDIR@@|$(CONTRIB_LIBDIR)|g;s|@@CONTRIB_BINDIR@@|$(CONTRIB_BINDIR)|g;s|@@INST_DIR@@|$(INST_DIR)|g' $(EXTRAS_DIR)/osparaver.in > $@
+	chmod +x $@
+
+$(INST_DIR)/openstream.pcf: $(EXTRAS_DIR)/openstream.pcf
+	cp $< $@
+
+$(CONTRIB_BINDIR)/wxparaver.bin: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver
+	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver install
+
+# WxParaver
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/Makefile: \
+		$(CONTRIB_LIBDIR)/paraver-kernel/libparaver-api.so \
+		$(CONTRIB_INCDIR)/wx/propgrid/propgrid.h
+	cd $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/wxparaver/ ; \
+	./configure \
+		--prefix=$(INST_DIR) \
+		--with-boost=$(INST_DIR) \
+		--with-wxdir=$(CONTRIB_BINDIR) \
+		CFLAGS="-I$(CONTRIB_INCDIR)/libxml2 -I$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/api" \
+		CPPFLAGS="-I$(CONTRIB_INCDIR)/libxml2 -I$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/api" \
+		LDFLAGS="-L$(CONTRIB_LIB64DIR) -L$(CONTRIB_LIBDIR) -L$(CONTRIB_LIBDIR)/paraver-kernel/"
+
+# Paraver-kernel
+$(CONTRIB_LIBDIR)/paraver-kernel/libparaver-api.so: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/
+	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/ install
+
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/Makefile: \
+		$(CONTRIB_LIBDIR)/ptools_common_files/libptools_common_files.a \
+		$(CONTRIB_BINDIR)/otf2-config \
+		$(CONTRIB_LIBDIR)/libboost_system.so \
+		$(CONTRIB_BINDIR)/xml2-config
+	cd $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/ ; \
+	./configure \
+		--prefix=$(INST_DIR) \
+		--with-boost=$(INST_DIR) \
+		--with-otf2=$(INST_DIR) \
+		--with-ptools-common-files=$(INST_DIR) \
+		CFLAGS="-I$(CONTRIB_INCDIR)/libxml2 -I$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/api" \
+		CPPFLAGS="-I$(CONTRIB_INCDIR)/libxml2 -I$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/paraver-kernel/api" \
+		LDFLAGS="-L$(CONTRIB_LIB64DIR) -L$(CONTRIB_LIBDIR)"
+
+# Ptools common files
+$(CONTRIB_LIBDIR)/ptools_common_files/libptools_common_files.a: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/
+	$(MAKE) -C $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/ install
+
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/Makefile: $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/exdep
+	cd $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/ptools_common_files/; ./configure --prefix=$(INST_DIR)
+
+$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)/exdep: $(ARCHIVES_DIR)/paraver-source-$(PARAVER_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	cd $(CONTRIB_DIR)/paraver-source-$(PARAVER_VERSION) ; patch -p1 < $(EXTRAS_DIR)/paraver.patch
+	touch $@
+
+$(ARCHIVES_DIR)/paraver-source-$(PARAVER_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://www.di.ens.fr/pub/Main/OpenStream/paraver-source-$(PARAVER_VERSION).tar.gz' -O $@
+
+#
+# Score-p
+#
+
+$(CONTRIB_BINDIR)/scorep: $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)
+	$(MAKE) -C $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION) install
+
+$(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/Makefile: $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/exdep
+	cd $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/; ./configure --prefix=$(INST_DIR)
+
+$(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)/exdep: $(ARCHIVES_DIR)/scorep-$(SCOREP_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/scorep-$(SCOREP_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/scorep-$(SCOREP_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/scorep-$(SCOREP_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://www.vi-hps.org/upload/packages/scorep/scorep-$(SCOREP_VERSION).tar.gz' -O $@
+
+#
+# OTF2
+#
+
+$(CONTRIB_BINDIR)/otf2-config: $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)
+	$(MAKE) -C $(CONTRIB_DIR)/otf2-$(OTF2_VERSION) install
+
+$(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/Makefile: $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/exdep
+	cd $(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/; ./configure --prefix=$(INST_DIR)
+
+$(CONTRIB_DIR)/otf2-$(OTF2_VERSION)/exdep: $(ARCHIVES_DIR)/otf2-$(OTF2_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/otf2-$(OTF2_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/otf2-$(OTF2_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/otf2-$(OTF2_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://www.vi-hps.org/upload/packages/otf2/otf2-$(OTF2_VERSION).tar.gz' -O $@
+
+#
+# BOOST
+#
+
+$(CONTRIB_LIBDIR)/libboost_system.so: $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/b2
+	cd $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/ ; ./b2 install --prefix=$(INST_DIR) -j `grep processor /proc/cpuinfo | wc -l`
+
+$(CONTRIB_DIR)/boost_$(BOOST_VERSION)/b2: $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/exdep
+	cd $(CONTRIB_DIR)/boost_$(BOOST_VERSION)/; ./bootstrap.sh --prefix=$(INST_DIR) --without-libraries=python
+
+$(CONTRIB_DIR)/boost_$(BOOST_VERSION)/exdep: $(ARCHIVES_DIR)/boost_$(BOOST_VERSION).tar.bz2
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/boost_$(BOOST_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/boost_$(BOOST_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/boost_$(BOOST_VERSION).tar.bz2:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://sourceforge.net/projects/boost/files/boost/$(subst _,.,$(BOOST_VERSION))/boost_$(BOOST_VERSION).tar.bz2/download' -O $@
+
+#
+# WxWidgets
+#
+
+$(CONTRIB_BINDIR)/wx-config: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)
+	$(MAKE) -C $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION) install
+
+$(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/Makefile: $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep
+	cd $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/; ./configure --prefix=$(INST_DIR) --enable-unicode
+
+$(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)/exdep: $(ARCHIVES_DIR)/wxWidgets-$(WXWIDGETS_VERSION).tar.bz2
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/wxWidgets-$(WXWIDGETS_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/wxWidgets-$(WXWIDGETS_VERSION).tar.bz2:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://sourceforge.net/projects/wxwindows/files/$(WXWIDGETS_VERSION)/wxWidgets-$(WXWIDGETS_VERSION).tar.bz2/download' -O $@
+
+#
+# WxPropertyGrid
+#
+
+$(CONTRIB_INCDIR)/wx/propgrid/propgrid.h: $(CONTRIB_DIR)/propgrid/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/propgrid
+	$(MAKE) -C $(CONTRIB_DIR)/propgrid install
+
+$(CONTRIB_DIR)/propgrid/Makefile: \
+		$(CONTRIB_DIR)/propgrid/exdep \
+		$(CONTRIB_BINDIR)/wx-config
+	cd $(CONTRIB_DIR)/propgrid ; ./configure --prefix=$(INST_DIR) --with-wxdir=$(CONTRIB_BINDIR) --enable-unicode
+
+$(CONTRIB_DIR)/propgrid/exdep: $(ARCHIVES_DIR)/wxpropgrid-$(WXPROPERTYGRID_VERSION)-src.tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/propgrid ] ; \
+		then rm -rf "$(CONTRIB_DIR)/propgrid" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/wxpropgrid-$(WXPROPERTYGRID_VERSION)-src.tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://sourceforge.net/projects/wxpropgrid/files/wxPropertyGrid/1.4.15/wxpropgrid-$(WXPROPERTYGRID_VERSION)-src.tar.gz/download' -O $@
+
+#
+# Libxml2
+#
+
+$(CONTRIB_BINDIR)/xml2-config: $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)
+	$(MAKE) -C $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION) install
+
+$(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/Makefile: $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/exdep
+	cd $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/; ./configure --prefix=$(INST_DIR)
+
+$(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)/exdep: $(ARCHIVES_DIR)/libxml2-$(LIBXML2_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/libxml2-$(LIBXML2_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/libxml2-$(LIBXML2_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'ftp://xmlsoft.org/libxml2/libxml2-$(LIBXML2_VERSION).tar.gz' -O $@
+
+################################################################################
+# PAPI                                                                         #
+################################################################################
+
+papi: $(CONTRIB_BINDIR)/papi_avail
+
+$(CONTRIB_BINDIR)/papi_avail: $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src
+	$(MAKE) -C $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src install
+
+$(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src/Makefile: $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep
+	cd $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src; ./configure --prefix=$(INST_DIR)
+
+$(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep: $(ARCHIVES_DIR)/papi-$(PAPI_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/papi-$(PAPI_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/papi-$(PAPI_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	cd $(CONTRIB_DIR); mv `tar tf $< | head -n1 | cut -d/ -f 1` papi-$(PAPI_VERSION)
+	touch $@
+
+$(ARCHIVES_DIR)/papi-$(PAPI_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'http://icl.cs.utk.edu/projects/papi/downloads/papi-$(PAPI_VERSION).tar.gz' -O $@
