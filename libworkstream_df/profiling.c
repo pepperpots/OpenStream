@@ -126,7 +126,7 @@ update_papi(struct wstream_df_thread* th)
 }
 #endif
 
-#ifdef WQUEUE_PROFILE
+#if WQUEUE_PROFILE
 void
 setup_wqueue_counters (void)
 {

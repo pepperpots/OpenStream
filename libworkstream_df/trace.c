@@ -503,7 +503,7 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
 	 state_names[state],
 	 (double)parallelism_time / (double)(max_time - min_time));
 
-#ifdef WQUEUE_PROFILE
+#if WQUEUE_PROFILE
   for(i = 0; i < num_workers; i++) {
     num_tasks_executed += wstream_df_worker_threads[i].tasks_executed;
   }

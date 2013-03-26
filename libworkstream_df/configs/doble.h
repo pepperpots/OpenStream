@@ -17,7 +17,7 @@
 
 #define MAX_CPUS 64
 
-#define WQUEUE_PROFILE
+#define WQUEUE_PROFILE 1
 #define MATRIX_PROFILE "wqueue_matrix.out"
 
 #define PUSH_MIN_MEM_LEVEL 3

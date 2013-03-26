@@ -12,6 +12,7 @@ examples/bzip2/bzip2
 examples/bzip2/stream_bzip2
 examples/cholesky/cholesky
 examples/cholesky/stream_cholesky
+examples/cholesky/stream_starss_translation_cholesky
 examples/cholesky/block_seq_cholesky
 examples/fft_1d/barrier_fft
 examples/fft_1d/radix_fft_stream_pure
