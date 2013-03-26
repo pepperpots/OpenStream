@@ -221,13 +221,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
-  if (fp->work_fn == (void *) 1)
-    {
-      wstream_free(&cthread->slab_cache, fp);
-      trace_state_restore(cthread);
-      return;
-    }
-
   if(is_write) {
     inc_wqueue_counter(&fp->bytes_cpu[cthread->cpu], n);
 
@@ -249,6 +242,13 @@ tdecrease_n (void *data, size_t n, bool is_write)
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc();
+
+      if (fp->work_fn == (void *) 1)
+	{
+	  wstream_free(&cthread->slab_cache, fp);
+	  trace_state_restore(cthread);
+	  return;
+	}
 
 #if ALLOW_PUSHES
       trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
