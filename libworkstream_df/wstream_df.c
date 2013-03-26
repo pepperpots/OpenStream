@@ -24,7 +24,7 @@ static wstream_df_thread_p wstream_df_worker_threads;
 static int num_workers;
 static int* wstream_df_worker_cpus;
 
-#ifdef _PHARAON_MODE
+#if _PHARAON_MODE
 static ws_ctx_t master_ctx;
 static volatile bool master_ctx_swap_p = false;
 #endif
@@ -888,7 +888,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 #endif
 
   pthread_attr_init (&thread_attr);
-#ifndef _PHARAON_MODE
+#if !_PHARAON_MODE
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
 #endif
 
@@ -926,7 +926,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   pthread_attr_destroy (&thread_attr);
 }
 
-#ifdef _PHARAON_MODE
+#if _PHARAON_MODE
 /* Implement two-stage swap of master context for the PHARAON mode,
    allowing to guarantee that all user code is run in a
    Pthread-created thread.  */
@@ -1022,7 +1022,7 @@ void pre_main()
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
 
-#ifdef _PHARAON_MODE
+#if _PHARAON_MODE
   /* In order to ensure that all user code is executed by threads
      created through the pthreads interface (PHARAON project specific
      mode), we swap the main thread out here and swap in a new thread.
