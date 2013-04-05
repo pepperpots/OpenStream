@@ -69,6 +69,13 @@ try_pass_barrier (barrier_p bar)
 	wstream_free (&current_thread->slab_cache, bar);
       else
 	{
+	  wstream_df_thread_p cthread = current_thread;
+	  trace_task_exec_end(cthread);
+	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
+	  wqueue_counters_enter_runtime(current_thread);
+	  inc_wqueue_counter(&cthread->tasks_executed, 1);
+
+
 	  if (ws_setcontext (&bar->continuation_context) == -1)
 	    wstream_df_fatal ("Cannot swap contexts when passing barrier.");
 
