@@ -218,7 +218,7 @@ static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned in
 
 static inline int mem_nth_machine_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	int sibling = sibling_num % mem_cores_at_level(6);
+	unsigned int sibling = sibling_num % mem_cores_at_level(6);
 	if(sibling == cpu)
 		return (sibling_num + 1) % mem_cores_at_level(6);
 
