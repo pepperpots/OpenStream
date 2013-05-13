@@ -76,7 +76,7 @@ dump_global_wqueue_counters ();
 #else
 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS
-#define init_wqueue_counters(th) do {} while(0
+#define init_wqueue_counters(th) do {} while(0)
 #define setup_wqueue_counters() do {} while(0)
 #define wqueue_counters_enter_runtime(th) do {} while(0)
 #define stop_wqueue_counters() do {} while(0)
