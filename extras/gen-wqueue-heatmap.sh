@@ -45,7 +45,7 @@ fi
 PROFILER_CMD=""
 if [ ! -z $USE_IBS ]
 then
-    PROFILER_CMD="ibs_profile -m $CONFIG_NAME/procmap.map -o $CONFIG_NAME/ibsraw.pfd"
+    PROFILER_CMD="ibs_profile -m $CONFIG_NAME/procmap.map -o $CONFIG_NAME/ibsraw.pfd -s"
 
     if [ $OMP_NUM_THREADS -eq $MAX_THREADS ]
     then
