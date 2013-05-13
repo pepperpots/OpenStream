@@ -24,7 +24,7 @@ static wstream_df_thread_p wstream_df_worker_threads;
 static int num_workers;
 static int* wstream_df_worker_cpus;
 
-#ifdef _PHARAON_MODE
+#if _PHARAON_MODE
 static ws_ctx_t master_ctx;
 static volatile bool master_ctx_swap_p = false;
 #endif
@@ -69,6 +69,13 @@ try_pass_barrier (barrier_p bar)
 	wstream_free (&current_thread->slab_cache, bar);
       else
 	{
+	  wstream_df_thread_p cthread = current_thread;
+	  trace_task_exec_end(cthread);
+	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
+	  wqueue_counters_enter_runtime(current_thread);
+	  inc_wqueue_counter(&cthread->tasks_executed, 1);
+
+
 	  if (ws_setcontext (&bar->continuation_context) == -1)
 	    wstream_df_fatal ("Cannot swap contexts when passing barrier.");
 
@@ -167,6 +174,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   trace_event(cthread, WQEVENT_TCREATE);
 
   wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
+  memset (frame_pointer, 0, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -220,13 +228,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
-  if (fp->work_fn == (void *) 1)
-    {
-      wstream_free(&cthread->slab_cache, fp);
-      trace_state_restore(cthread);
-      return;
-    }
-
   if(is_write) {
     inc_wqueue_counter(&fp->bytes_cpu[cthread->cpu], n);
 
@@ -248,6 +249,13 @@ tdecrease_n (void *data, size_t n, bool is_write)
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc();
+
+      if (fp->work_fn == (void *) 1)
+	{
+	  wstream_free(&cthread->slab_cache, fp);
+	  trace_state_restore(cthread);
+	  return;
+	}
 
 #if ALLOW_PUSHES
       trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
@@ -318,10 +326,19 @@ tdecrease_n (void *data, size_t n, bool is_write)
       }
 #endif
 
-      if (cthread->own_next_cached_thread != NULL)
-	cdeque_push_bottom (&cthread->work_deque,
-			    (wstream_df_type) cthread->own_next_cached_thread);
-      cthread->own_next_cached_thread = fp;
+      if (fp->work_fn == (void *) 1)
+	{
+	  wstream_free(fp, fp->size);
+	  return;
+	}
+      else
+	{
+	  if (cthread->own_next_cached_thread != NULL)
+	    cdeque_push_bottom (&cthread->work_deque,
+				(wstream_df_type) cthread->own_next_cached_thread);
+	  cthread->own_next_cached_thread = fp;
+ 	  //cdeque_push_bottom (&cthread->work_deque, fp);
+	}
     }
 
   trace_state_restore(cthread);
@@ -878,7 +895,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 #endif
 
   pthread_attr_init (&thread_attr);
-#ifndef _PHARAON_MODE
+#if !_PHARAON_MODE
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
 #endif
 
@@ -916,7 +933,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   pthread_attr_destroy (&thread_attr);
 }
 
-#ifdef _PHARAON_MODE
+#if _PHARAON_MODE
 /* Implement two-stage swap of master context for the PHARAON mode,
    allowing to guarantee that all user code is run in a
    Pthread-created thread.  */
@@ -1012,7 +1029,7 @@ void pre_main()
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
 
-#ifdef _PHARAON_MODE
+#if _PHARAON_MODE
   /* In order to ensure that all user code is executed by threads
      created through the pthreads interface (PHARAON project specific
      mode), we swap the main thread out here and swap in a new thread.
@@ -1234,6 +1251,11 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       view->burst = dummy_view->burst;
       view->horizon = dummy_view->horizon;
       view->owner = dummy_view->owner;
+      /* FIXME-apop: this is quite tricky, read views may be impacted
+	 by old variadic write views' overloaded "reached_position"
+	 values.  Fixed for now by clearing the frames on
+	 allocation.  */
+      //view->reached_position = 0;
 
       wstream_df_resolve_dependences ((void *) view, (void *) stream, is_read_view_p);
     }
@@ -1303,6 +1325,7 @@ __builtin_ia32_tick (void *s, size_t burst)
   if (cons_queue->active_peek_chain == NULL)
     {
       wstream_df_frame_p cons_frame;
+
       /* Normally an error, but for OMPSs expansion, we need to allow
 	 it.  */
       /*  wstream_df_fatal ("TICK (%d) matches no PEEK view, which is unsupported at this time.",

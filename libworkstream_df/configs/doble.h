@@ -11,11 +11,13 @@
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
 #define WSTREAM_STACK_SIZE 1 << 16
 
-#define _PHARAON_MODE
+/* Toggle PHARAON mode which creates a new thread to run the "main" on
+   a different thread than master, with a context swap.  */
+#define _PHARAON_MODE 0
 
 #define MAX_CPUS 64
 
-#define WQUEUE_PROFILE
+#define WQUEUE_PROFILE 1
 #define MATRIX_PROFILE "wqueue_matrix.out"
 
 #define PUSH_MIN_MEM_LEVEL 3
