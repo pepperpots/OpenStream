@@ -47,7 +47,7 @@
 #endif
 
 /* Description of the memory hierarchy */
-#define MEM_NUM_LEVELS 6
+#define MEM_NUM_LEVELS 7
 #define MEM_CACHE_LINE_SIZE 64
 
 #ifndef IN_GCC
@@ -63,7 +63,7 @@
  */
 static inline int mem_cores_at_level(unsigned int level)
 {
-	int cores_at_level[] = {1, 2, 8, 8, 32, 24};
+	int cores_at_level[] = {1, 2, 8, 8, 32, 24, 64};
 	assert(level < MEM_NUM_LEVELS);
 	return cores_at_level[level];
 }
@@ -76,7 +76,8 @@ static inline const char* mem_level_name(unsigned int level)
 				"same_l3",
 				"same_numa",
 				"numa_1hop",
-				"numa_2hops"};
+				"numa_2hops",
+				"machine"};
 	assert(level < MEM_NUM_LEVELS);
 	return level_names[level];
 }
@@ -171,6 +172,7 @@ static inline int mem_level_siblings(unsigned int level, unsigned int a, unsigne
 				(b / mem_cores_at_level(level));
 		case 4: return (mem_numa_num_hops(a, b) == 1);
 		case 5: return (mem_numa_num_hops(a, b) == 2);
+		case 6: return 1;
 	}
 
 	assert(0);
@@ -194,7 +196,7 @@ static inline int mem_lowest_common_level(unsigned int a, unsigned int b)
 static inline int mem_transfer_costs(unsigned int a, unsigned int b)
 {
 	static int level_transfer_costs[MEM_NUM_LEVELS] = {
-		0, 3, 10, 10, 100, 200
+		0, 3, 10, 10, 100, 200, 200
 	};
 
 	int common_level = mem_lowest_common_level(a, b);
@@ -208,6 +210,15 @@ static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned in
 
 	if(sibling == cpu)
 		return base + (((sibling_num + 1) % mem_cores_at_level(level)));
+
+	return sibling;
+}
+
+static inline int mem_nth_machine_sibling(unsigned int cpu, unsigned int sibling_num)
+{
+	int sibling = sibling_num % mem_cores_at_level(6);
+	if(sibling == cpu)
+		return (sibling_num + 1) % mem_cores_at_level(6);
 
 	return sibling;
 }
@@ -227,6 +238,8 @@ static inline int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu,
 		return mem_numa_get_1hop_nth_sibling(cpu, sibling_num);
 	else if(level == 5)
 		return mem_numa_get_2hops_nth_sibling(cpu, sibling_num);
+	else if(level == 6)
+		return mem_nth_machine_sibling(cpu, sibling_num);
 
 	assert(0);
 }
@@ -234,7 +247,11 @@ static inline int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu,
 /* Returns how many steal attempts at a given level should be performed. */
 static inline int mem_num_steal_attempts_at_level(unsigned int level)
 {
-	int steals_at_level[] = {0, 2, 8, 0, 1, 1};
+	int steals_at_level[] = {0, 2, 8, 0, 1, 1, 1};
+
+	/* Configuration for complete random work-stealing */
+	/* int steals_at_level[] = {0, 0, 0, 0, 0, 0, 1}; */
+
 	assert(level < MEM_NUM_LEVELS);
 	return steals_at_level[level];
 }
