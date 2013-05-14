@@ -174,7 +174,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   trace_event(cthread, WQEVENT_TCREATE);
 
   wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
-  memset (frame_pointer, 0, size);
+  /* memset (frame_pointer, 0, size); */
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
