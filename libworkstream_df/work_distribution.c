@@ -148,8 +148,8 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
     }
 
   /* Final check */
-  if(/* Target worker should have written at least 30% more data */
-     max_data > 1.3*fp->bytes_cpu[cthread->cpu] &&
+  if(/* Target worker should have written at least X% more data */
+     max_data > PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu[cthread->cpu] &&
      /* Only migrate to a different worker */
      max_worker != cthread->worker_id &&
      /* Do not migrate to workers that are too close in the memory hierarchy */
