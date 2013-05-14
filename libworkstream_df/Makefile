@@ -1,6 +1,6 @@
 WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS)
 WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
-WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h
+WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 
 ifneq ($(wildcard ../install/bin/papi_avail),)
@@ -29,7 +29,7 @@ TEST_DEPS=		time-util.h
 all: libwstream_df.so
 all-test: $(TEST_PROGS)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c $(WSTREAM_DEPS)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c $(WSTREAM_DEPS)
 	$(CC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
 
 $(TEST_PROGS.cdeque): test-cdeque.c

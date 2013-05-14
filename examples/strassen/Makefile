@@ -21,6 +21,7 @@ MEM_CST_TESTS_DEPS_X86 = barrier_strassen.c \
 	../../libworkstream_df/trace.c \
 	../../libworkstream_df/fibers.c \
 	../../libworkstream_df/profiling.c \
+	../../libworkstream_df/work_distribution.c \
 	../common/common.c
 x86_strassen: CFLAGS_X86 += -D_GNU_SOURCE
 x86_strassen_c11: CFLAGS_X86 += -DUSE_STDATOMIC=1

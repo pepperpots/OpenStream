@@ -12,6 +12,7 @@
 #include "wstream_df.h"
 #include "profiling.h"
 #include "arch.h"
+#include "work_distribution.h"
 
 /***************************************************************************/
 /***************************************************************************/
@@ -215,16 +216,7 @@ static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
-  int i, level;
   wstream_df_thread_p cthread = current_thread;
-  unsigned int min_worker;
-  unsigned long long min_costs;
-  int push_slot;
-  unsigned long long xfer_costs[MAX_CPUS];
-  int fp_size;
-  int curr_owner;
-  int cpu;
-  int allocator_id, allocator_cpu, worker_id;
 
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
@@ -258,72 +250,12 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	}
 
 #if ALLOW_PUSHES
-      trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
-      long long cache_misses_now[MAX_CPUS];
-      memset(cache_misses_now, 0, sizeof(cache_misses_now));
-
-      for(worker_id = 0; worker_id < num_workers; worker_id++) {
-	cpu = worker_id_to_cpu(worker_id);
-	cache_misses_now[cpu] = mem_cache_misses(&wstream_df_worker_threads[worker_id]);
-      }
-
-      allocator_id = wstream_allocator_of(fp);
-      allocator_cpu = worker_id_to_cpu(allocator_id);
-
-      mem_estimate_frame_transfer_costs(cthread->cpu,
-					fp->bytes_cpu,
-					fp->cache_misses,
-					cache_misses_now,
-					allocator_cpu,
-					xfer_costs);
-
-      min_worker = cthread->worker_id;
-      min_costs = xfer_costs[cthread->worker_id];
-
-      int max_worker = cthread->worker_id;
-      int max_data = fp->bytes_cpu[cthread->cpu];
-
-      /* Which worker has the lowest transfer costs? */
-      for(worker_id = 0; worker_id < num_workers; worker_id++) {
-	cpu = worker_id_to_cpu(worker_id);
-
-	if(xfer_costs[cpu] < min_costs) {
-	  min_costs = xfer_costs[cpu];
-	  min_worker = worker_id;
-	}
-
-	if(fp->bytes_cpu[cpu] > max_data) {
-	  max_data = fp->bytes_cpu[cpu];
-	  max_worker = worker_id;
-	}
-      }
-
-      //min_worker = max_worker;
-      trace_state_restore(cthread);
+      int target_worker;
 
       /* Check whether the frame should be pushed somewhere else */
-      if(max_data != 0 && min_worker != cthread->worker_id && mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(min_worker)) >= PUSH_MIN_MEM_LEVEL) {
-	for(i = 0; i < NUM_PUSH_ATTEMPTS; i++) {
-	  cthread->rands = cthread->rands * 1103515245 + 12345;
-	  push_slot = (cthread->rands >> 16)% NUM_PUSH_SLOTS;
-	  curr_owner = fp->last_owner;
-	  fp->last_owner = cthread->worker_id;
-	  fp_size = fp->size;
-
-	  /* Try to push */
-	  if(compare_and_swap((size_t *)&wstream_df_worker_threads[min_worker].pushed_threads[push_slot], 0, (size_t)fp)) {
-	    level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(min_worker));
-	    inc_wqueue_counter(&current_thread->pushes_mem[level], 1);
-
-	    trace_push(cthread, min_worker, worker_id_to_cpu(min_worker), fp_size);
-	    trace_state_restore(cthread);
-	    return;
-	  }
-
-	  fp->last_owner = curr_owner;
-	  inc_wqueue_counter(&current_thread->pushes_fails, 1);
-	}
-      }
+      if(work_push_beneficial(fp, cthread, num_workers, &target_worker))
+	if(work_try_push(fp, target_worker, cthread, wstream_df_worker_threads))
+	  return;
 #endif
 
       if (fp->work_fn == (void *) 1)
@@ -507,35 +439,16 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 /* Threads and scheduling.  */
 /***************************************************************************/
 
-int compare_frame_costs(const void* a, const void* b)
-{
-  const wstream_df_frame_cost_p fca = (const wstream_df_frame_cost_p)a;
-  const wstream_df_frame_cost_p fcb = (const wstream_df_frame_cost_p)b;
-
-  if(fca->cost < fcb->cost)
-    return -1;
-  else if(fca->cost > fcb->cost)
-    return 1;
-
-  return 0;
-}
-
 __attribute__((__optimize__("O1")))
 static void
 worker_thread (void)
 {
   wstream_df_thread_p cthread = current_thread;
-  unsigned int steal_from = 0;
-  unsigned int steal_from_cpu = 0;
-  int i, level, attempt, sibling_num;
-  unsigned int cpu;
-  int last_steal_from = -1;
-  uint64_t misses, allocator_misses;
-  int allocator, allocator_cpu;
 
   current_barrier = NULL;
 
   cthread->rands = 77777 + cthread->worker_id * 19;
+  cthread->last_steal_from = -1;
 
   /* Enable barrier passing if needed.  */
   if (cthread->swap_barrier != NULL)
@@ -550,159 +463,19 @@ worker_thread (void)
 
   while (true)
     {
-      wstream_df_frame_p fp = NULL;
-
 #if ALLOW_PUSHES
-   #if !ALLOW_PUSH_REORDER
-      wstream_df_frame_p import;
-      int imported = 0;
-
-      /* Check if there were remote pushes. If so, import all pushed frames
-       * into the cache / work deque */
-      for(i = 0; i < NUM_PUSH_SLOTS; i++) {
-	if((import = cthread->pushed_threads[i]) != NULL) {
-
-	  /* If the cache is empty, put the pushed frame into it.
-	   * Otherwise put it into the work deque */
-	  if(cthread->own_next_cached_thread == NULL)
-	    cthread->own_next_cached_thread = import;
-	  else {
-	    if(import->cache_misses[cthread->cpu] > cthread->own_next_cached_thread->cache_misses[cthread->cpu]) {
-	      cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
-	      cthread->own_next_cached_thread = import;
-	    } else {
-	      cdeque_push_bottom (&cthread->work_deque, import);
-	    }
-	  }
-	  imported++;
-	  cthread->pushed_threads[i] = NULL;
-
-	  inc_wqueue_counter(&cthread->steals_pushed, 1);
-	}
-      }
-   #else
-      wstream_df_frame_p import;
-      int insert_pos = 0;
-      memset(cthread->push_reorder_slots, 0, sizeof(cthread->push_reorder_slots));
-
-      for(i = 0; i < NUM_PUSH_SLOTS; i++) {
-	if((import = cthread->pushed_threads[i]) != NULL) {
-	  cthread->push_reorder_slots[insert_pos].frame = import;
-	  cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
-	  cthread->pushed_threads[i] = NULL;
-	  insert_pos++;
-	}
-      }
-
-      if(cthread->own_next_cached_thread && insert_pos < NUM_PUSH_REORDER_SLOTS) {
-	import = cthread->own_next_cached_thread;
-	cthread->push_reorder_slots[insert_pos].frame = import;
-	cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
-	insert_pos++;
-	cthread->own_next_cached_thread = NULL;
-      }
-
-      if(insert_pos > 0) {
-	trace_state_change(cthread, WORKER_STATE_RT_REORDER);
-	while(insert_pos < NUM_PUSH_REORDER_SLOTS) {
-	  import = cdeque_take(&cthread->work_deque);
-
-	  if(import != NULL) {
-	    cthread->push_reorder_slots[insert_pos].frame = import;
-	    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
-	    insert_pos++;
-	  } else {
-	    break;
-	  }
-	}
-
-	qsort(cthread->push_reorder_slots, insert_pos, sizeof(wstream_df_frame_cost_t), compare_frame_costs);
-
-	cthread->own_next_cached_thread = cthread->push_reorder_slots[0].frame;
-
-	for(i = insert_pos-1; i >= 1; i--)
-	  cdeque_push_bottom (&cthread->work_deque, cthread->push_reorder_slots[i].frame);
-
-	trace_state_restore(cthread);
-      }
-   #endif
+#if !ALLOW_PUSH_REORDER
+      import_pushes(cthread);
+#else
+      reorder_pushes(cthread);
+#endif
 #endif
 
-      fp = cthread->own_next_cached_thread;
-      __compiler_fence;
+      uint64_t misses, allocator_misses;
+      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads, &misses, &allocator_misses);
 
-      if (fp == NULL) {
-	fp = (wstream_df_frame_p)  (cdeque_take (&cthread->work_deque));
-
-	if (fp != NULL)
-	  inc_wqueue_counter(&cthread->steals_ownqueue, 1);
-      } else {
-	cthread->own_next_cached_thread = NULL;
-	inc_wqueue_counter(&cthread->steals_owncached, 1);
-      }
-
-      if(fp == NULL)
+      if(fp != NULL)
 	{
-	  if(last_steal_from != -1) {
-	    fp = cdeque_steal (&wstream_df_worker_threads[last_steal_from].work_deque);
-
-	    if(fp == NULL) {
-	      inc_wqueue_counter(&cthread->steals_fails, 1);
-	      last_steal_from = -1;
-	    }
-	  }
-
-	  for(level = 0; level < MEM_NUM_LEVELS && !fp; level++)
-	    {
-	      for(attempt = 0; attempt < mem_num_steal_attempts_at_level(level) && !fp; attempt++)
-		{
-		  cthread->rands = cthread->rands * 1103515245 + 12345;
-		  sibling_num = (cthread->rands >> 16) % mem_cores_at_level(level);
-		  steal_from_cpu = mem_nth_sibling_at_level(level, cthread->cpu, sibling_num);
-
-		  if(cpu_used(steal_from_cpu)) {
-		    steal_from = cpu_to_worker_id(steal_from_cpu);
-		    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
-
-		    if(fp == NULL) {
-		      inc_wqueue_counter(&cthread->steals_fails, 1);
-		      last_steal_from = -1;
-		    }
-		  }
-		}
-	    }
-
-	  if(fp != NULL)
-	    {
-	      inc_wqueue_counter(&cthread->steals_mem[level], 1);
-	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
-	      fp->steal_type = STEAL_TYPE_STEAL;
-	      last_steal_from = steal_from;
-	      fp->last_owner = steal_from;
-	    }
-	}
-
-      if (fp != NULL)
-	{
-	  current_barrier = NULL;
-	  misses = 0;
-
-	  for(cpu = 0; cpu < MAX_CPUS; cpu++)
-	    {
-	      if(fp->bytes_cpu[cpu])
-		{
-		  level = mem_lowest_common_level(cthread->cpu, cpu);
-		  inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu[cpu]);
-		  inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu[cpu]);
-
-		  misses += mem_cache_misses(&wstream_df_worker_threads[cpu_to_worker_id(cpu)]) - fp->cache_misses[cpu];
-		}
-	    }
-
-	  allocator = wstream_allocator_of(fp);
-	  allocator_cpu = worker_id_to_cpu(allocator);
-	  allocator_misses = mem_cache_misses(&wstream_df_worker_threads[allocator]) - fp->cache_misses[allocator_cpu];
-
 	  wqueue_counters_enter_runtime(current_thread);
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);

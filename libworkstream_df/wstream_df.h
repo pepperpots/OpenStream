@@ -163,6 +163,8 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned int rands;
   unsigned int cpu;
 
+  int last_steal_from;
+
   WSTREAM_DF_THREAD_SLAB_FIELDS;
   WSTREAM_DF_THREAD_PUSH_FIELDS;
   WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS;

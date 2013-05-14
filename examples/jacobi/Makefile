@@ -21,6 +21,7 @@ MEM_CST_TESTS_DEPS_X86 = barrier_jacobi.c \
 	../../libworkstream_df/trace.c \
 	../../libworkstream_df/fibers.c \
 	../../libworkstream_df/profiling.c \
+	../../libworkstream_df/work_distribution.c \
 	../common/common.c
 x86_jacobi: CFLAGS_X86 += -D_GNU_SOURCE
 x86_jacobi_c11: CFLAGS_X86 += -DUSE_STDATOMIC=1
