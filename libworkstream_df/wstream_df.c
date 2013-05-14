@@ -328,7 +328,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
       if (fp->work_fn == (void *) 1)
 	{
-	  wstream_free(fp, fp->size);
+	  wstream_free(&cthread->slab_cache, fp);
 	  return;
 	}
       else
