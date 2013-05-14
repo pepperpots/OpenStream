@@ -7,6 +7,9 @@ all:
 paraver_support:
 	$(MAKE) -f extras/Makefile.getdeps osparaver
 
+papi_support:
+	$(MAKE) -f extras/Makefile.getdeps papi
+
 check:
 	echo "To be implemented"
 
