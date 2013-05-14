@@ -133,7 +133,7 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   int max_data = fp->bytes_cpu[cthread->cpu];
 
   /* Overhead for pushing small frames is too high */
-  if(fp->size < 64*1024)
+  if(fp->size < PUSH_MIN_FRAME_SIZE)
     return 0;
 
   /* Determine which worker write most of the frame's input data */

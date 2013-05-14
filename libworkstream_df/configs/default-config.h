@@ -22,6 +22,7 @@
 #define MATRIX_PROFILE "wqueue_matrix.out"
 
 #define PUSH_MIN_MEM_LEVEL 1
+#define PUSH_MIN_FRAME_SIZE (64*1024)
 #define NUM_PUSH_SLOTS 0
 #define NUM_PUSH_ATTEMPTS 16
 #define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
