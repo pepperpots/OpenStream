@@ -237,7 +237,6 @@ int work_try_push(wstream_df_frame_p fp,
 	  inc_wqueue_counter(&cthread->pushes_mem[level], 1);
 
 	  trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size);
-	  trace_state_restore(cthread);
 	  return 1;
 	}
 

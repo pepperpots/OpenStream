@@ -254,8 +254,13 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
       /* Check whether the frame should be pushed somewhere else */
       if(work_push_beneficial(fp, cthread, num_workers, &target_worker))
-	if(work_try_push(fp, target_worker, cthread, wstream_df_worker_threads))
-	  return;
+	{
+	  if(work_try_push(fp, target_worker, cthread, wstream_df_worker_threads))
+	    {
+	      trace_state_restore(cthread);
+	      return;
+	    }
+	}
 #endif
 
       if (fp->work_fn == (void *) 1)
