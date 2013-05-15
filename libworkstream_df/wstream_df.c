@@ -263,20 +263,10 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	}
 #endif
 
-      if (fp->work_fn == (void *) 1)
-	{
-	  wstream_free(&cthread->slab_cache, fp);
-	  trace_state_restore(cthread);
-	  return;
-	}
-      else
-	{
-	  if (cthread->own_next_cached_thread != NULL)
-	    cdeque_push_bottom (&cthread->work_deque,
-				(wstream_df_type) cthread->own_next_cached_thread);
-	  cthread->own_next_cached_thread = fp;
- 	  //cdeque_push_bottom (&cthread->work_deque, fp);
-	}
+      if (cthread->own_next_cached_thread != NULL)
+	cdeque_push_bottom (&cthread->work_deque,
+			    (wstream_df_type) cthread->own_next_cached_thread);
+      cthread->own_next_cached_thread = fp;
     }
 
   trace_state_restore(cthread);
