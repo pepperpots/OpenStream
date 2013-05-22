@@ -25,10 +25,6 @@ static wstream_df_thread_p wstream_df_worker_threads;
 static int num_workers;
 static int* wstream_df_worker_cpus;
 
-#if _PHARAON_MODE
-static ws_ctx_t master_ctx;
-static volatile bool master_ctx_swap_p = false;
-#endif
 
 /*************************************************************************/
 /*******             BARRIER/SYNC Handling                         *******/
@@ -674,9 +670,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 #endif
 
   pthread_attr_init (&thread_attr);
-#if !_PHARAON_MODE
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
-#endif
 
   cpu_set_t cs;
   CPU_ZERO (&cs);
@@ -711,39 +705,6 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 
   pthread_attr_destroy (&thread_attr);
 }
-
-#if _PHARAON_MODE
-/* Implement two-stage swap of master context for the PHARAON mode,
-   allowing to guarantee that all user code is run in a
-   Pthread-created thread.  */
-void *
-master_waiter_fn (void *data)
-{
-  current_thread = ((wstream_df_thread_p) data);
-
-  while (master_ctx_swap_p == false)
-    {
-#ifndef _WS_NO_YIELD_SPIN
-      sched_yield ();
-#endif
-    }
-  ws_setcontext (&master_ctx);
-  /* Never reached.  Avoid warning nonetheless.  */
-  return NULL;
-}
-
-void
-master_join_fn (void)
-{
-  void *ret;
-  int i;
-
-  master_ctx_swap_p = true;
-
-  for (i = 0; i < num_workers; ++i)
-    pthread_join (wstream_df_worker_threads[i].posix_thread_id, &ret);
-}
-#endif
 
 __attribute__((constructor))
 void pre_main()
@@ -808,29 +769,12 @@ void pre_main()
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
 
-#if _PHARAON_MODE
-  /* In order to ensure that all user code is executed by threads
-     created through the pthreads interface (PHARAON project specific
-     mode), we swap the main thread out here and swap in a new thread.
-  */
-  {
-    ws_ctx_t ctx;
-    void *stack;
+  if (cpu_affinities == NULL)
+    current_thread->cpu = 0;
+  else
+    current_thread->cpu = cpu_affinities[0];
+  wstream_df_worker_cpus[current_thread->cpu] = 0;
 
-    wstream_alloc(&wstream_df_worker_threads[0].slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
-    ws_prepcontext (&master_ctx, NULL, WSTREAM_STACK_SIZE, NULL);
-    ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, master_join_fn);
-
-    /* Start replacement for master thread on a temporary function
-       that will swap back to this context.  */
-    start_worker (&wstream_df_worker_threads[0], ncores, cpu_affinities, num_cpu_affinities,
-		  master_waiter_fn);
-
-    /* Swap master thread to a function that joins all threads.  The
-       replacement thread will execute the main from this point. */
-    ws_swapcontext (&master_ctx, &ctx);
-  }
-#endif
   free (cpu_affinities);
   init_wqueue_counters(&wstream_df_worker_threads[0]);
 }
