@@ -13,6 +13,9 @@
 #include "trace.h"
 #include "profiling.h"
 
+#define FIFO_SIZE NUM_PUSH_SLOTS
+#include "mpsc_fifo.h"
+
 #define STEAL_TYPE_PUSH 0
 #define STEAL_TYPE_STEAL 1
 #define STEAL_TYPE_UNKNOWN 2
@@ -125,7 +128,7 @@ typedef struct wstream_df_frame_cost {
 } wstream_df_frame_cost_t, *wstream_df_frame_cost_p;
 
 #if ALLOW_PUSHES
-  #define WSTREAM_DF_THREAD_PUSH_SLOTS wstream_df_frame_p pushed_threads[NUM_PUSH_SLOTS] __attribute__((aligned (64)))
+  #define WSTREAM_DF_THREAD_PUSH_SLOTS mpsc_fifo_t push_fifo __attribute__((aligned (64)))
 
   #if ALLOW_PUSH_REORDER
     #if NUM_PUSH_SLOTS > NUM_PUSH_REORDER_SLOTS
