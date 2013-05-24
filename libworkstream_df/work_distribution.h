@@ -4,7 +4,7 @@
 #include "wstream_df.h"
 #include "config.h"
 
-#if !ALLOW_PUSH_REORDER
+#if ALLOW_PUSH_REORDER
 void reorder_pushes(wstream_df_thread_p cthread);
 #endif
 
