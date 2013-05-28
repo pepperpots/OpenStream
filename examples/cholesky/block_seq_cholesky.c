@@ -29,7 +29,7 @@ stream_dpotrf (int block_size, int blocks,
 	{
 	  for (i = j + 1; i < blocks; ++i)
 	    {
-		    cblas_dgemm (CblasColMajor, CblasNoTrans, CblasTrans,
+		    cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 				 block_size, block_size, block_size,
 				 -1.0, blocked_data[i][k], block_size,
 				 blocked_data[j][k], block_size,
@@ -39,22 +39,27 @@ stream_dpotrf (int block_size, int blocks,
 
       for (i = 0; i < j; ++i)
 	{
-		cblas_dsyrk (CblasColMajor, CblasLower, CblasNoTrans,
+		cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
 			     block_size, block_size,
 			     -1.0, blocked_data[j][i], block_size,
 			     1.0, blocked_data[j][j], block_size);
 	}
 
       {
-	      unsigned char lower = 'L';
+	      unsigned char upper = 'U';
 	      int n = block_size;
 	      int nfo;
-	      dpotrf_(&lower, &n, blocked_data[j][j], &n, &nfo);
+
+	      /* Even though we try to obtain the lower matrix, we tell dpotrf to
+	       * calculate the upper matrix as this is a FORTRAN routine which
+	       * calculates indices in column major mode.
+	       */
+	      dpotrf_(&upper, &n, blocked_data[j][j], &n, &nfo);
       }
 
       for (i = j + 1; i < blocks; ++i)
 	{
-		cblas_dtrsm (CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
+		cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 			     block_size, block_size,
 			     1.0, blocked_data[j][j], block_size,
 			     blocked_data[i][j], block_size);
@@ -223,7 +228,7 @@ main(int argc, char *argv[])
 
     if (_SPEEDUPS)
       {
-	unsigned char lower = 'L';
+	unsigned char upper = 'U';
 	int nfo;
 	double stream_time = 0, seq_time = 0;
 
@@ -238,7 +243,12 @@ main(int argc, char *argv[])
 	memcpy (seq_data, data, size * sizeof (double));
 
 	gettimeofday (&sstart[iter], NULL);
-	dpotrf_(&lower, &N, seq_data, &N, &nfo);
+
+	/* Even though we try to obtain the lower matrix, we tell dpotrf to
+	 * calculate the upper matrix as this is a FORTRAN routine which
+	 * calculates indices in column major mode.
+	 */
+	dpotrf_(&upper, &N, seq_data, &N, &nfo);
 	gettimeofday (&send[iter], NULL);
 
 	seq_time = tdiff (&send[iter], &sstart[iter]);
