@@ -178,7 +178,7 @@ main(int argc, char *argv[])
   // Generate random numbers or read from file
   if (in_file == NULL)
     {
-      long int seed[4] = {0, 0, 0, 1};
+      long int seed[4] = {1092, 43, 77, 1};
       long int sp = 1;
       dlarnv_(&sp, seed, &size, data);
 
