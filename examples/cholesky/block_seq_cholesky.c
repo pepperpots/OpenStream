@@ -76,7 +76,7 @@ verify (int block_size, int N, int blocks,
 			     data[(ii*block_size + i)*N + jj*block_size + j]))
 	    {
 	      printf ("Result mismatch: %f \t %f\n",
-		      blocked_data[i/block_size][j/block_size][(i%block_size)*block_size+j%block_size], data[i*N+j]);
+		      blocked_data[ii][jj][i*block_size + j], data[i*N+j]);
 	      exit (1);
 	    }
 }
