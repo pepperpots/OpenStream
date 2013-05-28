@@ -1067,6 +1067,10 @@ install_var_field (tree var, bool by_ref, int mask, omp_context *ctx)
 	{
 	  tree t;
 
+	  error_at (gimple_location (ctx->stmt),
+		    "Sharing clauses that require building a marshalling function are not allowed at this time. (passing %qE to task not allowed, try using a pointer to shared data if possible).",
+		    DECL_NAME (var));
+
 	  ctx->srecord_type = lang_hooks.types.make_type (RECORD_TYPE);
 	  ctx->sfield_map = splay_tree_new (splay_tree_compare_pointers, 0, 0);
 	  for (t = TYPE_FIELDS (ctx->record_type); t ; t = TREE_CHAIN (t))

@@ -11,10 +11,6 @@
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
 #define WSTREAM_STACK_SIZE 1 << 16
 
-/* Toggle PHARAON mode which creates a new thread to run the "main" on
-   a different thread than master, with a context swap.  */
-#define _PHARAON_MODE 1
-
 #define MAX_CPUS 64
 
 #define WQUEUE_PROFILE 1
