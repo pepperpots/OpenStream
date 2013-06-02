@@ -13,8 +13,10 @@
 #include "trace.h"
 #include "profiling.h"
 
+#if ALLOW_PUSHES
 #define FIFO_SIZE NUM_PUSH_SLOTS
 #include "mpsc_fifo.h"
+#endif
 
 #define STEAL_TYPE_PUSH 0
 #define STEAL_TYPE_STEAL 1
