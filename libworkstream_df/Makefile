@@ -1,3 +1,14 @@
+# determine absolute path of *this* Makefile
+THIS_DIR = $(dir $(CURDIR)/$(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST)))
+
+# Start editing below
+
+# OpenStream toplevel installation directory
+INST_DIR = $(THIS_DIR)/../install
+
+# GCC with C11 support
+GCC = $(INST_DIR)/bin/gcc
+
 WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS) -std=c11
 WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
@@ -30,7 +41,7 @@ all: libwstream_df.so
 all-test: $(TEST_PROGS)
 
 libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c $(WSTREAM_DEPS)
-	$(CC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+	$(GCC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
 
 $(TEST_PROGS.cdeque): test-cdeque.c
 $(TEST_PROGS.cas): test-cas-cdeque.c
@@ -66,7 +77,7 @@ libwstream_df_c11.so: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1
 libwstream_df_dumbc11.so: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1 -DUSE_SEQ_CST_STDATOMIC=1
 libwstream_df_nofences.so: WSTREAM_CFLAGS+=-DNO_FENCES=1
 libwstream_df_%.so: wstream_df.c error.c $(WSTREAM_DEPS)
-	$(CC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+	$(GCC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
 install-alternative: alternative
 	mkdir -p ../install/lib64
 	cp libwstream_df_*.so ../install/lib64
