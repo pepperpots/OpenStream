@@ -425,7 +425,7 @@ $(CONTRIB_BINDIR)/papi_avail: $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src install
 
 $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src/Makefile: $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep
-	cd $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src; ./configure --prefix=$(INST_DIR)
+	cd $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/src; CC=gcc ./configure --prefix=$(INST_DIR)
 
 $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep: $(ARCHIVES_DIR)/papi-$(PAPI_VERSION).tar.gz
 	mkdir -p $(CONTRIB_DIR)
