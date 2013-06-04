@@ -38,7 +38,7 @@ void triangle_merge(key_t* a, key_t* b, long num_keys)
  * sequence of keys contains a triangle merge followed by top-bottom
  * comparisons with a decreasing number of input lines.
  *
- * At each step of the recursion, the nulber of keys is divided by two. If it
+ * At each step of the recursion, the number of keys is divided by two. If it
  * is equal to the block size, then a merge sort instead of a bitonic merge
  * is performed.
  */
