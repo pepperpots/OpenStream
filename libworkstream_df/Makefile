@@ -14,15 +14,10 @@ WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 
-ifneq ($(wildcard ../install/bin/papi_avail),)
-PAPI_DIR=		../install/
-WSTREAM_CFLAGS+=	-I$(PAPI_DIR)/include
-WSTREAM_LDFLAGS+=	-L$(PAPI_DIR)/lib -lpapi
+ifneq ($(wildcard $(INST_DIR)/bin/papi_avail),)
+WSTREAM_CFLAGS+=	-I$(INST_DIR)/include
+WSTREAM_LDFLAGS+=	-L$(INST_DIR)/lib -lpapi
 endif
-
-# PAPI_DIR=		/media/disk/dev/wstream_df/install/
-# WSTREAM_CFLAGS+=	-I$(PAPI_DIR)/include
-# WSTREAM_LDFLAGS+=	-L$(PAPI_DIR)/lib -lpapi
 
 TEST_DESTDIR=		tests
 
