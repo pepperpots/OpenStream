@@ -14,11 +14,6 @@ WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
 
-ifneq ($(wildcard $(INST_DIR)/bin/papi_avail),)
-WSTREAM_CFLAGS+=	-I$(INST_DIR)/include
-WSTREAM_LDFLAGS+=	-L$(INST_DIR)/lib -lpapi
-endif
-
 TEST_DESTDIR=		tests
 
 TEST_KINDS=		-c11 -dumbc11 -llscopt -nolwcas -nofences -nosync
@@ -35,8 +30,27 @@ TEST_DEPS=		time-util.h
 all: libwstream_df.so
 all-test: $(TEST_PROGS)
 
+ifeq ($(PAPI_ENABLED),yes)
+WSTREAM_CFLAGS+=       -I$(INST_DIR)/include
+WSTREAM_LDFLAGS+=      -L$(INST_DIR)/lib -lpapi
+endif
+
 libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c $(WSTREAM_DEPS)
+ifeq ($(PAPI_CHECKED),)
+	@$(MAKE) -C ../extras -f Makefile.papi_enabled
+	@PAPI_ENABLED=`../extras/papi_enabled` ; \
+	if [ $$PAPI_ENABLED = "yes" ] ; \
+	then \
+		if [ ! -f $(INST_DIR)/bin/papi_avail ] ; \
+		then \
+			echo "PAPI enabled in configuration, but not installed." ;\
+			cd ../ ; $(MAKE) papi_support ; cd - ; \
+		fi ; \
+	fi ;\
+	$(MAKE) PAPI_CHECKED=1 PAPI_ENABLED=$$PAPI_ENABLED $@ ;
+else
 	$(GCC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+endif
 
 $(TEST_PROGS.cdeque): test-cdeque.c
 $(TEST_PROGS.cas): test-cas-cdeque.c
