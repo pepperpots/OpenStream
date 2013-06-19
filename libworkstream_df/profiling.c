@@ -141,7 +141,6 @@ stop_wqueue_counters (void)
 void
 wqueue_counters_enter_runtime(struct wstream_df_thread* th)
 {
-	update_papi(th);
 }
 
 void
