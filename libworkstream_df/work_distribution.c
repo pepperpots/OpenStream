@@ -244,6 +244,7 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
   }
 #endif
 
+  if(fp == NULL) {
   /* Try to steal from another worker's deque.
    * Start with workers at the lowest common level, i.e. sharing the L2 cache.
    * If the target deque is empty and the maximum number of steal attempts on
@@ -265,10 +266,21 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 
 	    if(fp == NULL) {
 	      inc_wqueue_counter(&cthread->steals_fails, 1);
-
 #if CACHE_LAST_STEAL_VICTIM
 	      cthread->last_steal_from = -1;
 #endif
+	    } else {
+	      int real_level = mem_lowest_common_level(cthread->cpu, steal_from_cpu);
+	      inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
+	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
+	      fp->steal_type = STEAL_TYPE_STEAL;
+
+#if CACHE_LAST_STEAL_VICTIM
+	      cthread->last_steal_from = steal_from;
+#endif
+
+	      fp->last_owner = steal_from;
+
 	    }
 	  }
 	}
@@ -277,16 +289,8 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
   /* Check if any of the steal attempts succeeded */
   if(fp != NULL)
     {
-      inc_wqueue_counter(&cthread->steals_mem[level], 1);
-      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
-      fp->steal_type = STEAL_TYPE_STEAL;
-
-#if CACHE_LAST_STEAL_VICTIM
-      cthread->last_steal_from = steal_from;
-#endif
-
-      fp->last_owner = steal_from;
     }
+  }
 
   return fp;
 }
