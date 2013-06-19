@@ -33,7 +33,7 @@ main(int argc, char *argv[])
 
   double * data;
   int nfo;
-  unsigned char lower = 'L';
+  unsigned char upper = 'U';
   struct profiler_sync sync;
 
   PROFILER_NOTIFY_PREPARE(&sync);
@@ -124,7 +124,7 @@ main(int argc, char *argv[])
 
       gettimeofday (&sstart[iter], NULL);
       PROFILER_NOTIFY_RECORD(&sync);
-      dpotrf_(&lower, &N, seq_data, &N, &nfo);
+      dpotrf_(&upper, &N, seq_data, &N, &nfo);
       PROFILER_NOTIFY_PAUSE(&sync);
       gettimeofday (&send[iter], NULL);
 
