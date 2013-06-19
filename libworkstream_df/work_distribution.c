@@ -98,13 +98,8 @@ void import_pushes(wstream_df_thread_p cthread)
     if(cthread->own_next_cached_thread == NULL) {
       cthread->own_next_cached_thread = import;
     } else {
-      /* Cache is full, compare number of cache misses since creation / last write */
-      if(import->cache_misses[cthread->cpu] > cthread->own_next_cached_thread->cache_misses[cthread->cpu]) {
-	cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
-	cthread->own_next_cached_thread = import;
-      } else {
-	cdeque_push_bottom (&cthread->work_deque, import);
-      }
+      cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
+      cthread->own_next_cached_thread = import;
     }
   }
 }
