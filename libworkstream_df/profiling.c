@@ -207,6 +207,9 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	printf ("Thread %d: slab_bytes = %lld\n",
 		th->worker_id,
 		th->slab_cache.slab_bytes);
+	printf ("Thread %d: slab_final_objects = %d\n",
+		th->worker_id,
+		th->slab_cache.num_objects);
 	printf ("Thread %d: slab_refills = %lld\n",
 		th->worker_id,
 		th->slab_cache.slab_refills);
