@@ -8,8 +8,7 @@
 
 double tdiff (struct timeval *end, struct timeval *start);
 
-static inline bool
-double_equal (double a, double b)
+static inline int double_equal (double a, double b)
 {
   if(a == 0.0)
     return (fabs (a - b) < 1e-5);

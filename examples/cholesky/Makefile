@@ -18,8 +18,8 @@ stream_%: stream_%.c ../common/common.c ../common/sync.c
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt cilk_cholesky openmp_loop_cholesky openmp_task_cholesky
 
-cilk_cholesky: cilk_cholesky.cilk
-	$(CILKC) -I$(CBLAS_INC_DIR) -O2 $^ -o $@ -lm -lc -llapack -lblas -lcblas -L$(LAPACK_LIB_DIR) $(LD_RPATH_FLAGS)
+cilk_cholesky: cilk_cholesky.cilk  ../common/common.c ../common/sync.c
+	$(CILKC) -I$(CBLAS_INC_DIR) -O2 $^ -o $@ -lm -lc -llapack -lblas -lcblas -L$(LAPACK_LIB_DIR) $(LD_RPATH_FLAGS) -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200809L
 
 openmp_%: openmp_%.c ../common/common.c ../common/sync.c
 	$(PLAIN_GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -llapack -lblas -lcblas $(LD_RPATH_FLAGS)

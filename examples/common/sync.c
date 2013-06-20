@@ -1,5 +1,7 @@
 #include "sync.h"
+#ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE
+#endif
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/ipc.h>

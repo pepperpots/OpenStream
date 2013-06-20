@@ -451,14 +451,13 @@ $(CONTRIB_BINDIR)/cilkc: $(CONTRIB_DIR)/cilk-$(CILK_VERSION)/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/cilk-$(CILK_VERSION) install
 
 $(CONTRIB_DIR)/cilk-$(CILK_VERSION)/Makefile: $(CONTRIB_DIR)/cilk-$(CILK_VERSION)/exdep
-	cd $(CONTRIB_DIR)/cilk-$(CILK_VERSION); ./configure --prefix=$(INST_DIR)
+	cd $(CONTRIB_DIR)/cilk-$(CILK_VERSION); ./configure --prefix=$(INST_DIR) CFLAGS="-D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200809L"
 
 $(CONTRIB_DIR)/cilk-$(CILK_VERSION)/exdep: $(ARCHIVES_DIR)/cilk-$(CILK_VERSION).tar.gz
 	mkdir -p $(CONTRIB_DIR)
 	if [ -d $(CONTRIB_DIR)/cilk-$(CILK_VERSION) ] ; \
 		then rm -rf "$(CONTRIB_DIR)/cilk-$(CILK_VERSION)" ; fi
 	cd $(CONTRIB_DIR); tar xf $<
-	cd $(CONTRIB_DIR)/cilk-$(CILK_VERSION) ; patch -p0 < ../../cilk.patch
 	touch $@
 
 $(ARCHIVES_DIR)/cilk-$(CILK_VERSION).tar.gz:

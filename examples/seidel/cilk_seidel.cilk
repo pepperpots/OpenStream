@@ -1,49 +1,13 @@
-/* #include <stdio.h> */
-/* #include <stdlib.h> */
-/* #include <math.h> */
-/* #include <complex.h> */
-/* #include <getopt.h> */
-/* #include "../common/common.h" */
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <complex.h>
+#include <getopt.h>
+#include "../common/common.h"
 
 #define _WITH_OUTPUT 0
 
-/* #include <unistd.h> */
-
-#define FILE void
-
-#ifndef _STRUCT_TIMEVAL
-#define _STRUCT_TIMEVAL 1
-struct timeval {
-	time_t      tv_sec;     /* seconds */
-	suseconds_t tv_usec;    /* microseconds */
-};
-#endif
-
-extern void* stderr;
-
-extern int atoi(const char *nptr);
-extern FILE *fopen(const char *path, const char *mode);
-extern int printf(const char *format, ...);
-extern int fprintf(FILE *stream, const char *format, ...);
-extern void exit(int status);
-extern void *malloc(size_t size);
-extern double fabs(double x);
-
-static int
-double_equal (double a, double b)
-{
-  if(a == 0.0)
-    return (fabs (a - b) < 1e-5);
-  else
-    return (fabs (a - b) / fabs(a) < 5e-5);
-}
-
-double
-tdiff (struct timeval *end, struct timeval *start)
-{
-  return (double)end->tv_sec - (double)start->tv_sec +
-    (double)(end->tv_usec - start->tv_usec) / 1e6;
-}
+#include <unistd.h>
 
 cilk void
 gauss_seidel (int N, double *a, int block_size)

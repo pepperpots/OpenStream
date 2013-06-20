@@ -37,5 +37,5 @@ openmp_loop_seidel: openmp_loop_seidel.c ../common/common.c ../common/sync.c
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS_X86) $(MEM_CST_TESTS_ARM)
 
-cilk_seidel: cilk_seidel.cilk
-	$(CILKC) -O2 -Wall $^ -o $@
+cilk_seidel: cilk_seidel.cilk ../common/common.c ../common/sync.c
+	$(CILKC) -O2 -Wall $^ -o $@ -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200809L
