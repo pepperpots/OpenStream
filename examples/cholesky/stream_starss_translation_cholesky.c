@@ -53,8 +53,7 @@
        detailed below.
  */
 
-
-
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -201,7 +200,6 @@ stream_dpotrf (int block_size, int blocks,
 	       double *blocked_data[blocks][blocks])
 {
   int i, j, k;
-  int a, b;
 
   for (j = 0; j < blocks; ++j)
     {
@@ -350,7 +348,7 @@ static void
 blockify (int block_size, int blocks, int N,
 	  double *data, double *blocked_data[blocks][blocks])
 {
-  int ii, i, jj, j;
+  int ii, i, jj;
 
   for (ii = 0; ii < blocks; ++ii)
     for (jj = 0; jj < blocks; ++jj)
@@ -364,7 +362,7 @@ int
 main(int argc, char *argv[])
 {
   int option;
-  int i, j, iter;
+  int i, iter;
   int N = 4096;
 
   int numiters = 10;
