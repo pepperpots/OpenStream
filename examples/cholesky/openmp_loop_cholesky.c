@@ -9,8 +9,8 @@
 #include <assert.h>
 #include "../common/common.h"
 #include "../common/sync.h"
+#include "../common/lapack.h"
 #include <unistd.h>
-
 #include <cblas.h>
 
 

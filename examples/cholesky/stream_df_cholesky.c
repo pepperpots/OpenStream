@@ -26,15 +26,12 @@
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
+#include "../common/lapack.h"
 
 #define _SPEEDUPS 1
 #define _VERIFY 1
 
 #include <unistd.h>
-
-/* Missing declarations from liblapack */
-int dlarnv_(long *idist, long *iseed, int *n, double *x);
-void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 void* streams;
 

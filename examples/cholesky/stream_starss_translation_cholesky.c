@@ -66,6 +66,7 @@
 #include <assert.h>
 #include "../common/common.h"
 #include "../common/sync.h"
+#include "../common/lapack.h"
 
 #define _SPEEDUPS 0
 #define _VERIFY 0
