@@ -19,38 +19,6 @@
 #define _SPEEDUPS 0
 #define _VERIFY 0
 
-/* #include <unistd.h> */
-
-/* #define FILE void */
-
-/* #ifndef _STRUCT_TIMEVAL */
-/* #define _STRUCT_TIMEVAL 1 */
-/* struct timeval { */
-/* 	time_t      tv_sec;     /\* seconds *\/ */
-/* 	suseconds_t tv_usec;    /\* microseconds *\/ */
-/* }; */
-/* #endif */
-
-/* extern void* stderr; */
-
-/* extern int atoi(const char *nptr); */
-/* extern FILE *fopen(const char *path, const char *mode); */
-/* extern int printf(const char *format, ...); */
-/* extern int fprintf(FILE *stream, const char *format, ...); */
-/* extern void exit(int status); */
-/* extern void *malloc(size_t size); */
-/* extern double fabs(double x); */
-/* extern int dlarnv_(long *idist, long *iseed, int *n, double *x); */
-/* extern void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info ); */
-/* extern void *memcpy(void *dest, const void *src, size_t n); */
-/* extern int posix_memalign(void **memptr, size_t alignment, size_t size); */
-/* extern size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream); */
-/* extern size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream); */
-/* extern void free(void *ptr); */
-
-
-
-
 void
 c_dpotrf (int block_size, int blocks, double **blocked_data, int i, int j, int k)
 {
