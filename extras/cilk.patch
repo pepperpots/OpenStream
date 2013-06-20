@@ -1,0 +1,48 @@
+--- Makefile.am	2013-06-20 10:28:30.621790762 +0200
++++ Makefile.am	2013-06-20 10:28:49.368279337 +0200
+@@ -1,4 +1,4 @@
+-SUBDIRS = cilk2c runtime support examples doc FAQ
++SUBDIRS = cilk2c runtime support doc FAQ
+ EXTRA_DIST = THANKS bootstrap.sh
+ 
+ all-check:
+--- configure.ac	2013-06-20 10:34:19.937115225 +0200
++++ configure.ac	2013-06-20 10:34:36.540640690 +0200
+@@ -73,7 +73,6 @@
+                  cilk2c/Makefile
+                  doc/Makefile
+ 		 doc/version.tex
+-                 examples/Makefile
+                  runtime/Makefile
+                  support/Makefile])
+ 
+--- configure	2013-06-20 10:36:58.645638056 +0200
++++ configure	2013-06-20 10:37:09.235342570 +0200
+@@ -21946,7 +21946,7 @@
+ 
+ fi
+ 
+-ac_config_files="$ac_config_files FAQ/Makefile Makefile cilk2c/Makefile doc/Makefile doc/version.tex examples/Makefile runtime/Makefile support/Makefile"
++ac_config_files="$ac_config_files FAQ/Makefile Makefile cilk2c/Makefile doc/Makefile doc/version.tex runtime/Makefile support/Makefile"
+ 
+ 
+ cat >confcache <<\_ACEOF
+@@ -22541,7 +22541,6 @@
+     "cilk2c/Makefile") CONFIG_FILES="$CONFIG_FILES cilk2c/Makefile" ;;
+     "doc/Makefile") CONFIG_FILES="$CONFIG_FILES doc/Makefile" ;;
+     "doc/version.tex") CONFIG_FILES="$CONFIG_FILES doc/version.tex" ;;
+-    "examples/Makefile") CONFIG_FILES="$CONFIG_FILES examples/Makefile" ;;
+     "runtime/Makefile") CONFIG_FILES="$CONFIG_FILES runtime/Makefile" ;;
+     "support/Makefile") CONFIG_FILES="$CONFIG_FILES support/Makefile" ;;
+ 
+--- Makefile.in	2013-06-20 10:37:59.187935105 +0200
++++ Makefile.in	2013-06-20 10:38:02.913829068 +0200
+@@ -187,7 +187,7 @@
+ target_alias = @target_alias@
+ top_builddir = @top_builddir@
+ top_srcdir = @top_srcdir@
+-SUBDIRS = cilk2c runtime support examples doc FAQ
++SUBDIRS = cilk2c runtime support doc FAQ
+ EXTRA_DIST = THANKS bootstrap.sh
+ all: config.h
+ 	$(MAKE) $(AM_MAKEFLAGS) all-recursive
