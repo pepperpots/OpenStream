@@ -4,6 +4,7 @@
 #include <complex.h>
 #include <getopt.h>
 #include "../common/common.h"
+#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
@@ -19,6 +20,8 @@ gauss_seidel (int N, double *a, int block_size)
       a[N*i + j] = 0.2 * (a[N*i + j] + a[N*(i-1) + j] + a[N*(i+1) + j] + a[N*i + j-1] + a[N*i + j+1]);
 }
 
+struct profiler_sync psync;
+
 cilk int
 main (int argc, char **argv)
 {
@@ -33,6 +36,8 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
+
+  PROFILER_NOTIFY_PREPARE(&psync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -93,6 +98,7 @@ main (int argc, char **argv)
 	data[N*i + j] = (i*7 +j*13) % 17;
 
     gettimeofday (&start, NULL);
+    PROFILER_NOTIFY_RECORD(&psync);
 
     // Traverse the hyperplans
     for (a = 0; a < 2 * (num_blocks + numiters); ++a)
@@ -115,7 +121,9 @@ main (int argc, char **argv)
 	sync;
       }
 
+    PROFILER_NOTIFY_PAUSE(&psync);
     gettimeofday (&end, NULL);
+    PROFILER_NOTIFY_FINISH(&psync);
 
     printf ("%.5f\n", tdiff (&end, &start));
 
