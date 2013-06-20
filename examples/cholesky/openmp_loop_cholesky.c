@@ -162,6 +162,7 @@ blockify (int block_size, int blocks, int N,
 		block_size * sizeof (double));
 }
 
+struct profiler_sync psync;
 
 int
 main(int argc, char *argv[])
@@ -188,6 +189,8 @@ main(int argc, char *argv[])
   double * data;
   double **blocked_data;
   double stream_time = 0, seq_time = 0;
+
+  PROFILER_NOTIFY_PREPARE(&psync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
@@ -277,8 +280,11 @@ main(int argc, char *argv[])
 
       /* Start computation code.  */
       gettimeofday (&start[iter], NULL);
+      PROFILER_NOTIFY_RECORD(&psync);
       stream_dpotrf (block_size, blocks, (void *)blocked_data);
+      PROFILER_NOTIFY_PAUSE(&psync);
       gettimeofday (&end[iter], NULL);
+      PROFILER_NOTIFY_FINISH(&psync);
 
 
     if (_SPEEDUPS)
