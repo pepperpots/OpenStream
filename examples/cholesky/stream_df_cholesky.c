@@ -26,6 +26,7 @@
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
+#include "../common/sync.h"
 #include "../common/lapack.h"
 
 #define _SPEEDUPS 1
@@ -524,6 +525,8 @@ void create_terminal_task(double* data, int id_x, int id_y, int N, int block_siz
   }
 }
 
+struct profiler_sync sync;
+
 int
 main(int argc, char *argv[])
 {
@@ -543,6 +546,8 @@ main(int argc, char *argv[])
 
   struct timeval start;
   struct timeval end;
+
+  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
@@ -662,8 +667,10 @@ main(int argc, char *argv[])
     memcpy(work_data, input_data, size*sizeof(double));
 
     gettimeofday (&start, NULL);
+    PROFILER_NOTIFY_RECORD(&sync);
     new_stream_dpotrf(input_data, work_data, block_size, blocks);
     #pragma omp taskwait
+    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (&end, NULL);
 
     stream_time += tdiff(&end, &start);
@@ -672,6 +679,7 @@ main(int argc, char *argv[])
       verify (N, work_data, seq_data);
   }
 
+  PROFILER_NOTIFY_FINISH(&sync);
   printf ("%.5f \n", stream_time);
 
   free(input_data);
