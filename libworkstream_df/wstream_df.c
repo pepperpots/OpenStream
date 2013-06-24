@@ -34,10 +34,12 @@ static void worker_thread ();
 
 int wstream_self(void)
 {
-  if(current_thread == NULL)
-    return 0;
+  wstream_df_thread_p cthread = current_thread;
 
-  return current_thread->worker_id;
+  if (cthread == NULL)
+    wstream_df_fatal ("Current_thread lost...");
+
+  return cthread->worker_id;
 }
 
 static inline barrier_p
@@ -69,7 +71,7 @@ try_pass_barrier (barrier_p bar)
 	  wstream_df_thread_p cthread = current_thread;
 	  trace_task_exec_end(cthread);
 	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
-	  wqueue_counters_enter_runtime(current_thread);
+	  wqueue_counters_enter_runtime(cthread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
 
@@ -181,7 +183,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->creation_timestamp = rdtsc();
   frame_pointer->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
 
-  inc_wqueue_counter(&current_thread->tasks_created, 1);
+  inc_wqueue_counter(&cthread->tasks_created, 1);
 
   memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
   memset(frame_pointer->cache_misses, 0, sizeof(frame_pointer->cache_misses));
@@ -233,7 +235,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
   /* Schedule the thread if its synchronization counter reaches 0.  */
   if (sc == 0)
     {
-      wstream_df_thread_p cthread = current_thread;
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc();
@@ -305,7 +306,7 @@ __builtin_ia32_tend (void *fp)
   barrier_p cbar = current_barrier;
   barrier_p bar = cfp->own_barrier;
 
-  wqueue_counters_enter_runtime(current_thread);
+  wqueue_counters_enter_runtime(cthread);
 
   /* If this task spawned some tasks within a barrier, it needs to
      ensure the barrier gets collected.  */
@@ -482,11 +483,6 @@ worker_thread (void)
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 	  fp->work_fn (fp);
-	  trace_task_exec_end(cthread);
-	  trace_state_change(cthread, WORKER_STATE_SEEKING);
-
-	  wqueue_counters_enter_runtime(current_thread);
-	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
 	  __compiler_fence;
 
@@ -503,6 +499,12 @@ worker_thread (void)
 				  : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
 
 	  __compiler_fence;
+
+	  trace_task_exec_end(cthread);
+	  trace_state_change(cthread, WORKER_STATE_SEEKING);
+
+	  wqueue_counters_enter_runtime(cthread);
+	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 	}
       else
 	{
