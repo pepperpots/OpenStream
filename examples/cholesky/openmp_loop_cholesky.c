@@ -2,24 +2,70 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <math.h>
-#include <cblas.h>
 #include <getopt.h>
 #include <string.h>
+#include <assert.h>
 #include "../common/common.h"
-
-#define _SPEEDUPS 1
-#define _VERIFY 1
-
+#include "../common/sync.h"
+#include "../common/lapack.h"
 #include <unistd.h>
+#include <cblas.h>
 
-/* Missing declarations from liblapack */
-int dlarnv_(long *idist, long *iseed, int *n, double *x);
-void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
+
+#define _WITH_OUTPUT 0
+#define _SPEEDUPS 0
+#define _VERIFY 0
 
 void
+c_dpotrf (int block_size, int blocks, double **blocked_data, int i, int j, int k)
+{
+  unsigned char upper = 'U';
+  int n = block_size;
+  int nfo;
+
+  //fprintf (stderr, "dpotrf %d %d\n", j, j);
+  dpotrf_(&upper, &n, blocked_data[j*blocks + j], &n, &nfo);
+}
+
+void
+c_dtrsm (int block_size, int blocks, double **blocked_data, int i, int j, int k)
+{
+  cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
+	       block_size, block_size,
+	       1.0, blocked_data[j*blocks + j], block_size,
+	       blocked_data[i*blocks + j], block_size);
+}
+
+
+void
+c_dgemm (int block_size, int blocks, double **blocked_data, int i, int j, int k)
+{
+  cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
+	       block_size, block_size, block_size,
+	       -1.0, blocked_data[i*blocks + k], block_size,
+	       blocked_data[j*blocks + k], block_size,
+	       1.0, blocked_data[i*blocks + j], block_size);
+}
+
+void
+c_dsyrk (int block_size, int blocks, double **blocked_data, int i, int j, int k)
+{
+  cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
+	       block_size, block_size,
+	       -1.0, blocked_data[j*blocks + i], block_size,
+	       1.0, blocked_data[j*blocks + j], block_size);
+}
+
+/* This follows the same algorithm structure, recalling the
+   annotations above as call-site annotations.  Note that the code for
+   each task's conversion is entirely "copy-paste" code generation
+   (only needs unique variable names) except for the region
+   descriptors, which is not OpenStream related.  */
+void
 stream_dpotrf (int block_size, int blocks,
-	       double *blocked_data[blocks][blocks])
+	       double **blocked_data)
 {
   int i, j, k;
 
@@ -27,49 +73,32 @@ stream_dpotrf (int block_size, int blocks,
     {
       for (k = 0; k < j; ++k)
 	{
+#pragma omp parallel for
 	  for (i = j + 1; i < blocks; ++i)
 	    {
-		    cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
-				 block_size, block_size, block_size,
-				 -1.0, blocked_data[i][k], block_size,
-				 blocked_data[j][k], block_size,
-				 1.0, blocked_data[i][j], block_size);
+	      c_dgemm (block_size, blocks, blocked_data, i, j, k);
 	    }
 	}
 
       for (i = 0; i < j; ++i)
 	{
-		cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
-			     block_size, block_size,
-			     -1.0, blocked_data[j][i], block_size,
-			     1.0, blocked_data[j][j], block_size);
+	  c_dsyrk (block_size, blocks, blocked_data, i, j, k);
 	}
 
-      {
-	      unsigned char upper = 'U';
-	      int n = block_size;
-	      int nfo;
+      c_dpotrf (block_size, blocks, blocked_data, i, j, k);
 
-	      /* Even though we try to obtain the lower matrix, we tell dpotrf to
-	       * calculate the upper matrix as this is a FORTRAN routine which
-	       * calculates indices in column major mode.
-	       */
-	      dpotrf_(&upper, &n, blocked_data[j][j], &n, &nfo);
-      }
-
+#pragma omp parallel for
       for (i = j + 1; i < blocks; ++i)
 	{
-		cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
-			     block_size, block_size,
-			     1.0, blocked_data[j][j], block_size,
-			     blocked_data[i][j], block_size);
+	  c_dtrsm (block_size, blocks, blocked_data, i, j, k);
 	}
     }
 }
 
+
 static inline void
 verify (int block_size, int N, int blocks,
-	double *data, double *blocked_data[blocks][blocks])
+	double *data, double **blocked_data)
 {
   int ii, i, jj, j;
 
@@ -77,11 +106,11 @@ verify (int block_size, int N, int blocks,
     for (jj = 0; jj < blocks; ++jj)
       for (i = 0; i < block_size; ++i)
 	for (j = 0; j < block_size; ++j)
-	  if (!double_equal (blocked_data[ii][jj][i*block_size + j],
+	  if (!double_equal (blocked_data[ii*blocks + jj][i*block_size + j],
 			     data[(ii*block_size + i)*N + jj*block_size + j]))
 	    {
-	      printf ("Result mismatch: %f \t %f\n",
-		      blocked_data[ii][jj][i*block_size + j], data[i*N+j]);
+	      fprintf (stderr, "Result mismatch: %5.10f \t %5.10f\n",
+		      blocked_data[ii*blocks + jj][i*block_size + j], data[(ii*block_size + i)*N + jj*block_size + j]);
 	      exit (1);
 	    }
 }
@@ -90,17 +119,18 @@ verify (int block_size, int N, int blocks,
 
 static void
 blockify (int block_size, int blocks, int N,
-	  double *data, double *blocked_data[blocks][blocks])
+	  double *data, double **blocked_data)
 {
   int ii, i, jj;
 
   for (ii = 0; ii < blocks; ++ii)
     for (jj = 0; jj < blocks; ++jj)
       for (i = 0; i < block_size; ++i)
-	memcpy (&blocked_data[ii][jj][i*block_size], &data[(ii*block_size + i)*N + jj*block_size],
+	memcpy (&blocked_data[ii*blocks + jj][i*block_size], &data[(ii*block_size + i)*N + jj*block_size],
 		block_size * sizeof (double));
 }
 
+struct profiler_sync psync;
 
 int
 main(int argc, char *argv[])
@@ -114,6 +144,21 @@ main(int argc, char *argv[])
 
   FILE *res_file = NULL;
   FILE *in_file = NULL;
+
+  struct timeval *start = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *end = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *sstart = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  struct timeval *send = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+
+  int size;
+  int blocks;
+  int num_blocks;
+
+  double * data;
+  double **blocked_data;
+  double stream_time = 0, seq_time = 0;
+
+  PROFILER_NOTIFY_PREPARE(&psync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
@@ -162,23 +207,13 @@ main(int argc, char *argv[])
   }
 
 
-  struct timeval *start = (struct timeval *) malloc (numiters * sizeof (struct timeval));
-  struct timeval *end = (struct timeval *) malloc (numiters * sizeof (struct timeval));
-  struct timeval *sstart = (struct timeval *) malloc (numiters * sizeof (struct timeval));
-  struct timeval *send = (struct timeval *) malloc (numiters * sizeof (struct timeval));
+  size = N * N;
+  blocks = (N / block_size);
+  num_blocks = blocks * blocks;
 
-  int size = N * N;
-  int blocks = (N / block_size);
-  int num_blocks = blocks * blocks;
-
-  double * data;
-  double **blocked_data;
-
+  // Allocate data array
   if (posix_memalign ((void **) &data, 64, size * sizeof (double)))
-    {
-      printf ("Out of memory.\n");
-      exit (1);
-    }
+    { printf ("Out of memory.\n"); exit (1); }
 
   // Generate random numbers or read from file
   if (in_file == NULL)
@@ -187,43 +222,37 @@ main(int argc, char *argv[])
       long int sp = 1;
       dlarnv_(&sp, seed, &size, data);
 
-      // Also allow saving data sessions
       if (res_file != NULL)
 	fwrite (data, sizeof (double), size, res_file);
     }
   else
-    {
-      fread (data, sizeof(double), size, in_file);
-    }
-
-  // Ensure matrix is definite positive
+    fread (data, sizeof(double), size, in_file);
   for(i = 0; i < N; ++i)
     data[i*N + i] += N;
 
-  // blocked matrix
+  // Allocate blocked matrix
   if (posix_memalign ((void **) &blocked_data, 64,
 		      num_blocks * sizeof (double *)))
-    {
-      printf ("Out of memory.\n");
-      exit (1);
-    }
+    { printf ("Out of memory.\n"); exit (1); }
   for (i = 0; i < num_blocks; ++i)
     if (posix_memalign ((void **) &blocked_data[i], 64,
 			block_size * block_size * sizeof (double)))
-      {
-	printf ("Out of memory.\n");
-	exit (1);
-      }
+      { printf ("Out of memory.\n"); exit (1); }
 
-
+  // Run NUMITER iterations
   for (iter = 0; iter < numiters; ++iter)
     {
+      // refresh blocked data
       blockify (block_size, blocks, N, data, (void *)blocked_data);
 
-      /* Only effectively can start once the previous task completes.  */
+
+      /* Start computation code.  */
       gettimeofday (&start[iter], NULL);
+      PROFILER_NOTIFY_RECORD(&psync);
       stream_dpotrf (block_size, blocks, (void *)blocked_data);
+      PROFILER_NOTIFY_PAUSE(&psync);
       gettimeofday (&end[iter], NULL);
+      PROFILER_NOTIFY_FINISH(&psync);
 
 
     if (_SPEEDUPS)
@@ -231,10 +260,10 @@ main(int argc, char *argv[])
 	unsigned char upper = 'U';
 	int nfo;
 	double stream_time = 0, seq_time = 0;
+	double * seq_data;
 
 	stream_time = tdiff (&end[iter], &start[iter]);
 
-	double * seq_data;
 	if (posix_memalign ((void **) &seq_data, 64, size * sizeof (double)))
 	  {
 	    printf ("Out of memory.\n");
@@ -259,8 +288,10 @@ main(int argc, char *argv[])
       }
     }
 
-  double stream_time = 0, seq_time = 0;
-
+  // Aggregate the perf results.  WARNING: these perf results should
+  // not be used for anything but early prototyping/evaluation purposes as
+  // they are quite flawed.  Run the sequential version separately and
+  // disable _SPEEDUPS for reliable streaming perf results
   for (iter = 0; iter < numiters; ++iter)
     {
       stream_time += tdiff (&end[iter], &start[iter]);
@@ -278,8 +309,3 @@ main(int argc, char *argv[])
 
   return 0;
 }
-
-
-
-
-

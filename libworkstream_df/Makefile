@@ -1,17 +1,18 @@
-WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS)
+# determine absolute path of *this* Makefile
+THIS_DIR = $(dir $(CURDIR)/$(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST)))
+
+# Start editing below
+
+# OpenStream toplevel installation directory
+INST_DIR = $(THIS_DIR)/../install
+
+# GCC with C11 support
+GCC = $(INST_DIR)/bin/gcc
+
+WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS) -std=c11
 WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS)
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
-
-ifneq ($(wildcard ../install/bin/papi_avail),)
-PAPI_DIR=		../install/
-WSTREAM_CFLAGS+=	-I$(PAPI_DIR)/include
-WSTREAM_LDFLAGS+=	-L$(PAPI_DIR)/lib -lpapi
-endif
-
-# PAPI_DIR=		/media/disk/dev/wstream_df/install/
-# WSTREAM_CFLAGS+=	-I$(PAPI_DIR)/include
-# WSTREAM_LDFLAGS+=	-L$(PAPI_DIR)/lib -lpapi
 
 TEST_DESTDIR=		tests
 
@@ -29,8 +30,27 @@ TEST_DEPS=		time-util.h
 all: libwstream_df.so
 all-test: $(TEST_PROGS)
 
+ifeq ($(PAPI_ENABLED),yes)
+WSTREAM_CFLAGS+=       -I$(INST_DIR)/include
+WSTREAM_LDFLAGS+=      -L$(INST_DIR)/lib -lpapi
+endif
+
 libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c $(WSTREAM_DEPS)
-	$(CC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+ifeq ($(PAPI_CHECKED),)
+	@$(MAKE) -C ../extras -f Makefile.papi_enabled
+	@PAPI_ENABLED=`../extras/papi_enabled` ; \
+	if [ $$PAPI_ENABLED = "yes" ] ; \
+	then \
+		if [ ! -f $(INST_DIR)/bin/papi_avail ] ; \
+		then \
+			echo "PAPI enabled in configuration, but not installed." ;\
+			cd ../ ; $(MAKE) papi_support ; cd - ; \
+		fi ; \
+	fi ;\
+	$(MAKE) PAPI_CHECKED=1 PAPI_ENABLED=$$PAPI_ENABLED $@ ;
+else
+	$(GCC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+endif
 
 $(TEST_PROGS.cdeque): test-cdeque.c
 $(TEST_PROGS.cas): test-cas-cdeque.c
@@ -66,7 +86,7 @@ libwstream_df_c11.so: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1
 libwstream_df_dumbc11.so: WSTREAM_CFLAGS+=-DUSE_STDATOMIC=1 -DUSE_SEQ_CST_STDATOMIC=1
 libwstream_df_nofences.so: WSTREAM_CFLAGS+=-DNO_FENCES=1
 libwstream_df_%.so: wstream_df.c error.c $(WSTREAM_DEPS)
-	$(CC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+	$(GCC) $(WSTREAM_CFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
 install-alternative: alternative
 	mkdir -p ../install/lib64
 	cp libwstream_df_*.so ../install/lib64

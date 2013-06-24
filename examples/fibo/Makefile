@@ -22,5 +22,5 @@ barrier_%: barrier_%.c ../common/common.c ../common/sync.c
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt
 
-cilk_fibo: cilk_fibo.cilk ../common/common.c
-	$(CILKC) -O2 -g $^ -o $@ #-fdump-tree-all
+cilk_fibo: cilk_fibo.cilk ../common/common.c ../common/sync.c
+	$(CILKC) -O2 -g $^ -o $@ -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200809L #-fdump-tree-all

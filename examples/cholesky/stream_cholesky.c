@@ -8,15 +8,12 @@
 #include <string.h>
 #include "../common/common.h"
 #include "../common/sync.h"
+#include "../common/lapack.h"
 
 #define _SPEEDUPS 0
 #define _VERIFY 0
 
 #include <unistd.h>
-
-/* Missing declarations from liblapack */
-int dlarnv_(long *idist, long *iseed, int *n, double *x);
-void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 void
 stream_dpotrf (int block_size, int blocks,
@@ -45,7 +42,7 @@ stream_dpotrf (int block_size, int blocks,
   output (Rstreams[i*blocks + k] << w_2, Rstreams[j*blocks + k] << w_3)	\
   input (streams[i*blocks + j] >> w_4) output (streams[i*blocks + j] << w_5)
 		  {
-		    cblas_dgemm (CblasColMajor, CblasNoTrans, CblasTrans,
+		    cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 				 block_size, block_size, block_size,
 				 -1.0, blocked_data[i][k], block_size,
 				 blocked_data[j][k], block_size,
@@ -62,7 +59,7 @@ stream_dpotrf (int block_size, int blocks,
   input (streams[i*blocks + j] >> w_4) output (streams[i*blocks + j] << w_5) \
   input (Rstreams[i*blocks + j] >> Rwin[readers])
 		  {
-		    cblas_dgemm (CblasColMajor, CblasNoTrans, CblasTrans,
+		    cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 				 block_size, block_size, block_size,
 				 -1.0, blocked_data[i][k], block_size,
 				 blocked_data[j][k], block_size,
@@ -84,7 +81,7 @@ stream_dpotrf (int block_size, int blocks,
 #pragma omp task peek (streams[j*blocks + i] >> w_0) output (Rstreams[j*blocks + i] << w_1) \
   input (streams[j*blocks + j] >> w_2) output (streams[j*blocks + j] << w_3)
 	      {
-		cblas_dsyrk (CblasColMajor, CblasLower, CblasNoTrans,
+		cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
 			     block_size, block_size,
 			     -1.0, blocked_data[j][i], block_size,
 			     1.0, blocked_data[j][j], block_size);
@@ -99,7 +96,7 @@ stream_dpotrf (int block_size, int blocks,
   input (streams[j*blocks + j] >> w_2) output (streams[j*blocks + j] << w_3) \
   input (Rstreams[j*blocks + j] >> Rwin[readers])
 	      {
-		cblas_dsyrk (CblasColMajor, CblasLower, CblasNoTrans,
+		cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
 			     block_size, block_size,
 			     -1.0, blocked_data[j][i], block_size,
 			     1.0, blocked_data[j][j], block_size);
@@ -115,10 +112,15 @@ stream_dpotrf (int block_size, int blocks,
 	  {
 #pragma omp task input (streams[j*blocks + j] >> w_0) output (streams[j*blocks + j] << w_1)
 	    {
-	      unsigned char lower = 'L';
+	      unsigned char upper = 'U';
 	      int n = block_size;
 	      int nfo;
-	      dpotrf_(&lower, &n, blocked_data[j][j], &n, &nfo);
+
+	      /* Even though we try to obtain the lower matrix, we tell dpotrf to
+	       * calculate the upper matrix as this is a FORTRAN routine which
+	       * calculates indices in column major mode.
+	       */
+	      dpotrf_(&upper, &n, blocked_data[j][j], &n, &nfo);
 	    }
 	  }
 	else
@@ -129,10 +131,15 @@ stream_dpotrf (int block_size, int blocks,
 #pragma omp task input (streams[j*blocks + j] >> w_0) output (streams[j*blocks + j] << w_1) \
   input (Rstreams[j*blocks + j] >> Rwin[readers])
 	    {
-	      unsigned char lower = 'L';
+	      unsigned char upper = 'U';
 	      int n = block_size;
 	      int nfo;
-	      dpotrf_(&lower, &n, blocked_data[j][j], &n, &nfo);
+
+	      /* Even though we try to obtain the lower matrix, we tell dpotrf to
+	       * calculate the upper matrix as this is a FORTRAN routine which
+	       * calculates indices in column major mode.
+	       */
+	      dpotrf_(&upper, &n, blocked_data[j][j], &n, &nfo);
 	    }
 	  }
       }
@@ -149,7 +156,7 @@ stream_dpotrf (int block_size, int blocks,
 #pragma omp task peek (streams[j*blocks + j] >> w_0) output (Rstreams[j*blocks + j] << w_1) \
   input (streams[i*blocks + j] >> w_2) output (streams[i*blocks + j] << w_3)
 	      {
-		cblas_dtrsm (CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
+		cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 			     block_size, block_size,
 			     1.0, blocked_data[j][j], block_size,
 			     blocked_data[i][j], block_size);
@@ -164,7 +171,7 @@ stream_dpotrf (int block_size, int blocks,
   input (streams[i*blocks + j] >> w_2) output (streams[i*blocks + j] << w_3) \
   input (Rstreams[i*blocks + j] >> Rwin[readers])
 	      {
-		cblas_dtrsm (CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
+		cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 			     block_size, block_size,
 			     1.0, blocked_data[j][j], block_size,
 			     blocked_data[i][j], block_size);
@@ -188,7 +195,7 @@ verify (int block_size, int N, int blocks,
 			     data[(ii*block_size + i)*N + jj*block_size + j]))
 	    {
 	      printf ("Result mismatch: %f \t %f\n",
-		      blocked_data[i/block_size][j/block_size][(i%block_size)*block_size+j%block_size], data[i*N+j]);
+		      blocked_data[ii][jj][i*block_size + j], data[i*N+j]);
 	      exit (1);
 	    }
 }
@@ -362,7 +369,7 @@ main(int argc, char *argv[])
 
     if (_SPEEDUPS)
       {
-	unsigned char lower = 'L';
+	unsigned char upper = 'U';
 	int nfo;
 	double stream_time = 0, seq_time = 0;
 
@@ -377,7 +384,12 @@ main(int argc, char *argv[])
 	memcpy (seq_data, data, size * sizeof (double));
 
 	gettimeofday (&sstart[iter], NULL);
-	dpotrf_(&lower, &N, seq_data, &N, &nfo);
+
+	/* Even though we try to obtain the lower matrix, we tell dpotrf to
+	 * calculate the upper matrix as this is a FORTRAN routine which
+	 * calculates indices in column major mode.
+	 */
+	dpotrf_(&upper, &N, seq_data, &N, &nfo);
 	gettimeofday (&send[iter], NULL);
 
 	seq_time = tdiff (&send[iter], &sstart[iter]);

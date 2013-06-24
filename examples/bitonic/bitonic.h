@@ -39,7 +39,7 @@ static inline void init_sequence(key_t* keys, long num_keys)
 
 	for(long i = 0; i < num_keys; i++) {
 		rands = rands * 1103515245 + 12345;
-		keys[i] = num_keys - i - 1; //rands;
+		keys[i] = rands;
 	}
 }
 

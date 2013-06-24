@@ -1,0 +1,9 @@
+all: papi_enabled
+
+papi_enabled: papi_enabled.c
+	gcc -std=c99 -D_GNU_SOURCE -o $@ $<
+
+clean:
+	rm papi_enabled
+
+.PHONY: papi_enabled

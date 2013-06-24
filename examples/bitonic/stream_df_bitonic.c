@@ -26,18 +26,34 @@
 #include "../common/common.h"
 #include "../common/sync.h"
 
-/* Streams within parallel stages */
-void** intra_streams;
+void** streams;
+void** end_streams;
 
-/* Streams between parallel stages */
-void** inter_streams;
+/* log2 of the number of keys to sort */
+long num_keys_log;
+long num_keys;
 
-/* Stream used for synchornization with the terminating tasks */
-void** end_stream;
+/* log2 of the number of keys per block */
+long block_size_log;
+long block_size;
+
+key_t* keys;
+
+int num_par_stages;
+int num_blocks;
+int num_total_streams;
 
 struct timeval start;
 struct timeval end;
 struct profiler_sync sync;
+
+void create_init_task(int task_num);
+void create_init_sort_task(int task_num);
+void create_terminal_task(int task_num);
+void create_triangle_task(int stage, int triangle_part, int box);
+void create_atomic_compare_half_task(int stage, int ch_stage, int box, int level);
+void create_compare_half_task(int stage, int ch_stage, int box, int level, int compare_half);
+
 
 /* Compare upper and lower half in a triangular fashion:
  * top_in[i] is compared to bottom_in[num_keys-i-1].
@@ -62,294 +78,194 @@ static inline void compare_halves_inout(key_t* top_in, key_t* bottom_in,
 					key_t* top_out, key_t* bottom_out,
 					long num_keys)
 {
-	for(long i = 0; i < num_keys; i++) {
+	if(num_keys < 1)
+		return;
+
+	for(long i = 0; i < num_keys; i++)
 		cmpxchg_inout(&top_in[i], &bottom_in[i],
 			      &top_out[i], &bottom_out[i]);
-	}
 }
 
-/* Compare top_in[i] and bottom_in[i]. Afterwards the top and the  bottom keys are
- * split into equal parts and the same procedure is repeated for the subsets.
- * The final values are written to top_out and bottom_out using the same indexes
- * as for top_in and bottom_in.
- */
-static inline void compare_halves_rec(key_t* top_in, key_t* bottom_in,
-				      key_t* top_out, key_t* bottom_out,
-				      long num_keys)
+static void compare_halves_inout_rec(key_t* top_in, key_t* bottom_in,
+					key_t* top_out, key_t* bottom_out,
+					long num_keys)
 {
-	/* Compare top and bottom */
-	compare_halves(top_in, bottom_in, num_keys);
-
-	/* At each iteration split keys into two equal parts and repeat the
-	 * procedure for both parts independently
-	 */
-	for(long level = num_keys; level > 1; level /= 2) {
-		if(level == 2) {
-			/* Final level, 2 top keys and 2 bottom keys are left.
-			 * The result of the comparison whould go into top_out
-			 * and bottom_out, so use compare_halves_inout() instead
-			 * of compare_halves(). */
-			for(long i = 0; i < num_keys; i += level) {
-				compare_halves_inout(&top_in[i],
-						     &top_in[i+level/2],
-						     &top_out[i],
-						     &top_out[i+level/2],
-						     1);
-				compare_halves_inout(&bottom_in[i],
-						     &bottom_in[i+level/2],
-						     &bottom_out[i],
-						     &bottom_out[i+level/2],
-						     1);
-			}
-		} else {
-			/* At all other levels perform in-place comparisons */
-			for(long i = 0; i < num_keys; i += level) {
-				compare_halves(&top_in[i], &top_in[i+level/2],
-					       level/2);
-				compare_halves(&bottom_in[i], &bottom_in[i+level/2],
-					       level/2);
-			}
-		}
-	}
-}
-
-void stream_compare_halves(long num_keys, long block_size,
-			       void** sin_top, void** sout_top,
-			       void** sin_bottom, void** sout_bottom)
-{
-	key_t top_in[block_size];
-	key_t top_out[block_size];
-	key_t bottom_in[block_size];
-	key_t bottom_out[block_size];
-
-	if(num_keys == block_size) {
-		#pragma omp task input(sin_top[0] >> top_in[block_size], \
-					sin_bottom[0] >> bottom_in[block_size]) \
-				output(sout_top[0] << top_out[block_size], \
-					sout_bottom[0] << bottom_out[block_size])
-		{
-			compare_halves_inout(top_in, bottom_in,
-					     top_out, bottom_out,
-					     block_size);
-		}
-	} else if(num_keys == block_size / 2) {
-		#pragma omp task input(sin_top[0] >> top_in[block_size]) \
-				output(sout_top[0] << top_out[block_size])
-		{
-			compare_halves_rec(&top_in[0], &top_in[block_size/2],
-					   &top_out[0], &top_out[block_size/2],
-					   block_size / 2);
-		}
-	}
-}
-
-/* Create tasks that compare an upper and a lower half in a triangular fashion.
- * sin_top specifies the streams containing the blocks of the top part,
- * sin_bottom those that contain the bottom parts.
- *
- * The result is written to the streams in sout_top and sout_bottom using
- * the same indexes as for the input streams.
- */
-void stream_triangle_merge(long num_keys, long block_size,
-			   void** sin_top, void** sout_top,
-			   void** sin_bottom, void** sout_bottom)
-{
-	long num_blocks = num_keys / block_size;
-	key_t top_in[block_size];
-	key_t top_out[block_size];
-	key_t bottom_in[block_size];
-	key_t bottom_out[block_size];
-
-	for(long i = 0; i < num_blocks / 2; i++) {
-		#pragma omp task input(sin_top[i] >> top_in[block_size], \
-				       sin_bottom[num_blocks / 2 - i - 1] >> bottom_in[block_size]) \
-				output(sout_top[i] << top_out[block_size], \
-				       sout_bottom[num_blocks / 2 - i - 1] << bottom_out[block_size])
-		{
-			triangle_merge_inout(top_in, bottom_in, top_out, bottom_out, block_size);
-		}
-	}
-}
-
-/* Recursively generate tasks for sorting boxes. A sorting box for a sequence
- * of keys contains a triangle merge followed by top-bottom comparisons with a
- * decreasing number of input lines.
- *
- * At each step of the recursion, the nulber of keys is divided by two. If it
- * is equal to the block size, then a merge sort instead of a bitonic merge
- * is performed.
- */
-void stream_sort(long num_keys_log, long block_size_log,
-		 void** inter_streams,
-		 void** intra_streams,
-		 long num_inter_streams_total,
-		 long num_intra_streams_total)
-{
-	long num_keys = (1 << num_keys_log);
-	long block_size = (1 << block_size_log);
-
-	long num_blocks = (1 << (num_keys_log - block_size_log));
-	key_t top_in[block_size];
-	key_t top_out[block_size];
-
-	/* Number of output streams of this step */
-	long num_inter_streams = num_blocks;
-
-	if(num_blocks == 1) {
-		/* If only one block is left, then perform a merge sort */
-		#pragma omp task input(inter_streams[1] >> top_in[block_size]) \
-			output(inter_streams[0] << top_out[block_size])
-		{
-			mergesort_block(top_in, top_out, block_size);
-		}
-
+	if(num_keys < 1)
 		return;
+
+	/* compare_halves(top_in, bottom_in, num_keys); */
+	/* mergesort_block(top_in, top_out, num_keys); */
+	/* mergesort_block(bottom_in, bottom_out, num_keys); */
+
+	compare_halves_inout(top_in, bottom_in, top_out, bottom_out, num_keys);
+
+	/* Compare boxes */
+	for(long i = num_keys; i > 1; i /= 2) {
+		for(long k = 0; k < num_keys; k += i) {
+			compare_halves(&top_out[k], &top_out[k+i/2], i / 2);
+			compare_halves(&bottom_out[k], &bottom_out[k+i/2], i / 2);
+		}
 	}
+}
 
-	/* At least two blocks */
-	long num_intra_streams = (num_keys_log - block_size_log) * num_blocks;
+void create_init_task(int task_num)
+{
+	key_t top_out[block_size];
 
-	long num_inter_streams_following = num_inter_streams_total - num_blocks;
-	long num_intra_streams_following = num_intra_streams_total - num_intra_streams;
+	#pragma omp task output(streams[task_num] << top_out[block_size])
+	{
+		memcpy(top_out, &keys[task_num*block_size], block_size*sizeof(key_t));
 
-	/* Create tasks that sort the top part */
-	stream_sort(num_keys_log - 1, block_size_log,
-		    &inter_streams[num_inter_streams],
-		    &intra_streams[num_intra_streams],
-		    num_inter_streams_following / 2,
-		    num_intra_streams_following / 2);
-
-	/* Create tasks that merge the two parts */
-	stream_triangle_merge(num_keys, block_size,
-		     &inter_streams[num_inter_streams],
-		     &intra_streams[0],
-		     &inter_streams[num_inter_streams + num_inter_streams_following/2],
-		     &intra_streams[num_blocks/2]);
-
-	/* Create tasks that sort the bottom part */
-	stream_sort(num_keys_log - 1, block_size_log,
-		    &inter_streams[num_inter_streams + num_inter_streams_following/2],
-		    &intra_streams[num_intra_streams + num_intra_streams_following/2],
-		    num_inter_streams_following / 2,
-		    num_intra_streams_following / 2);
-
-	/* Create compare boxes */
-	int max_level = num_keys_log - block_size_log;
-
-	/* The dependence graph for the compare boxes has a tree-like structure,
-	 * the number of boxes per level increases, while the number of dependeces
-	 * decreases
-	 */
-	for(long level = 0; level < max_level; level++) {
-		int blocks_per_compare_box = 1 << (num_keys_log - block_size_log - level - 1);
-
-		/* Base offset in the current intra-stream table for this level */
-		int base_offset = level*num_blocks;
-
-		for(int compare_box = 0; compare_box < (1 << (level + 1)); compare_box++) {
-			/* Calculate base offset for the current box */
-			int compare_box_offset = base_offset + compare_box * blocks_per_compare_box;
-
-			if(level == max_level-1) {
-				/* We've reached the block size, create task for the compare box part */
-				stream_compare_halves(block_size / 2,
-						      block_size,
-						      &intra_streams[compare_box_offset],
-						      &inter_streams[compare_box],
-						      NULL,
-						      NULL);
-			} else {
-				/* Further divide the compare box: one compare box part pêr block */
-				for(int inner_compare_box = 0; inner_compare_box < blocks_per_compare_box / 2; inner_compare_box++) {
-					/* Offset of the current compare box part */
-					int offset = compare_box_offset + inner_compare_box;
-
-					/* Output offset of the current compare box part */
-					int offset_next_iter = offset + num_blocks;
-
-					stream_compare_halves(block_size,
-							      block_size,
-							      &intra_streams[offset],
-							      &intra_streams[offset_next_iter],
-							      &intra_streams[offset+blocks_per_compare_box/2],
-							      &intra_streams[offset_next_iter+blocks_per_compare_box/2]);
-				}
+		if(num_par_stages > 0) {
+			if(task_num % 2 == 0) {
+				create_triangle_task(0, 0, task_num / 2);
 			}
 		}
 	}
 }
 
-/* Generates tasks that read blocks of keys from the array of input keys and
- * copies them into the appropriate inter-stage streams.
- */
-void stream_init(key_t* keys,
-		 long num_keys,
-		 long block_size,
-		 void** inter_streams,
-		 long num_inter_streams_total,
-		 long i)
+void create_init_sort_task(int task_num)
 {
-	key_t out[block_size];
+	key_t top_in[block_size];
+	key_t top_out[block_size];
 
-	/* The number of streams used downards in the recursion is the total
-	 * number of streams minus the number of streams used for output at
-	 * the current step.
-	 */
-	long num_blocks = num_keys / block_size;
-	long num_inter_streams_following = num_inter_streams_total - num_blocks;
+	#pragma omp task input(streams[task_num] >> top_in[block_size]) \
+			output(streams[task_num+num_blocks] << top_out[block_size])
+	{
+		mergesort_block(top_in, top_out, block_size);
 
-	if(num_keys == block_size) {
-		/* Block size reached, simply copy data from the input sequence
-		 * to the stream. No further recursion is required.
-		 */
-		#pragma omp task output(inter_streams[1] << out[block_size])
-		{
-			memcpy(out, &keys[i*block_size], block_size*sizeof(key_t));
+		if(num_par_stages > 0) {
+			create_atomic_compare_half_task(0, 0, task_num / 2, task_num % 2);
 		}
-	} else {
-		/* Initilize streams for steps that indirectly provide input
-		 * data to the current step. Divide remaining streams into top
-		 * and bottom half with an offset of num_blocks (number of
-		 * output streams of this step.
-		 */
-
-		stream_init(keys,
-			    num_keys / 2,
-			    block_size,
-			    &inter_streams[num_blocks],
-			    num_inter_streams_following / 2,
-			    i);
-
-		stream_init(keys,
-			    num_keys / 2,
-			    block_size,
-			    &inter_streams[num_blocks + num_inter_streams_following / 2],
-			    num_inter_streams_following / 2,
-			    i + num_blocks / 2);
 	}
 }
 
-/* Generate terminating tasks that read data from the final streams and copy it
- * to the output sequence.
- */
-void stream_collect(key_t* keys, long num_keys, long block_size,
-		    void** inter_streams, void** end_stream)
+void create_terminal_task(int task_num)
 {
-	long num_blocks = num_keys / block_size;
-	int token;
-	key_t out[block_size];
+	key_t top_in[block_size];
 
-	/* We only need the output streams of the first reccursive step which
-	 * are located at the front of the inter_streams table. Further, we
-	 * need to write tokens into the end stream on which the cleanup
-	 * task depends.
-	 */
-	for(long i = 0; i < num_blocks; i++) {
-		#pragma omp task input(inter_streams[i] >> out[block_size])	  \
-			output(end_stream[0] << token[1])		\
-			firstprivate(i)
-		{
-			memcpy(&keys[i*block_size], out, block_size*sizeof(key_t));
+	#pragma omp task input(streams[num_total_streams - num_blocks + task_num] >> top_in[block_size])
+	{
+		memcpy(&keys[task_num*block_size], top_in, block_size*sizeof(key_t));
+	}
+}
+
+void create_triangle_task(int stage, int triangle_part, int box)
+{
+	int stage_offset = num_blocks * (stage + 1) * (stage + 2) / 2;
+	int num_blocks_in_box = (2 << stage);
+
+	int box_offset = stage_offset + box * num_blocks_in_box;
+
+	int top_in_offset = box_offset + triangle_part;
+	int bottom_in_offset = box_offset + num_blocks_in_box - triangle_part - 1;
+
+	int top_out_offset = top_in_offset + num_blocks;
+	int bottom_out_offset = bottom_in_offset + num_blocks;
+
+	key_t top_in[block_size];
+	key_t top_out[block_size];
+	key_t bottom_in[block_size];
+	key_t bottom_out[block_size];
+
+	#pragma omp task input(streams[top_in_offset]     >> top_in[block_size], \
+			       streams[bottom_in_offset]  >> bottom_in[block_size]) \
+			output(streams[top_out_offset]    << top_out[block_size], \
+			       streams[bottom_out_offset] << bottom_out[block_size])
+	{
+		triangle_merge_inout(top_in, bottom_in, top_out, bottom_out, block_size);
+
+		if(stage == 0 && num_par_stages > 1) {
+			create_triangle_task(1, box % 2, box / 2);
+		} else if(stage == 1) {
+			create_atomic_compare_half_task(stage, 1, box, triangle_part /*triangle_part * 2 + 0*/);
+			create_atomic_compare_half_task(stage, 1, box, 4 - triangle_part - 1 /*triangle_part * 2 + 1*/);
+		} else if(stage >= 2) {
+			int tt_bt_stride = (1 << (stage - 2));
+
+			if((triangle_part / tt_bt_stride) % 2 == 0) {
+				/* tt - dep */
+				create_compare_half_task(stage, 1, box, triangle_part / (2 * tt_bt_stride), triangle_part % tt_bt_stride);
+			} else {
+				/* bt - dep */
+				create_compare_half_task(stage, 1, box, 4 - (triangle_part / (2 * tt_bt_stride)) - 1, tt_bt_stride - (triangle_part % tt_bt_stride) - 1);
+			}
+		}
+	}
+}
+
+void create_atomic_compare_half_task(int stage, int ch_stage, int box, int level)
+{
+	int stage_offset = num_blocks * (stage + 1) * (stage + 2) / 2;
+	int num_ch_stages = stage + 1;
+	int num_blocks_in_box = (2 << stage);
+
+	key_t top_in[block_size];
+	key_t top_out[block_size];
+
+	int left_in_offset = stage_offset + (ch_stage + 1) * num_blocks + box * num_blocks_in_box + level;
+	int right_out_offset = left_in_offset + num_blocks;
+
+	#pragma omp task input(streams[left_in_offset]   >> top_in[block_size]) \
+			output(streams[right_out_offset] << top_out[block_size])
+	{
+		compare_halves_inout_rec(top_in,
+					 &top_in[block_size/2],
+					 top_out,
+					 &top_out[block_size/2],
+					 block_size / 2);
+
+		if(stage < num_par_stages - 1) {
+			if(level < num_blocks_in_box / 2) {
+				create_compare_half_task(stage + 1, 0, box / 2, box % 2, level);
+			}
+		}
+	}
+}
+
+void create_compare_half_task(int stage, int ch_stage, int box, int level, int compare_half)
+{
+	int stage_offset = num_blocks * (stage + 1) * (stage + 2) / 2;
+	int num_ch_stages = stage + 1;
+	int num_blocks_in_box = (2 << stage);
+
+	key_t top_in[block_size];
+	key_t top_out[block_size];
+	key_t bottom_in[block_size];
+	key_t bottom_out[block_size];
+
+	int top_in_offset = stage_offset + (ch_stage + 1) * num_blocks + box * num_blocks_in_box + level * (1 << (num_ch_stages - ch_stage - 1)) + compare_half;
+	int top_out_offset = top_in_offset + num_blocks;
+
+	int bottom_in_offset = top_in_offset +  (1 << (num_ch_stages - ch_stage - 2));
+	int bottom_out_offset = bottom_in_offset + num_blocks;
+
+	int num_ch = (1 << (num_ch_stages - ch_stage - 2));
+
+	if(stage == 2 && ch_stage == 1 && level == 4)
+		assert(0);
+
+	#pragma omp task input(streams[top_in_offset]     >> top_in[block_size], \
+			       streams[bottom_in_offset]  >> bottom_in[block_size]) \
+			output(streams[top_out_offset]    << top_out[block_size], \
+			       streams[bottom_out_offset] << bottom_out[block_size])
+	{
+		compare_halves_inout(top_in, bottom_in, top_out, bottom_out, block_size);
+
+		if(num_par_stages > stage + 1 && ch_stage == num_ch_stages - 2) {
+			int newtp;
+
+			if(box % 2 == 0)
+				newtp = 2*level + 1;
+			else
+				newtp = num_blocks_in_box - 2*level - 2;
+
+			create_triangle_task(stage + 1, newtp, box / 2);
+		} else if (ch_stage == num_ch_stages - 3) {
+			create_atomic_compare_half_task(stage, ch_stage+2, box, 4 * level + compare_half);
+			create_atomic_compare_half_task(stage, ch_stage+2, box, 4 * level + compare_half + 2);
+		} else if (stage > 2 && num_ch_stages > ch_stage + 3) {
+			create_compare_half_task(stage, ch_stage + 2, box, level * 4 + compare_half / (num_ch / 4), compare_half % (num_ch / 4));
 		}
 	}
 }
@@ -357,12 +273,12 @@ void stream_collect(key_t* keys, long num_keys, long block_size,
 int main(int argc, char** argv)
 {
 	/* log2 of the number of keys to sort */
-	long num_keys_log = DEFAULT_NUM_KEYS_LOG;
-	long num_keys = (1 << num_keys_log);
+	num_keys_log = DEFAULT_NUM_KEYS_LOG;
+	num_keys = (1 << num_keys_log);
 
 	/* log2 of the number of keys per block */
-	long block_size_log = DEFAULT_BLOCK_SIZE_LOG;
-	long block_size = 1 << block_size_log;
+	block_size_log = DEFAULT_BLOCK_SIZE_LOG;
+	block_size = 1 << block_size_log;
 
 	/* If set to 1 a final check is performed on the sorted data */
 	int check = 0;
@@ -408,39 +324,31 @@ int main(int argc, char** argv)
 	}
 
 	/* Sequence that will contain the input keys */
-	key_t* keys = malloc(num_keys*sizeof(key_t));
+	keys = malloc(num_keys*sizeof(key_t));
 
 	/* Number of parallel stages (stages with an number of output elements
 	 * greater than the block size
 	 */
-	int num_par_stages = num_keys_log - block_size_log;
+	num_par_stages = num_keys_log - block_size_log;
 
 	/* Number of input / output blocks */
-	int num_blocks = num_keys / block_size;
+	num_blocks = num_keys / block_size;
 
 	/* Streams between parallel stages */
 	int num_inter_stage_streams = (num_par_stages + 2) * num_blocks;
-	key_t linter_streams[num_inter_stage_streams] __attribute__((stream));
 
 	/* Streams within parallel stages */
 	int num_intra_stage_streams = ((num_par_stages + 1) * num_par_stages)/2 * num_blocks;
-	key_t lintra_streams[num_intra_stage_streams] __attribute__((stream));
 
-	/* Stream for synchronization between the cleanup task and the
-	 * last sorting tasks
-	 */
-	int lend_stream[1] __attribute__((stream));
-	int token[num_blocks];
+	num_total_streams = num_inter_stage_streams + num_intra_stage_streams;
 
-	/* Copy stream references from the stack to the heap */
-	intra_streams = malloc(num_intra_stage_streams*sizeof(void*));
-	memcpy(intra_streams, lintra_streams, num_intra_stage_streams*sizeof(void*));
+	key_t lstreams[num_total_streams] __attribute__((stream));
+	streams = malloc(num_total_streams*sizeof(void*));
+	memcpy(streams, lstreams, num_total_streams*sizeof(void*));
 
-	inter_streams = malloc(num_inter_stage_streams*sizeof(void*));
-	memcpy(inter_streams, linter_streams, num_inter_stage_streams*sizeof(void*));
-
-	end_stream = malloc(sizeof(void*));
-	memcpy(end_stream, lend_stream, sizeof(void*));
+	int lend_streams[num_blocks] __attribute__((stream));
+	end_streams = malloc(num_blocks*sizeof(void*));
+	memcpy(end_streams, lend_streams, num_blocks*sizeof(void*));
 
 	/* Initialize input array with random keys */
 	init_sequence(keys, num_keys);
@@ -450,41 +358,29 @@ int main(int argc, char** argv)
 	gettimeofday (&start, NULL);
 	PROFILER_NOTIFY_RECORD(&sync);
 
-	/* Create initializing tasks */
-	stream_init(keys, num_keys, block_size, inter_streams, num_inter_stage_streams, 0);
-
-	/* Create sorting tasks */
-	stream_sort(num_keys_log,
-		    block_size_log,
-		    inter_streams,
-		    intra_streams,
-		    num_inter_stage_streams,
-		    num_intra_stage_streams);
-
-	/* Create terminating tasks that collect final data */
-	stream_collect(keys, num_keys, block_size, inter_streams, end_stream);
-
-	/* Cleanup task */
-	#pragma omp task input(end_stream[0] >> token[num_blocks])
-	{
-		printf("END taks\n");fflush(stdout);
-
-		PROFILER_NOTIFY_PAUSE(&sync);
-		gettimeofday (&end, NULL);
-
-		printf ("%.5f\n", tdiff (&end, &start));fflush(stdout);
-		PROFILER_NOTIFY_FINISH(&sync);
-
-		if(check) {
-			assert(check_ascending(keys, num_keys));
-			printf("Check: OK\n");
-		}
-
-		free(keys);
-		free(inter_streams);
-		free(intra_streams);
-		free(end_stream);
+	for(int i = 0; i < num_blocks; i++) {
+		create_init_task(i);
+		create_init_sort_task(i);
+		create_terminal_task(i);
 	}
+
+	#pragma omp taskwait
+
+	/* Cleanup */
+	PROFILER_NOTIFY_PAUSE(&sync);
+	gettimeofday (&end, NULL);
+
+	printf ("%.5f\n", tdiff (&end, &start));fflush(stdout);
+	PROFILER_NOTIFY_FINISH(&sync);
+
+	if(check) {
+		assert(check_ascending(keys, num_keys));
+		printf("Check: OK\n");
+	}
+
+	free(keys);
+	free(streams);
+	free(end_streams);
 
 	return 0;
 }

@@ -795,7 +795,7 @@ void dump_events(int num_workers, int num_cpus, wstream_df_thread_p wstream_df_w
 		  th->events[k].time-min_time,
 		  th->events[k].time-min_time,
 		  th->events[k].steal.size);
-	} else if(th->events[k].type == WQEVENT_STEAL) {
+	} else if(th->events[k].type == WQEVENT_PUSH) {
 	  /* Push events (dumped as communication) */
 	  conditional_fprintf(do_dump, fp, "3:%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1:1:%d:%"PRIu64":%"PRIu64":%d:1\n",
 		  th->events[k].cpu+1,

@@ -33,14 +33,14 @@ void reorder_pushes(wstream_df_thread_p cthread)
 
   /* Put pushed threads into reorder buffer */
   for(i = 0; i < NUM_PUSH_SLOTS; i++) {
-    if((import = cthread->pushed_threads[i]) != NULL) {
-      cthread->push_reorder_slots[insert_pos].frame = import;
-      cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
-      cthread->pushed_threads[i] = NULL;
-      insert_pos++;
+    if(!fifo_popfront(&cthread->push_fifo, (void**)&import))
+      break;
 
-      inc_wqueue_counter(&cthread->steals_pushed, 1);
-    }
+    cthread->push_reorder_slots[insert_pos].frame = import;
+    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+    insert_pos++;
+
+    inc_wqueue_counter(&cthread->steals_pushed, 1);
   }
 
   /* Put cached thread into reorder buffer */
@@ -91,29 +91,15 @@ void reorder_pushes(wstream_df_thread_p cthread)
 void import_pushes(wstream_df_thread_p cthread)
 {
   wstream_df_frame_p import;
-  int i;
 
-  /* Check if there were remote pushes. If so, import all pushed frames
-   * into the cache / work deque */
-  for(i = 0; i < NUM_PUSH_SLOTS; i++) {
-    if((import = cthread->pushed_threads[i]) != NULL) {
+  while(fifo_popfront(&cthread->push_fifo, (void**)&import)) {
+    inc_wqueue_counter(&cthread->steals_pushed, 1);
 
-      /* If the cache is empty, put the pushed frame into it. */
-      if(cthread->own_next_cached_thread == NULL) {
-	cthread->own_next_cached_thread = import;
-      } else {
-	/* Cache is full, compare number of cache misses since creation / last write */
-	if(import->cache_misses[cthread->cpu] > cthread->own_next_cached_thread->cache_misses[cthread->cpu]) {
-	  cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
-	  cthread->own_next_cached_thread = import;
-	} else {
-	  cdeque_push_bottom (&cthread->work_deque, import);
-	}
-      }
-
-      /* Clear push position and update stats */
-      cthread->pushed_threads[i] = NULL;
-      inc_wqueue_counter(&cthread->steals_pushed, 1);
+    if(cthread->own_next_cached_thread == NULL) {
+      cthread->own_next_cached_thread = import;
+    } else {
+      cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
+      cthread->own_next_cached_thread = import;
     }
   }
 }
@@ -200,7 +186,7 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
 
 /*
  * Tries to transfer a frame fp to a worker specified by target_worker by
- * pushing it into its buffer of pushed threads. If the push is successful,
+ * pushing it into its queue of pushed threads. If the push is successful,
  * the function returns 1, otherwise 0.
  */
 int work_try_push(wstream_df_frame_p fp,
@@ -208,42 +194,31 @@ int work_try_push(wstream_df_frame_p fp,
 		  wstream_df_thread_p cthread,
 		  wstream_df_thread_p wstream_df_worker_threads)
 {
-  int push_slot;
-  int i, level;
+  int level;
   int curr_owner;
   int fp_size;
 
-  /* Try to push several times before giving up */
-  for(i = 0; i < NUM_PUSH_ATTEMPTS; i++)
-    {
-      /* Select random push slot */
-      cthread->rands = cthread->rands * 1103515245 + 12345;
-      push_slot = (cthread->rands >> 16)% NUM_PUSH_SLOTS;
+  /* Save current owner for statistics and update new owner */
+  curr_owner = fp->last_owner;
+  fp->last_owner = cthread->worker_id;
 
-      /* Save current owner for statistics and update new owner */
-      curr_owner = fp->last_owner;
-      fp->last_owner = cthread->worker_id;
+  /* We need to copy frame attributes used afterwards as the frame will
+   * be under control of the target worker once it is pushed.
+   */
+  fp_size = fp->size;
 
-      /* We need to copy frame attributes used afterwards as the frame will
-       * be under control of the target worker once it is pushed.
-       */
-      fp_size = fp->size;
+  if(fifo_pushback(&wstream_df_worker_threads[target_worker].push_fifo, fp)) {
+    /* Push was successful, update traces and statistics */
+    level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(target_worker));
+    inc_wqueue_counter(&cthread->pushes_mem[level], 1);
 
-      /* Try to push */
-      if(compare_and_swap((size_t *)&wstream_df_worker_threads[target_worker].pushed_threads[push_slot], 0, (size_t)fp))
-	{
-	  /* Push was successful, update traces and statistics */
-	  level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(target_worker));
-	  inc_wqueue_counter(&cthread->pushes_mem[level], 1);
+    trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size);
+    return 1;
+  }
 
-	  trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size);
-	  return 1;
-	}
-
-      /* Push failed. Reset owner and update statistics */
-      fp->last_owner = curr_owner;
-      inc_wqueue_counter(&cthread->pushes_fails, 1);
-    }
+  /* Push failed, restore owner and update statistics */
+  fp->last_owner = curr_owner;
+  inc_wqueue_counter(&cthread->pushes_fails, 1);
 
   return 0;
 }
@@ -257,6 +232,7 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
   unsigned int steal_from_cpu = 0;
   wstream_df_frame_p fp = NULL;
 
+#if CACHE_LAST_STEAL_VICTIM
   /* Try to steal from the last victim worker's deque */
   if(cthread->last_steal_from != -1) {
     fp = cdeque_steal (&wstream_df_worker_threads[cthread->last_steal_from].work_deque);
@@ -266,7 +242,9 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
       cthread->last_steal_from = -1;
     }
   }
+#endif
 
+  if(fp == NULL) {
   /* Try to steal from another worker's deque.
    * Start with workers at the lowest common level, i.e. sharing the L2 cache.
    * If the target deque is empty and the maximum number of steal attempts on
@@ -288,7 +266,21 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 
 	    if(fp == NULL) {
 	      inc_wqueue_counter(&cthread->steals_fails, 1);
+#if CACHE_LAST_STEAL_VICTIM
 	      cthread->last_steal_from = -1;
+#endif
+	    } else {
+	      int real_level = mem_lowest_common_level(cthread->cpu, steal_from_cpu);
+	      inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
+	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
+	      fp->steal_type = STEAL_TYPE_STEAL;
+
+#if CACHE_LAST_STEAL_VICTIM
+	      cthread->last_steal_from = steal_from;
+#endif
+
+	      fp->last_owner = steal_from;
+
 	    }
 	  }
 	}
@@ -297,12 +289,8 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
   /* Check if any of the steal attempts succeeded */
   if(fp != NULL)
     {
-      inc_wqueue_counter(&cthread->steals_mem[level], 1);
-      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
-      fp->steal_type = STEAL_TYPE_STEAL;
-      cthread->last_steal_from = steal_from;
-      fp->last_owner = steal_from;
     }
+  }
 
   return fp;
 }

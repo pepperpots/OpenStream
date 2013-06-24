@@ -260,20 +260,10 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	}
 #endif
 
-      if (fp->work_fn == (void *) 1)
-	{
-	  wstream_free(&cthread->slab_cache, fp);
-	  trace_state_restore(cthread);
-	  return;
-	}
-      else
-	{
-	  if (cthread->own_next_cached_thread != NULL)
-	    cdeque_push_bottom (&cthread->work_deque,
-				(wstream_df_type) cthread->own_next_cached_thread);
-	  cthread->own_next_cached_thread = fp;
- 	  //cdeque_push_bottom (&cthread->work_deque, fp);
-	}
+      if (cthread->own_next_cached_thread != NULL)
+	cdeque_push_bottom (&cthread->work_deque,
+			    (wstream_df_type) cthread->own_next_cached_thread);
+      cthread->own_next_cached_thread = fp;
     }
 
   trace_state_restore(cthread);
@@ -361,6 +351,9 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 
   trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
 
+  pthread_mutex_lock (&prod_queue->lock);
+  pthread_mutex_lock (&cons_queue->lock);
+
   if (is_read_view_p == true)
     {
       /* It's either a peek view or "normal", stream-advancing.  */
@@ -434,6 +427,9 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
       else
 	wstream_df_list_push (prod_queue, (void *) view);
     }
+
+  pthread_mutex_unlock (&cons_queue->lock);
+  pthread_mutex_unlock (&prod_queue->lock);
 
   trace_state_restore(current_thread);
 }
@@ -657,7 +653,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
 
 #if ALLOW_PUSHES
-  memset(wstream_df_worker->pushed_threads, 0, sizeof(wstream_df_worker->pushed_threads));
+  fifo_init(&wstream_df_worker->push_fifo);
 #endif
 
 #ifdef TRACE_RT_INIT_STATE

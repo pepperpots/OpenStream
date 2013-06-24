@@ -43,6 +43,7 @@ typedef struct slab_cache {
   unsigned long long slab_toobig_frees;
   unsigned long long slab_toobig_freed_bytes;
   unsigned int allocator_id;
+  unsigned int num_objects;
 } slab_cache_t, *slab_cache_p;
 
 static inline unsigned int
@@ -101,6 +102,8 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
       s = s->next;
     }
   s->next = NULL;
+
+  slab_cache->num_objects += num_slabs;
 }
 
 static inline void *
@@ -132,6 +135,7 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
 
   metainfo = slab_metainfo(res);
   metainfo->size = size;
+  slab_cache->num_objects--;
 
   return res;
 }
@@ -155,6 +159,7 @@ slab_free (slab_cache_p slab_cache, void *e)
       slab_cache->slab_free_pool[idx] = elem;
       slab_cache->slab_frees++;
       slab_cache->slab_freed_bytes += metainfo->size;
+      slab_cache->num_objects++;
     }
 }
 
@@ -176,6 +181,7 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_cache->slab_toobig = 0;
   slab_cache->slab_toobig_frees = 0;
   slab_cache->slab_toobig_freed_bytes = 0;
+  slab_cache->num_objects = 0;
 }
 
 

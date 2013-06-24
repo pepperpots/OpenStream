@@ -8,14 +8,11 @@
 #include <getopt.h>
 #include "../common/sync.h"
 #include "../common/common.h"
+#include "../common/lapack.h"
 
 #define _WITH_OUTPUT 0
 
 #include <unistd.h>
-
-/* Missing declarations from liblapack */
-int dlarnv_(long *idist, long *iseed, int *n, double *x);
-void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 int
 main(int argc, char *argv[])
@@ -33,7 +30,7 @@ main(int argc, char *argv[])
 
   double * data;
   int nfo;
-  unsigned char lower = 'L';
+  unsigned char upper = 'U';
   struct profiler_sync sync;
 
   PROFILER_NOTIFY_PREPARE(&sync);
@@ -124,7 +121,7 @@ main(int argc, char *argv[])
 
       gettimeofday (&sstart[iter], NULL);
       PROFILER_NOTIFY_RECORD(&sync);
-      dpotrf_(&lower, &N, seq_data, &N, &nfo);
+      dpotrf_(&upper, &N, seq_data, &N, &nfo);
       PROFILER_NOTIFY_PAUSE(&sync);
       gettimeofday (&send[iter], NULL);
 
