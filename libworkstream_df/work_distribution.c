@@ -285,11 +285,6 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 	  }
 	}
     }
-
-  /* Check if any of the steal attempts succeeded */
-  if(fp != NULL)
-    {
-    }
   }
 
   return fp;
