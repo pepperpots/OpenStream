@@ -1,0 +1,3 @@
+[submodule "extras/ostv"]
+	path = extras/ostv
+	url = git://git.drebesium.org/ostv.git
