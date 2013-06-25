@@ -34,7 +34,7 @@
 #define MAX_WQEVENT_PARAVER_CYCLES -1
 #define NUM_WQEVENT_TASKHIST_BINS 1000
 
-#define WQEVENT_SAMPLING_OUTFILE "events.prv"
+#define WQEVENT_SAMPLING_OUTFILE "events.ost"
 #define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"

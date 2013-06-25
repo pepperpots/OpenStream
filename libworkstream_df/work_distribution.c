@@ -212,7 +212,7 @@ int work_try_push(wstream_df_frame_p fp,
     level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(target_worker));
     inc_wqueue_counter(&cthread->pushes_mem[level], 1);
 
-    trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size);
+    trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size, fp);
     return 1;
   }
 
@@ -272,7 +272,7 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 	    } else {
 	      int real_level = mem_lowest_common_level(cthread->cpu, steal_from_cpu);
 	      inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
-	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size);
+	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size, fp);
 	      fp->steal_type = STEAL_TYPE_STEAL;
 
 #if CACHE_LAST_STEAL_VICTIM
@@ -284,11 +284,6 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 	    }
 	  }
 	}
-    }
-
-  /* Check if any of the steal attempts succeeded */
-  if(fp != NULL)
-    {
     }
   }
 
