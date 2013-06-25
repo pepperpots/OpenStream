@@ -41,7 +41,20 @@ endif
 
 trace_file.c trace_file.h ansi_extras.h: ../extras/ostv/configure.ac
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h $(WSTREAM_DEPS)
+# Check if library is built using OpenStream's GCC
+# If this is the case, add dependency to the gcc binary
+GCC_INSTALL_PATH=$(realpath $(GCC))
+GENERATED_GCC_PATH=$(realpath ../install/gcc)
+ifeq ($(GCC_INSTALL_PATH),$(GENERATED_GCC_PATH))
+	GCCDEP=../install/bin/gcc
+else
+	GCCDEP=
+endif
+
+../install/bin/gcc:
+	cd .. ; $(MAKE)
+
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h $(WSTREAM_DEPS) $(GCCDEP)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \
