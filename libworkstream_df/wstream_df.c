@@ -68,6 +68,7 @@ try_pass_barrier (barrier_p bar)
 	{
 	  wstream_df_thread_p cthread = current_thread;
 	  trace_task_exec_end(cthread);
+	  cthread->current_work_fn = NULL;
 	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
 	  wqueue_counters_enter_runtime(current_thread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
@@ -94,6 +95,7 @@ wstream_df_taskwait ()
   void *save_stack = cthread->current_stack;
   barrier_p cbar = current_barrier;
   barrier_p save_bar = NULL;
+  void* save_current_work_fn = cthread->current_work_fn;
 
   wqueue_counters_enter_runtime(cthread);
 
@@ -131,6 +133,7 @@ wstream_df_taskwait ()
 
       cthread->swap_barrier = cbar;
       cthread->current_stack = stack;
+      cthread->current_work_fn = NULL;
 
       if (ws_swapcontext (&cbar->continuation_context, &ctx) == -1)
 	wstream_df_fatal ("Cannot swap contexts at taskwait.");
@@ -151,6 +154,7 @@ wstream_df_taskwait ()
   /* Restore thread-local variables.  */
   cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
+  cthread->current_work_fn = save_current_work_fn;
 }
 
 /***************************************************************************/
@@ -474,11 +478,15 @@ worker_thread (void)
 
       if(fp != NULL)
 	{
+	  cthread->current_work_fn = fp->work_fn;
+
 	  wqueue_counters_enter_runtime(current_thread);
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 	  fp->work_fn (fp);
 	  trace_task_exec_end(cthread);
+
+	  cthread->current_work_fn = NULL;
 	  trace_state_change(cthread, WORKER_STATE_SEEKING);
 
 	  update_papi(cthread);
@@ -784,7 +792,7 @@ void post_main()
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
 
-  dump_events(num_workers, wstream_df_num_cores(), wstream_df_worker_threads);
+  dump_events_ostv(num_workers, wstream_df_worker_threads);
   dump_avg_state_parallelism(WORKER_STATE_TASKEXEC, 1000, num_workers, wstream_df_worker_threads);
   dump_average_task_duration_summary(num_workers, wstream_df_worker_threads);
   dump_average_task_duration(1000, num_workers, wstream_df_worker_threads);

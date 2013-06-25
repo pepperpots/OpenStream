@@ -35,7 +35,7 @@ WSTREAM_CFLAGS+=       -I$(INST_DIR)/include
 WSTREAM_LDFLAGS+=      -L$(INST_DIR)/lib -lpapi
 endif
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c $(WSTREAM_DEPS)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c $(WSTREAM_DEPS)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \
