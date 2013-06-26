@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -355,8 +354,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 
   trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
 
-  pthread_mutex_lock (&prod_queue->lock);
-  pthread_mutex_lock (&cons_queue->lock);
+  pthread_mutex_lock (&stream->stream_lock);
 
   if (is_read_view_p == true)
     {
@@ -432,8 +430,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	wstream_df_list_push (prod_queue, (void *) view);
     }
 
-  pthread_mutex_unlock (&cons_queue->lock);
-  pthread_mutex_unlock (&prod_queue->lock);
+  pthread_mutex_unlock (&stream->stream_lock);
 
   trace_state_restore(current_thread);
 }
@@ -819,6 +816,7 @@ init_stream (void *s, size_t element_size)
   ((wstream_df_stream_p) s)->consumer_queue.active_peek_chain = NULL;
   ((wstream_df_stream_p) s)->elem_size = element_size;
   ((wstream_df_stream_p) s)->refcount = 1;
+  pthread_mutex_init (&((wstream_df_stream_p) s)->stream_lock, NULL);
 }
 /* Allocate and return an array of ARRAY_BYTE_SIZE/ELEMENT_SIZE
    streams.  */

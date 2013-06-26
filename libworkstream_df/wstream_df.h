@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <pthread.h>
 
 #include "fibers.h"
 #include "alloc.h"
@@ -89,6 +90,8 @@ typedef struct wstream_df_stream
 {
   wstream_df_list_t producer_queue __attribute__((aligned (64)));
   wstream_df_list_t consumer_queue __attribute__((aligned (64)));
+
+  pthread_mutex_t stream_lock __attribute__((aligned (64)));
 
   size_t elem_size;
   int refcount;

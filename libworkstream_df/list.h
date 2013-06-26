@@ -1,8 +1,6 @@
 #ifndef LIST_H
 #define LIST_H
 
-#include <pthread.h>
-
 /***************************************************************************/
 /* Implement linked list operations:
  *
@@ -26,7 +24,6 @@ typedef struct wstream_df_list
   wstream_df_list_element_p last;
   wstream_df_list_element_p active_peek_chain;
 
-  pthread_mutex_t lock;
 } wstream_df_list_t, *wstream_df_list_p;
 
 static inline void
@@ -34,8 +31,6 @@ wstream_df_list_init (wstream_df_list_p list)
 {
   list->first = NULL;
   list->last = NULL;
-
-  pthread_mutex_init (&list->lock, NULL);
 }
 
 static inline void
