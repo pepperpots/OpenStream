@@ -768,9 +768,9 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	      /* Not the first state change, so using last_state_idx is safe */
 	      dsk_se.header.type = EVENT_TYPE_STATE;
 	      dsk_se.header.time = th->events[last_state_idx].time-min_time;
-	      dsk_se.header.cpu = th->events[k].cpu;
+	      dsk_se.header.cpu = th->events[last_state_idx].cpu;
 	      dsk_se.header.worker = th->worker_id;
-	      dsk_se.header.active_task = th->events[k].active_task;
+	      dsk_se.header.active_task = th->events[last_state_idx].active_task;
 	      dsk_se.state = state;
 	      dsk_se.end_time = th->events[k].time-min_time;
 	      write_struct_convert(fp, &dsk_se, sizeof(dsk_se), trace_state_event_conversion_table, 0);
@@ -786,7 +786,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	      dsk_se.header.time = 0;
 	      dsk_se.header.cpu = th->events[k].cpu;
 	      dsk_se.header.worker = th->worker_id;
-	      dsk_se.header.active_task = th->events[k].active_task;
+	      dsk_se.header.active_task = 0;
 	      dsk_se.state = WORKER_STATE_RT_INIT;
 	      dsk_se.end_time = th->events[k].time-min_time;
 
@@ -799,7 +799,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	      dsk_se.header.time = 0;
 	      dsk_se.header.cpu = th->events[k].cpu;
 	      dsk_se.header.worker = th->worker_id;
-	      dsk_se.header.active_task = th->events[k].active_task;
+	      dsk_se.header.active_task = 0;
 	      dsk_se.state = WORKER_STATE_SEEKING;
 	      dsk_se.end_time = th->events[k].time-min_time;
 
