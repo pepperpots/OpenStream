@@ -712,6 +712,9 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   pthread_attr_destroy (&thread_attr);
 }
 
+/* Use main as root task */
+void main(void);
+
 __attribute__((constructor))
 void pre_main()
 {
@@ -756,6 +759,7 @@ void pre_main()
       wstream_df_worker_threads[i].worker_id = i;
       wstream_df_worker_threads[i].own_next_cached_thread = NULL;
       wstream_df_worker_threads[i].swap_barrier = NULL;
+      wstream_df_worker_threads[i].current_work_fn = NULL;
     }
 
   /* Add a guard frame for the control program (in case threads catch
@@ -783,6 +787,8 @@ void pre_main()
 
   free (cpu_affinities);
   init_wqueue_counters(&wstream_df_worker_threads[0]);
+
+  wstream_df_worker_threads[0].current_work_fn = (void*)main;
 }
 
 __attribute__((destructor))
