@@ -15,12 +15,16 @@ all: $(MEM_CST_TESTS_X86)
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS_X86)
 
+../../libworkstream_df/trace_file.c:
+	cd `dirname $@` ; make `basename $@`
+
 MEM_CST_TESTS_DEPS_X86 = barrier_jacobi.c \
 	../../libworkstream_df/wstream_df.c \
 	../../libworkstream_df/error.c \
 	../../libworkstream_df/trace.c \
 	../../libworkstream_df/fibers.c \
 	../../libworkstream_df/profiling.c \
+	../../libworkstream_df/trace_file.c \
 	../../libworkstream_df/work_distribution.c \
 	../common/common.c
 x86_jacobi: CFLAGS_X86 += -D_GNU_SOURCE
