@@ -124,6 +124,18 @@ void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned i
   cthread->num_events++;
 }
 
+void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].data_read.src_cpu = src_cpu;
+  cthread->events[cthread->num_events].data_read.size = size;
+  cthread->events[cthread->num_events].type = WQEVENT_DATA_READ;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->num_events++;
+}
+
 int get_next_event(wstream_df_thread_p th, int curr, unsigned int type)
 {
   for(curr = curr+1; (unsigned int)curr < th->num_events; curr++) {
@@ -824,6 +836,21 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.dst_worker = th->worker_id;
 	    dsk_ce.size = th->events[k].steal.size;
 	    dsk_ce.what = th->events[k].steal.what;
+
+	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
+	  }
+	} else if(th->events[k].type == WQEVENT_DATA_READ) {
+	  /* Data read events (dumped as communication) */
+	  if(do_dump) {
+	    dsk_ce.header.type = EVENT_TYPE_COMM;
+	    dsk_ce.header.time = th->events[k].time-min_time;
+	    dsk_ce.header.cpu = th->events[k].data_read.src_cpu;
+	    dsk_ce.header.active_task = th->events[k].active_task;
+	    dsk_ce.type = COMM_TYPE_DATA_READ;
+	    dsk_ce.dst_cpu = th->events[k].cpu;
+	    dsk_ce.dst_worker = th->worker_id;
+	    dsk_ce.size = th->events[k].data_read.size;
+	    dsk_ce.what = th->events[k].active_task;
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
 	  }

@@ -481,6 +481,14 @@ worker_thread (void)
 	  wqueue_counters_enter_runtime(current_thread);
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
+
+#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_DATA_READS)
+	  for(int cpu = 0; cpu < MAX_CPUS; cpu++) {
+	    if(fp->bytes_cpu[cpu])
+	      trace_data_read(cthread, cpu, fp->bytes_cpu[cpu]);
+	  }
+#endif
+
 	  fp->work_fn (fp);
 
 	  __compiler_fence;

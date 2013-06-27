@@ -13,6 +13,7 @@
 #define WQEVENT_PUSH 4
 #define WQEVENT_START_TASKEXEC 5
 #define WQEVENT_END_TASKEXEC 6
+#define WQEVENT_DATA_READ 7
 
 typedef struct worker_event {
   uint64_t time;
@@ -46,6 +47,11 @@ typedef struct worker_event {
     } push;
 
     struct {
+      uint32_t src_cpu;
+      uint32_t size;
+    } data_read;
+
+    struct {
       enum worker_state state;
       uint32_t previous_state_idx;
     } state_change;
@@ -69,6 +75,7 @@ void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
 void trace_state_restore(struct wstream_df_thread* cthread);
 void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
 void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame);
+void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_average_task_duration_summary(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
