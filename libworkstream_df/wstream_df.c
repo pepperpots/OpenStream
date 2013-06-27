@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -34,10 +33,12 @@ static void worker_thread ();
 
 int wstream_self(void)
 {
-  if(current_thread == NULL)
-    return 0;
+  wstream_df_thread_p cthread = current_thread;
 
-  return current_thread->worker_id;
+  if (cthread == NULL)
+    wstream_df_fatal ("Current_thread lost...");
+
+  return cthread->worker_id;
 }
 
 static inline barrier_p
@@ -70,7 +71,7 @@ try_pass_barrier (barrier_p bar)
 	  trace_task_exec_end(cthread);
 	  cthread->current_work_fn = NULL;
 	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
-	  wqueue_counters_enter_runtime(current_thread);
+	  wqueue_counters_enter_runtime(cthread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
 
@@ -185,7 +186,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->creation_timestamp = rdtsc();
   frame_pointer->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
 
-  inc_wqueue_counter(&current_thread->tasks_created, 1);
+  inc_wqueue_counter(&cthread->tasks_created, 1);
 
   memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
   memset(frame_pointer->cache_misses, 0, sizeof(frame_pointer->cache_misses));
@@ -237,7 +238,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
   /* Schedule the thread if its synchronization counter reaches 0.  */
   if (sc == 0)
     {
-      wstream_df_thread_p cthread = current_thread;
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc();
@@ -299,7 +299,7 @@ __builtin_ia32_tend (void *fp)
   barrier_p cbar = current_barrier;
   barrier_p bar = cfp->own_barrier;
 
-  wqueue_counters_enter_runtime(current_thread);
+  wqueue_counters_enter_runtime(cthread);
 
   /* If this task spawned some tasks within a barrier, it needs to
      ensure the barrier gets collected.  */
@@ -354,8 +354,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 
   trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
 
-  pthread_mutex_lock (&prod_queue->lock);
-  pthread_mutex_lock (&cons_queue->lock);
+  pthread_mutex_lock (&stream->stream_lock);
 
   if (is_read_view_p == true)
     {
@@ -431,8 +430,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	wstream_df_list_push (prod_queue, (void *) view);
     }
 
-  pthread_mutex_unlock (&cons_queue->lock);
-  pthread_mutex_unlock (&prod_queue->lock);
+  pthread_mutex_unlock (&stream->stream_lock);
 
   trace_state_restore(current_thread);
 }
@@ -484,15 +482,6 @@ worker_thread (void)
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 	  fp->work_fn (fp);
-	  trace_task_exec_end(cthread);
-
-	  cthread->current_work_fn = NULL;
-	  trace_state_change(cthread, WORKER_STATE_SEEKING);
-
-	  update_papi(cthread);
-
-	  wqueue_counters_enter_runtime(current_thread);
-	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 
 	  __compiler_fence;
 
@@ -509,6 +498,16 @@ worker_thread (void)
 				  : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
 
 	  __compiler_fence;
+
+	  trace_task_exec_end(cthread);
+
+	  cthread->current_work_fn = NULL;
+	  trace_state_change(cthread, WORKER_STATE_SEEKING);
+
+	  update_papi(cthread);
+
+	  wqueue_counters_enter_runtime(current_thread);
+	  inc_wqueue_counter(&cthread->tasks_executed, 1);
 	}
       else
 	{
@@ -823,6 +822,7 @@ init_stream (void *s, size_t element_size)
   ((wstream_df_stream_p) s)->consumer_queue.active_peek_chain = NULL;
   ((wstream_df_stream_p) s)->elem_size = element_size;
   ((wstream_df_stream_p) s)->refcount = 1;
+  pthread_mutex_init (&((wstream_df_stream_p) s)->stream_lock, NULL);
 }
 /* Allocate and return an array of ARRAY_BYTE_SIZE/ELEMENT_SIZE
    streams.  */
