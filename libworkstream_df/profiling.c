@@ -123,6 +123,11 @@ update_papi(struct wstream_df_thread* th)
 		fprintf(stderr, "Could not read counters for thread %d\n", th->worker_id);
 		exit(1);
 	}
+
+#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_PAPI_COUNTERS)
+	for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++)
+		trace_counter(th, i, th->papi_counters[i]);
+#endif
 }
 #endif
 

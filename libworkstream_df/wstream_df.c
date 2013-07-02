@@ -489,7 +489,9 @@ worker_thread (void)
 	  }
 #endif
 
+	  update_papi(cthread);
 	  fp->work_fn (fp);
+	  update_papi(cthread);
 
 	  __compiler_fence;
 
@@ -511,8 +513,6 @@ worker_thread (void)
 
 	  cthread->current_work_fn = NULL;
 	  trace_state_change(cthread, WORKER_STATE_SEEKING);
-
-	  update_papi(cthread);
 
 	  wqueue_counters_enter_runtime(current_thread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);

@@ -136,6 +136,18 @@ void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, un
   cthread->num_events++;
 }
 
+void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].counter.counter_id = counter_id;
+  cthread->events[cthread->num_events].counter.value = value;
+  cthread->events[cthread->num_events].type = WQEVENT_COUNTER;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->num_events++;
+}
+
 int get_next_event(wstream_df_thread_p th, int curr, unsigned int type)
 {
   for(curr = curr+1; (unsigned int)curr < th->num_events; curr++) {
@@ -736,6 +748,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
   struct trace_state_event dsk_se;
   struct trace_comm_event dsk_ce;
   struct trace_single_event dsk_sge;
+  struct trace_counter_event dsk_cre;
 
   int do_dump;
 
@@ -756,6 +769,26 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
   dsk_header.minute = now->tm_min;
 
   write_struct_convert(fp, &dsk_header, sizeof(dsk_header), trace_header_conversion_table, 0);
+
+#ifdef TRACE_PAPI_COUNTERS
+  int event_codes[] = WS_PAPI_EVENTS;
+  char event_name[PAPI_MAX_STR_LEN];
+  struct trace_counter_description dsk_cd;
+  int name_len;
+
+  for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
+    PAPI_event_code_to_name(event_codes[i], event_name);
+    name_len = strlen(event_name);
+
+    dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
+    dsk_cd.name_len = name_len;
+    dsk_cd.counter_id = i;
+
+    write_struct_convert(fp, &dsk_cd, sizeof(dsk_cd), trace_counter_description_conversion_table, 0);
+
+    fwrite(event_name, name_len, 1, fp);
+  }
+#endif
 
   /* Dump events and states */
   for (i = 0; i < (unsigned int)num_workers; ++i) {
@@ -882,6 +915,18 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_sge.type = SINGLE_TYPE_TCREATE;
 
 	    write_struct_convert(fp, &dsk_sge, sizeof(dsk_sge), trace_single_event_conversion_table, 0);
+	  }
+	} else if(th->events[k].type == WQEVENT_COUNTER) {
+	  if(do_dump) {
+	    dsk_cre.header.type = EVENT_TYPE_COUNTER;
+	    dsk_cre.header.time = th->events[k].time-min_time;
+	    dsk_cre.header.cpu = th->events[k].cpu;
+	    dsk_cre.header.worker = th->worker_id;
+	    dsk_cre.header.active_task = th->events[k].active_task;
+	    dsk_cre.counter_id = th->events[k].counter.counter_id;
+	    dsk_cre.value = th->events[k].counter.value;
+
+	    write_struct_convert(fp, &dsk_cre, sizeof(dsk_cre), trace_counter_event_conversion_table, 0);
 	  }
 	}
       }

@@ -46,6 +46,7 @@
 #define WS_PAPI_NUM_EVENTS 2
 #define WS_PAPI_EVENTS { PAPI_L1_DCM, PAPI_L2_DCM }
 #define MEM_CACHE_MISS_POS 0 /* Use L1_DCM as cache miss indicator */
+#define TRACE_PAPI_COUNTERS
 #endif
 
 /* Description of the memory hierarchy */

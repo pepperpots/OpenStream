@@ -14,6 +14,7 @@
 #define WQEVENT_START_TASKEXEC 5
 #define WQEVENT_END_TASKEXEC 6
 #define WQEVENT_DATA_READ 7
+#define WQEVENT_COUNTER 8
 
 typedef struct worker_event {
   uint64_t time;
@@ -52,6 +53,11 @@ typedef struct worker_event {
     } data_read;
 
     struct {
+      uint64_t counter_id;
+      int64_t value;
+    } counter;
+
+    struct {
       enum worker_state state;
       uint32_t previous_state_idx;
     } state_change;
@@ -76,6 +82,7 @@ void trace_state_restore(struct wstream_df_thread* cthread);
 void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
 void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame);
 void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size);
+void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_average_task_duration_summary(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
@@ -95,6 +102,8 @@ void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int 
 #define trace_steal(cthread, src_worker, src_cpu, size, fp) do { } while(0)
 #define trace_push(cthread, dst_worker, dst_cpu, size, fp) do { } while(0)
 #define trace_state_restore(cthread) do { } while(0)
+#define trace_data_read(cthread, src_cpu, size) do { } while(0)
+#define trace_counter(cthread, counter_id, value) do { } while(0)
 
 #define dump_events_ostv(num_workers, wstream_df_worker_threads)  do { } while(0)
 #define dump_average_task_duration_summary(num_workers, wstream_df_worker_threads) do { } while(0)
