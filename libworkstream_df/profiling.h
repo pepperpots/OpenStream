@@ -20,9 +20,12 @@ struct wstream_df_thread;
 #endif
 
 #ifdef WS_PAPI_PROFILE
+
 #define WSTREAM_DF_THREAD_PAPI_FIELDS \
 	long long papi_counters[WS_PAPI_NUM_EVENTS]; \
-	int papi_event_set;
+	long long papi_event_mapping[WS_PAPI_NUM_EVENTS]; \
+	int papi_event_set; \
+	int papi_num_events;
 
 void
 setup_papi(void);

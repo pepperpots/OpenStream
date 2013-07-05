@@ -771,14 +771,12 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
   write_struct_convert(fp, &dsk_header, sizeof(dsk_header), trace_header_conversion_table, 0);
 
 #ifdef TRACE_PAPI_COUNTERS
-  int event_codes[] = WS_PAPI_EVENTS;
-  char event_name[PAPI_MAX_STR_LEN];
+  const char* events[] = WS_PAPI_EVENTS;
   struct trace_counter_description dsk_cd;
   int name_len;
 
   for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
-    PAPI_event_code_to_name(event_codes[i], event_name);
-    name_len = strlen(event_name);
+    name_len = strlen(events[i]);
 
     dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
     dsk_cd.name_len = name_len;
@@ -786,7 +784,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 
     write_struct_convert(fp, &dsk_cd, sizeof(dsk_cd), trace_counter_description_conversion_table, 0);
 
-    fwrite(event_name, name_len, 1, fp);
+    fwrite(events[i], name_len, 1, fp);
   }
 #endif
 

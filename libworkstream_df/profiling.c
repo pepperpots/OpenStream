@@ -29,6 +29,7 @@ void dump_transfer_matrix(unsigned int num_workers)
 #endif
 
 #ifdef WS_PAPI_PROFILE
+
 void
 setup_papi(void)
 {
@@ -51,16 +52,18 @@ setup_papi(void)
 		exit(1);
 	}
 
+#if !defined(WS_PAPI_UNCORE) || WS_PAPI_UNCORE == 0
 	if ((retval = PAPI_thread_init((unsigned long (*)(void)) (wstream_self))) != PAPI_OK) {
 		fprintf(stderr, "Could not init threads: %s\n", PAPI_strerror(retval));
 		exit(1);
 	}
+#endif
 
 #ifdef WS_PAPI_MULTIPLEX
-		if (PAPI_multiplex_init() != PAPI_OK) {
-			fprintf(stderr, "Could not init multiplexing!\n");
-			exit(1);
-		}
+	if (PAPI_multiplex_init() != PAPI_OK) {
+		fprintf(stderr, "Could not init multiplexing!\n");
+		exit(1);
+	}
 #endif
 }
 
@@ -68,17 +71,19 @@ void
 init_papi (wstream_df_thread_p th)
 {
 	int err, i;
-	char event_name[PAPI_MAX_STR_LEN];
-	int event_codes[] = WS_PAPI_EVENTS;
+	char* events[] = WS_PAPI_EVENTS;
 
-	if(sizeof(event_codes) / sizeof(event_codes[0]) > WS_PAPI_NUM_EVENTS) {
+	if(sizeof(events) / sizeof(events[0]) > WS_PAPI_NUM_EVENTS) {
 		fprintf(stderr, "Mismatch between WS_PAPI_NUM_EVENTS and the number of elements in WS_PAPI_EVENTS\n");
 		exit(1);
 	}
 
 	memset(th->papi_counters, 0, sizeof(th->papi_counters));
 
+#if !defined(WS_PAPI_UNCORE) || WS_PAPI_UNCORE == 0
 	PAPI_register_thread();
+#endif
+
 	th->papi_event_set = PAPI_NULL;
 
 	/* Create event set */
@@ -101,33 +106,88 @@ init_papi (wstream_df_thread_p th)
 	}
 #endif
 
+#if !defined(WS_PAPI_UNCORE) || WS_PAPI_UNCORE == 0
+	th->papi_num_events = WS_PAPI_NUM_EVENTS;
+
 	for(i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
-		PAPI_event_code_to_name (event_codes[i], event_name);
-		if((err = PAPI_add_event(th->papi_event_set, event_codes[i])) != PAPI_OK) {
-			fprintf(stderr, "Could not add event Ox%X (\"%s\") to event set: %s!\n", event_codes[i], event_name, PAPI_strerror(err));
+		th->papi_event_mapping[i] = i;
+
+		if((err = PAPI_add_named_event(th->papi_event_set, events[i])) != PAPI_OK) {
+			fprintf(stderr, "Could not add event \"%s\" to event set: %s!\n", events[i], PAPI_strerror(err));
 			exit(1);
 		}
 	}
+#else
+	uint64_t uncore_masks[] = WS_PAPI_UNCORE_MASK;
+	th->papi_num_events = 0;
 
-	/* Start counting */
-	if (PAPI_start(th->papi_event_set) != PAPI_OK) {
-		fprintf(stderr, "Could not start counters!\n");
+	PAPI_cpu_option_t cpu_opt;
+	cpu_opt.eventset = th->papi_event_set;
+	cpu_opt.cpu_num = th->cpu;
+
+	if((err = PAPI_set_opt(PAPI_CPU_ATTACH,(PAPI_option_t*)&cpu_opt)) != PAPI_OK) {
+		fprintf(stderr, "Could not attach eventset to CPU: %s!\n", PAPI_strerror(err));
 		exit(1);
+	}
+
+	/* we need to set the granularity to system-wide for uncore to work */
+	PAPI_granularity_option_t gran_opt;
+	gran_opt.def_cidx = 0;
+	gran_opt.eventset = th->papi_event_set;
+	gran_opt.granularity = PAPI_GRN_SYS;
+
+	if((err = PAPI_set_opt(PAPI_GRANUL,(PAPI_option_t*)&gran_opt)) != PAPI_OK) {
+		fprintf(stderr, "Could not set granularity: %s!\n", PAPI_strerror(err));
+		exit(1);
+	}
+
+	/* we need to set domain to be as inclusive as possible */
+	PAPI_domain_option_t domain_opt;
+	domain_opt.def_cidx = 0;
+	domain_opt.eventset = th->papi_event_set;
+	domain_opt.domain = PAPI_DOM_ALL;
+
+	if((err = PAPI_set_opt(PAPI_DOMAIN,(PAPI_option_t*)&domain_opt))) {
+		fprintf(stderr, "Could not set domain: %s!\n", PAPI_strerror(err));
+		exit(1);
+	}
+
+	for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
+		if(uncore_masks[i] & ((uint64_t)1 << th->cpu)) {
+			th->papi_num_events++;
+			th->papi_event_mapping[th->papi_num_events-1] = i;
+
+			if((err = PAPI_add_named_event(th->papi_event_set, events[i])) != PAPI_OK) {
+				fprintf(stderr, "Could not add event \"%s\" to event set: %s!\n", events[i], PAPI_strerror(err));
+				exit(1);
+			}
+		}
+	}
+#endif
+
+	if(th->papi_num_events > 0) {
+		/* Start counting */
+		if ((err = PAPI_start(th->papi_event_set)) != PAPI_OK) {
+			fprintf(stderr, "Could not start counters: %s!\n", PAPI_strerror(err));
+			exit(1);
+		}
 	}
 }
 
 void
 update_papi(struct wstream_df_thread* th)
 {
-	if(PAPI_accum(th->papi_event_set, th->papi_counters) != PAPI_OK) {
-		fprintf(stderr, "Could not read counters for thread %d\n", th->worker_id);
-		exit(1);
-	}
+	if(th->papi_num_events > 0) {
+		if(PAPI_accum(th->papi_event_set, th->papi_counters) != PAPI_OK) {
+			fprintf(stderr, "Could not read counters for thread %d\n", th->worker_id);
+			exit(1);
+		}
 
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_PAPI_COUNTERS)
-	for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++)
-		trace_counter(th, i, th->papi_counters[i]);
+		for(int i = 0; i < th->papi_num_events; i++)
+			trace_counter(th, th->papi_event_mapping[i], th->papi_counters[i]);
 #endif
+	}
 }
 #endif
 
@@ -176,8 +236,7 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 
 #ifdef WS_PAPI_PROFILE
 	int i;
-	char event_name[PAPI_MAX_STR_LEN];
-	int event_codes[] = WS_PAPI_EVENTS;
+	const char* events[] = WS_PAPI_EVENTS;
 #endif
 
 	printf ("Thread %d: tasks_created = %lld\n",
@@ -258,11 +317,9 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 
 #ifdef WS_PAPI_PROFILE
 	for(i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
-		PAPI_event_code_to_name (event_codes[i], event_name);
-
 		printf ("Thread %d: papi_%s = %lld\n",
 			th->worker_id,
-			event_name,
+			events[i],
 			th->papi_counters[i]);
 	}
 #endif
@@ -282,8 +339,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 	unsigned long long bytes_total = 0;
 
 #ifdef WS_PAPI_PROFILE
-	char event_name[PAPI_MAX_STR_LEN];
-	int event_codes[] = WS_PAPI_EVENTS;
+	const char* events[] = WS_PAPI_EVENTS;
 	long long papi_counters_accum[WS_PAPI_NUM_EVENTS];
 	int evt;
 #endif
@@ -317,9 +373,8 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 	}
 
 	for(evt = 0; evt < WS_PAPI_NUM_EVENTS; evt++) {
-		PAPI_event_code_to_name (event_codes[evt], event_name);
 		printf ("Overall papi_%s = %lld\n",
-			event_name,
+			events[evt],
 			papi_counters_accum[evt]);
 	}
 #endif
