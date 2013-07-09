@@ -6,6 +6,7 @@
 
 #ifdef MATRIX_PROFILE
 unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+static pthread_spinlock_t papi_spin_lock;
 
 void init_transfer_matrix(void)
 {
@@ -65,6 +66,13 @@ setup_papi(void)
 		exit(1);
 	}
 #endif
+
+#if defined(WS_PAPI_UNCORE) && WS_PAPI_UNCORE != 0
+	if(pthread_spin_init(&papi_spin_lock, PTHREAD_PROCESS_PRIVATE) != 0) {
+		fprintf(stderr, "Could not init papi spinlock!\n");
+		exit(1);
+	}
+#endif
 }
 
 void
@@ -83,6 +91,8 @@ init_papi (wstream_df_thread_p th)
 
 #if !defined(WS_PAPI_UNCORE) || WS_PAPI_UNCORE == 0
 	PAPI_register_thread();
+#else
+	pthread_spin_lock(&papi_spin_lock);
 #endif
 
 	th->papi_event_set = PAPI_NULL;
@@ -179,6 +189,10 @@ init_papi (wstream_df_thread_p th)
 			exit(1);
 		}
 	}
+
+#if defined(WS_PAPI_UNCORE) && WS_PAPI_UNCORE != 0
+	pthread_spin_unlock(&papi_spin_lock);
+#endif
 }
 
 void
