@@ -179,6 +179,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
 
   wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
+
   trace_tcreate(cthread, frame_pointer);
 
   frame_pointer->synchronization_counter = sc;
@@ -1051,9 +1052,8 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       view->owner = dummy_view->owner;
       /* FIXME-apop: this is quite tricky, read views may be impacted
 	 by old variadic write views' overloaded "reached_position"
-	 values.  Fixed for now by clearing the frames on
-	 allocation.  */
-      //view->reached_position = 0;
+	 values.  Fixed for now by clearing the field here.  */
+      view->reached_position = 0;
 
       wstream_df_resolve_dependences ((void *) view, (void *) stream, is_read_view_p);
     }
