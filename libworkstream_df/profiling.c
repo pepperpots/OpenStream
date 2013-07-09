@@ -72,6 +72,7 @@ init_papi (wstream_df_thread_p th)
 {
 	int err, i;
 	char* events[] = WS_PAPI_EVENTS;
+	int component_idx;
 
 	if(sizeof(events) / sizeof(events[0]) > WS_PAPI_NUM_EVENTS) {
 		fprintf(stderr, "Mismatch between WS_PAPI_NUM_EVENTS and the number of elements in WS_PAPI_EVENTS\n");
@@ -92,8 +93,14 @@ init_papi (wstream_df_thread_p th)
 		exit(1);
 	}
 
+#if !defined(WS_PAPI_UNCORE) || WS_PAPI_UNCORE == 0
+	component_idx = 0;
+#else
+	PAPI_get_component_index(WS_PAPI_UNCORE_COMPONENT);
+#endif
+
 	/* Assign CPU component */
-	if ((err = PAPI_assign_eventset_component(th->papi_event_set, 0)) != PAPI_OK) {
+	if ((err = PAPI_assign_eventset_component(th->papi_event_set, component_idx)) != PAPI_OK) {
 		fprintf(stderr, "Could not assign event set to component 0 for thread %d: %s\n", th->worker_id, PAPI_strerror(err));
 		exit(1);
 	}
