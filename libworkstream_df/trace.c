@@ -34,6 +34,7 @@ void trace_event(wstream_df_thread_p cthread, unsigned int type)
   cthread->events[cthread->num_events].type = type;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
 }
 
@@ -53,6 +54,7 @@ void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, 
   cthread->events[cthread->num_events].type = WQEVENT_START_TASKEXEC;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
 }
@@ -70,6 +72,7 @@ void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
 
   cthread->events[cthread->num_events].state_change.previous_state_idx =
     cthread->previous_state_idx;
@@ -85,6 +88,7 @@ void trace_state_restore(wstream_df_thread_p cthread)
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
 
   cthread->events[cthread->num_events].state_change.state =
     cthread->events[cthread->previous_state_idx].state_change.state;
@@ -107,6 +111,7 @@ void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned 
   cthread->events[cthread->num_events].type = WQEVENT_STEAL;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
 }
 
@@ -121,6 +126,7 @@ void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned i
   cthread->events[cthread->num_events].type = WQEVENT_PUSH;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
 }
 
@@ -133,6 +139,7 @@ void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, un
   cthread->events[cthread->num_events].type = WQEVENT_DATA_READ;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
 }
 
@@ -145,6 +152,7 @@ void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64
   cthread->events[cthread->num_events].type = WQEVENT_COUNTER;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
 }
 
@@ -814,6 +822,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	      dsk_se.header.cpu = th->events[last_state_idx].cpu;
 	      dsk_se.header.worker = th->worker_id;
 	      dsk_se.header.active_task = th->events[last_state_idx].active_task;
+	      dsk_se.header.active_frame = th->events[last_state_idx].active_frame;
 	      dsk_se.state = state;
 	      dsk_se.end_time = th->events[k].time-min_time;
 	      write_struct_convert(fp, &dsk_se, sizeof(dsk_se), trace_state_event_conversion_table, 0);
@@ -830,6 +839,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	      dsk_se.header.cpu = th->events[k].cpu;
 	      dsk_se.header.worker = th->worker_id;
 	      dsk_se.header.active_task = 0;
+	      dsk_se.header.active_frame = 0;
 	      dsk_se.state = WORKER_STATE_RT_INIT;
 	      dsk_se.end_time = th->events[k].time-min_time;
 
@@ -843,6 +853,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	      dsk_se.header.cpu = th->events[k].cpu;
 	      dsk_se.header.worker = th->worker_id;
 	      dsk_se.header.active_task = 0;
+	      dsk_se.header.active_frame = 0;
 	      dsk_se.state = WORKER_STATE_SEEKING;
 	      dsk_se.end_time = th->events[k].time-min_time;
 
@@ -862,6 +873,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.header.cpu = th->events[k].steal.src_cpu;
 	    dsk_ce.header.worker = th->events[k].steal.src_worker;
 	    dsk_ce.header.active_task = th->events[k].active_task;
+	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_STEAL;
 	    dsk_ce.dst_cpu = th->events[k].cpu;
 	    dsk_ce.dst_worker = th->worker_id;
@@ -877,11 +889,12 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.header.time = th->events[k].time-min_time;
 	    dsk_ce.header.cpu = th->events[k].data_read.src_cpu;
 	    dsk_ce.header.active_task = th->events[k].active_task;
+	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_DATA_READ;
 	    dsk_ce.dst_cpu = th->events[k].cpu;
 	    dsk_ce.dst_worker = th->worker_id;
 	    dsk_ce.size = th->events[k].data_read.size;
-	    dsk_ce.what = th->events[k].active_task;
+	    dsk_ce.what = th->events[k].active_frame;
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
 	  }
@@ -893,6 +906,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.header.cpu = th->events[k].cpu;
 	    dsk_ce.header.worker = th->worker_id;
 	    dsk_ce.header.active_task = th->events[k].active_task;
+	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_PUSH;
 	    dsk_ce.dst_cpu = th->events[k].push.dst_cpu;
 	    dsk_ce.dst_worker = th->events[k].push.dst_worker;
@@ -910,6 +924,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_sge.header.cpu = th->events[k].cpu;
 	    dsk_sge.header.worker = th->worker_id;
 	    dsk_sge.header.active_task = th->events[k].active_task;
+	    dsk_sge.header.active_frame = th->events[k].active_frame;
 	    dsk_sge.type = SINGLE_TYPE_TCREATE;
 
 	    write_struct_convert(fp, &dsk_sge, sizeof(dsk_sge), trace_single_event_conversion_table, 0);
@@ -921,6 +936,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_cre.header.cpu = th->events[k].cpu;
 	    dsk_cre.header.worker = th->worker_id;
 	    dsk_cre.header.active_task = th->events[k].active_task;
+	    dsk_cre.header.active_frame = th->events[k].active_frame;
 	    dsk_cre.counter_id = th->events[k].counter.counter_id;
 	    dsk_cre.value = th->events[k].counter.value;
 
@@ -937,6 +953,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	dsk_se.header.cpu = th->events[k].cpu;
 	dsk_se.header.worker = th->worker_id;
 	dsk_se.header.active_task = th->events[k].active_task;
+	dsk_se.header.active_frame = th->events[k].active_frame;
 	dsk_se.state = WORKER_STATE_SEEKING;
 	dsk_se.end_time = max_time-min_time;
 

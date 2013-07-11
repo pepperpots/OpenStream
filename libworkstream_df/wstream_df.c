@@ -70,6 +70,7 @@ try_pass_barrier (barrier_p bar)
 	  wstream_df_thread_p cthread = current_thread;
 	  trace_task_exec_end(cthread);
 	  cthread->current_work_fn = NULL;
+	  cthread->current_frame = NULL;
 	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
 	  wqueue_counters_enter_runtime(cthread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
@@ -97,6 +98,7 @@ wstream_df_taskwait ()
   barrier_p cbar = current_barrier;
   barrier_p save_bar = NULL;
   void* save_current_work_fn = cthread->current_work_fn;
+  void* save_current_frame = cthread->current_frame;
 
   wqueue_counters_enter_runtime(cthread);
 
@@ -135,6 +137,7 @@ wstream_df_taskwait ()
       cthread->swap_barrier = cbar;
       cthread->current_stack = stack;
       cthread->current_work_fn = NULL;
+      cthread->current_frame = NULL;
 
       if (ws_swapcontext (&cbar->continuation_context, &ctx) == -1)
 	wstream_df_fatal ("Cannot swap contexts at taskwait.");
@@ -156,6 +159,7 @@ wstream_df_taskwait ()
   cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
   cthread->current_work_fn = save_current_work_fn;
+  cthread->current_frame = save_current_frame;
 }
 
 /***************************************************************************/
@@ -477,6 +481,7 @@ worker_thread (void)
       if(fp != NULL)
 	{
 	  cthread->current_work_fn = fp->work_fn;
+	  cthread->current_frame = fp;
 
 	  wqueue_counters_enter_runtime(current_thread);
 	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
@@ -512,6 +517,7 @@ worker_thread (void)
 	  trace_task_exec_end(cthread);
 
 	  cthread->current_work_fn = NULL;
+	  cthread->current_frame = NULL;
 	  trace_state_change(cthread, WORKER_STATE_SEEKING);
 
 	  wqueue_counters_enter_runtime(current_thread);
@@ -767,6 +773,7 @@ void pre_main()
       wstream_df_worker_threads[i].own_next_cached_thread = NULL;
       wstream_df_worker_threads[i].swap_barrier = NULL;
       wstream_df_worker_threads[i].current_work_fn = NULL;
+      wstream_df_worker_threads[i].current_frame = NULL;
     }
 
   /* Add a guard frame for the control program (in case threads catch
@@ -796,6 +803,7 @@ void pre_main()
   init_wqueue_counters(&wstream_df_worker_threads[0]);
 
   wstream_df_worker_threads[0].current_work_fn = (void*)main;
+  wstream_df_worker_threads[0].current_frame = NULL;
 }
 
 __attribute__((destructor))

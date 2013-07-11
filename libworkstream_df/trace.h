@@ -21,6 +21,7 @@ typedef struct worker_event {
   uint32_t type;
   uint32_t cpu;
   uint64_t active_task;
+  uint64_t active_frame;
 
   union {
     struct {
