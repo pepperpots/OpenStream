@@ -80,7 +80,7 @@ init_papi (wstream_df_thread_p th)
 {
 	int err, i;
 	char* events[] = WS_PAPI_EVENTS;
-	int component_idx;
+	int component_idx = 0;
 
 	if(sizeof(events) / sizeof(events[0]) > WS_PAPI_NUM_EVENTS) {
 		fprintf(stderr, "Mismatch between WS_PAPI_NUM_EVENTS and the number of elements in WS_PAPI_EVENTS\n");
