@@ -107,7 +107,8 @@ typedef struct wstream_df_frame
 
   int steal_type;
   int last_owner;
-  int bytes_cpu[MAX_CPUS];
+  int bytes_cpu_in[MAX_CPUS];
+  int bytes_cpu_out[MAX_CPUS];
   long long cache_misses[MAX_CPUS];
   uint64_t creation_timestamp;
   uint64_t ready_timestamp;
@@ -190,5 +191,8 @@ int wstream_self(void);
 int worker_id_to_cpu(unsigned int worker_id);
 int cpu_to_worker_id(int cpu);
 int cpu_used(int cpu);
+
+void get_max_worker(int* bytes_cpu, unsigned int num_workers,
+		    unsigned int* max_worker, int* max_data);
 
 #endif

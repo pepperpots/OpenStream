@@ -111,31 +111,25 @@ void import_pushes(wstream_df_thread_p cthread)
  */
 int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
 {
-  int cpu;
-  int worker_id;
-
-  /* By default the current worker is suited best */
-  unsigned int max_worker = cthread->worker_id;
-  int max_data = fp->bytes_cpu[cthread->cpu];
+  unsigned int max_worker;
+  int max_data;
 
   /* Overhead for pushing small frames is too high */
   if(fp->size < PUSH_MIN_FRAME_SIZE)
     return 0;
 
   /* Determine which worker write most of the frame's input data */
-  for(worker_id = 0; worker_id < num_workers; worker_id++)
-    {
-      cpu = worker_id_to_cpu(worker_id);
+  get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 
-      if(fp->bytes_cpu[cpu] > max_data) {
-	max_data = fp->bytes_cpu[cpu];
-	max_worker = worker_id;
-      }
-    }
+  /* By default the current worker is suited best */
+  if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+      max_worker = cthread->worker_id;
+      max_data = fp->bytes_cpu_in[cthread->cpu];
+  }
 
   /* Final check */
   if(/* Target worker should have written at least X% more data */
-     max_data > PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu[cthread->cpu] &&
+     max_data > PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu] &&
      /* Only migrate to a different worker */
      max_worker != cthread->worker_id &&
      /* Do not migrate to workers that are too close in the memory hierarchy */
@@ -347,11 +341,11 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
       /* Update memory transfer statistics */
       for(cpu = 0; cpu < MAX_CPUS; cpu++)
 	{
-	  if(fp->bytes_cpu[cpu])
+	  if(fp->bytes_cpu_in[cpu])
 	    {
 	      level = mem_lowest_common_level(cthread->cpu, cpu);
-	      inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu[cpu]);
-	      inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu[cpu]);
+	      inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu_in[cpu]);
+	      inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu_in[cpu]);
 
 	      *misses += mem_cache_misses(&wstream_df_worker_threads[cpu_to_worker_id(cpu)]) - fp->cache_misses[cpu];
 	    }

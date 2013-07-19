@@ -192,7 +192,8 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   inc_wqueue_counter(&cthread->tasks_created, 1);
 
-  memset(frame_pointer->bytes_cpu, 0, sizeof(frame_pointer->bytes_cpu));
+  memset(frame_pointer->bytes_cpu_in, 0, sizeof(frame_pointer->bytes_cpu_in));
+  memset(frame_pointer->bytes_cpu_out, 0, sizeof(frame_pointer->bytes_cpu_out));
   memset(frame_pointer->cache_misses, 0, sizeof(frame_pointer->cache_misses));
 
   if (has_lp)
@@ -216,20 +217,46 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   return frame_pointer;
 }
 
+void get_max_worker(int* bytes_cpu, unsigned int num_workers,
+		    unsigned int* pmax_worker, int* pmax_data)
+{
+  int cpu;
+  unsigned int max_worker = 0;
+  int max_data = 0;
+
+  for(unsigned int worker_id = 0; worker_id < num_workers; worker_id++)
+    {
+      cpu = worker_id_to_cpu(worker_id);
+
+      if(bytes_cpu[cpu] > max_data) {
+	max_data = bytes_cpu[cpu];
+	max_worker = worker_id;
+      }
+    }
+
+  *pmax_worker = max_worker;
+  *pmax_data = max_data;
+}
+
 /* Decrease the synchronization counter by N.  */
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
+  unsigned int max_worker;
+  int max_data;
+
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
   wstream_df_thread_p cthread = current_thread;
 
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
   if(is_write) {
-    inc_wqueue_counter(&fp->bytes_cpu[cthread->cpu], n);
+    inc_wqueue_counter(&fp->bytes_cpu_in[cthread->cpu], n);
 
     if(fp->cache_misses[cthread->cpu] == 0)
       fp->cache_misses[cthread->cpu] = mem_cache_misses(cthread);
+  } else {
+    inc_wqueue_counter(&fp->bytes_cpu_out[cthread->cpu], n);
   }
 
   int sc = 0;
@@ -245,6 +272,11 @@ tdecrease_n (void *data, size_t n, bool is_write)
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc();
+
+      if(wstream_is_fresh(fp)) {
+	get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
+	wstream_set_max_initial_writer_of(fp, max_worker, max_data);
+      }
 
       if (fp->work_fn == (void *) 1)
 	{
@@ -319,6 +351,8 @@ __builtin_ia32_tend (void *fp)
 
   if(wstream_allocator_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
+  if(wstream_max_initial_writer_of(fp) == cthread->worker_id)
+    inc_wqueue_counter(&cthread->tasks_executed_max_initial_writer, 1);
 
   wstream_free (&cthread->slab_cache, cfp);
 
@@ -385,7 +419,10 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	  while (view->reached_position < view->horizon
 		 && (prod_view = (wstream_df_view_p) wstream_df_list_pop (prod_queue)) != NULL)
 	    {
-	      void *prod_fp = prod_view->owner;
+	      wstream_df_frame_p prod_fp = prod_view->owner;
+	      wstream_df_frame_p cons_fp = view->owner;
+	      int cpu;
+
 	      prod_view->data = ((char *)view->data) + view->reached_position;
 	      /* Data owner is the consumer.  */
 	      prod_view->owner = view->owner;
@@ -403,6 +440,12 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	      /* Update the reached position to reflect the new
 		 assigned producer block.  */
 	      view->reached_position += prod_view->burst;
+
+	      if(!wstream_is_fresh(cons_fp)) {
+		cpu = worker_id_to_cpu(wstream_max_initial_writer_of(cons_fp));
+		inc_wqueue_counter(&prod_fp->bytes_cpu_out[cpu], prod_view->burst);
+	      }
+
 	      /* TDEC the producer by 1 to notify it that its
 		 consumers for that view have arrived.  */
 	      tdecrease_n (prod_fp, 1, 0);
@@ -419,12 +462,21 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 
       if (cons_view != NULL)
 	{
-	  void *prod_fp = view->owner;
+	  wstream_df_frame_p prod_fp = view->owner;
+	  wstream_df_frame_p cons_fp = cons_view->owner;
+	  int cpu;
+
 	  view->data = ((char *)cons_view->data) + cons_view->reached_position;
 	  view->owner = cons_view->owner;
 	  view->sibling = cons_view->sibling;
 	  view->reached_position = cons_view->reached_position;
 	  cons_view->reached_position += view->burst;
+
+	  if(!wstream_is_fresh(cons_fp)) {
+	    cpu = worker_id_to_cpu(wstream_max_initial_writer_of(cons_fp));
+	    inc_wqueue_counter(&prod_fp->bytes_cpu_out[cpu], view->burst);
+	  }
+
 	  tdecrease_n (prod_fp, 1, 0);
 
 	  if (cons_view->reached_position == cons_view->burst)
@@ -489,8 +541,8 @@ worker_thread (void)
 
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_DATA_READS)
 	  for(int cpu = 0; cpu < MAX_CPUS; cpu++) {
-	    if(fp->bytes_cpu[cpu])
-	      trace_data_read(cthread, cpu, fp->bytes_cpu[cpu]);
+	    if(fp->bytes_cpu_in[cpu])
+	      trace_data_read(cthread, cpu, fp->bytes_cpu_in[cpu]);
 	  }
 #endif
 

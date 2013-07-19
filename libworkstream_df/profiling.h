@@ -51,7 +51,8 @@ init_papi(struct wstream_df_thread* th);
 	unsigned long long bytes_mem[MEM_NUM_LEVELS]; \
 	unsigned long long tasks_created; \
 	unsigned long long tasks_executed; \
-	unsigned long long tasks_executed_localalloc;
+	unsigned long long tasks_executed_localalloc; \
+	unsigned long long tasks_executed_max_initial_writer;
 
 void
 init_wqueue_counters (struct wstream_df_thread* th);

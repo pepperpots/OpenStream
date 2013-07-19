@@ -24,6 +24,8 @@ typedef struct slab
 
 typedef struct slab_metainfo {
 	int allocator_id;
+	int max_initial_writer_id;
+	unsigned int max_initial_writer_size;
 	unsigned int size;
 } slab_metainfo_t, *slab_metainfo_p;
 
@@ -74,6 +76,35 @@ slab_allocator_of(void* ptr)
   return metainfo->allocator_id;
 }
 
+static inline unsigned int
+slab_is_fresh(void* ptr)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  return (metainfo->max_initial_writer_id == -1);
+}
+
+static inline unsigned int
+slab_max_initial_writer_of(void* ptr)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  return metainfo->max_initial_writer_id;
+}
+
+static inline unsigned int
+slab_max_initial_writer_size_of(void* ptr)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  return metainfo->max_initial_writer_size;
+}
+
+static inline void
+slab_set_max_initial_writer_of(void* ptr, int miw, unsigned int size)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  metainfo->max_initial_writer_id = miw;
+  metainfo->max_initial_writer_size = size;
+}
+
 static inline void
 slab_refill (slab_cache_p slab_cache, unsigned int idx)
 {
@@ -94,14 +125,20 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
   slab_cache->slab_bytes += 1 << __slab_alloc_size;
 
   s = slab_cache->slab_free_pool[idx]; // avoid useless warning;
-  for (i = 0; i < num_slabs - 1; ++i)
+  for (i = 0; i < num_slabs; ++i)
     {
       metainfo = slab_metainfo(s);
       metainfo->allocator_id = slab_cache->allocator_id;
-      s->next = (slab_p) (((char *) s) + slab_size + __slab_metainfo_size);
-      s = s->next;
+      metainfo->max_initial_writer_id = -1;
+      metainfo->max_initial_writer_size = 0;
+
+      if(i == num_slabs-1) {
+	s->next = NULL;
+      } else {
+	s->next = (slab_p) (((char *) s) + slab_size + __slab_metainfo_size);
+	s = s->next;
+      }
     }
-  s->next = NULL;
 
   slab_cache->num_objects += num_slabs;
 }
@@ -122,6 +159,8 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
       metainfo = res;
       metainfo->size = size;
       metainfo->allocator_id = slab_cache->allocator_id;
+      metainfo->max_initial_writer_id = -1;
+      metainfo->max_initial_writer_size = 0;
       return (((char*)res) + __slab_metainfo_size);
     }
 
@@ -199,6 +238,14 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_init_allocator (SLAB, ID)
 #  define wstream_allocator_of(P)		\
   slab_allocator_of(P)
+#  define wstream_is_fresh(P)		\
+  slab_is_fresh(P)
+#  define wstream_max_initial_writer_of(P)		\
+  slab_max_initial_writer_of(P)
+#  define wstream_max_initial_writer_size_of(P)		\
+  slab_max_initial_writer_size_of(P)
+#  define wstream_set_max_initial_writer_of(P, MIW, SZ)	\
+	slab_set_max_initial_writer_of(P, MIW, SZ)
 #else
 #  define wstream_alloc(SLAB, PP,A,S)			\
   assert (!posix_memalign ((void **) (PP), (A), (S)))
@@ -206,6 +253,10 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   free ((P))
 #  define wstream_init_alloc(SLAB, ID)
 #  define wstream_allocator_of(P) (-1)
+#  define wstream_is_fresh(P) (0)
+#  define wstream_max_initial_writer_of(P) (0)
+#  define wstream_max_initial_writer_size_of(P) (0)
+#  define wstream_set_max_initial_writer_of(P, MIW, SZ) do { } while(0)
 #endif
 
 

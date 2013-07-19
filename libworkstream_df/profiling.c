@@ -240,6 +240,7 @@ init_wqueue_counters (wstream_df_thread_p th)
 	th->tasks_created = 0;
 	th->tasks_executed = 0;
 	th->tasks_executed_localalloc = 0;
+	th->tasks_executed_max_initial_writer = 0;
 
 #if ALLOW_PUSHES
 	th->steals_pushed = 0;
@@ -269,6 +270,9 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	printf ("Thread %d: tasks_executed_localalloc = %lld\n",
 		th->worker_id,
 		th->tasks_executed_localalloc);
+	printf ("Thread %d: tasks_executed_max_initial_writer = %lld\n",
+		th->worker_id,
+		th->tasks_executed_max_initial_writer);
 	printf ("Thread %d: steals_owncached = %lld\n",
 		th->worker_id,
 		th->steals_owncached);

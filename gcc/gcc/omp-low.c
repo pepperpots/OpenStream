@@ -52,7 +52,8 @@ typedef struct wstream_df_frame
 {
   tree wstream_df_frame_type;
   tree wstream_df_frame_field_work_fn;
-  tree wstream_df_frame_field_bytes_cpu;
+  tree wstream_df_frame_field_bytes_cpu_in;
+  tree wstream_df_frame_field_bytes_cpu_out;
   tree wstream_df_frame_field_cache_misses;
   tree wstream_df_frame_field_last_owner;
   tree wstream_df_frame_field_steal_type;
@@ -7808,7 +7809,7 @@ build_wstream_df_frame_base_type (omp_context *ctx)
     TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
   ctx->base_frame.wstream_df_frame_field_cache_misses = field;
 
-  name = create_tmp_var_name ("bytes_cpu");
+  name = create_tmp_var_name ("bytes_cpu_out");
   type = build_array_type_nelts (integer_type_node, MAX_CPUS);
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
   /*  insert_field_into_struct (ctx->record_type, field); */
@@ -7817,7 +7818,18 @@ build_wstream_df_frame_base_type (omp_context *ctx)
   TYPE_FIELDS (ctx->record_type) = field;
   if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
     TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
-  ctx->base_frame.wstream_df_frame_field_bytes_cpu = field;
+  ctx->base_frame.wstream_df_frame_field_bytes_cpu_out = field;
+
+  name = create_tmp_var_name ("bytes_cpu_in");
+  type = build_array_type_nelts (integer_type_node, MAX_CPUS);
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /*  insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_bytes_cpu_in = field;
 
   name = create_tmp_var_name ("last_owner");
   type = integer_type_node;
