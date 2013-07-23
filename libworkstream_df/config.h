@@ -1,1 +1,1 @@
-#include "configs/doble.h"
+#include "configs/default-config.h"
