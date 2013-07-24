@@ -106,6 +106,14 @@ slab_set_max_initial_writer_of(void* ptr, int miw, unsigned int size)
 }
 
 static inline void
+slab_metainfo_int(slab_cache_p slab_cache, slab_metainfo_p metainfo)
+{
+      metainfo->allocator_id = slab_cache->allocator_id;
+      metainfo->max_initial_writer_id = -1;
+      metainfo->max_initial_writer_size = 0;
+}
+
+static inline void
 slab_refill (slab_cache_p slab_cache, unsigned int idx)
 {
   const unsigned int num_slabs = 1 << (__slab_alloc_size - idx);
@@ -128,9 +136,7 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
   for (i = 0; i < num_slabs; ++i)
     {
       metainfo = slab_metainfo(s);
-      metainfo->allocator_id = slab_cache->allocator_id;
-      metainfo->max_initial_writer_id = -1;
-      metainfo->max_initial_writer_size = 0;
+      slab_metainfo_int(slab_cache, metainfo);
 
       if(i == num_slabs-1) {
 	s->next = NULL;
@@ -157,10 +163,8 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
       slab_cache->slab_toobig++;
       assert (!posix_memalign ((void **) &res, __slab_align, size + __slab_metainfo_size));
       metainfo = res;
+      slab_metainfo_int(slab_cache, metainfo);
       metainfo->size = size;
-      metainfo->allocator_id = slab_cache->allocator_id;
-      metainfo->max_initial_writer_id = -1;
-      metainfo->max_initial_writer_size = 0;
       return (((char*)res) + __slab_metainfo_size);
     }
 
