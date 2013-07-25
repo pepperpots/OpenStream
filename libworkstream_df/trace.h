@@ -89,7 +89,6 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 void dump_average_task_duration_summary(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_average_task_duration(unsigned int num_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 void dump_task_duration_histogram(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-void dump_avg_state_parallelism(unsigned int state, uint64_t max_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 
 #else
 
