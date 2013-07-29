@@ -68,7 +68,7 @@ try_pass_barrier (barrier_p bar)
       else
 	{
 	  wstream_df_thread_p cthread = current_thread;
-	  trace_task_exec_end(cthread);
+	  trace_task_exec_end(cthread, cthread->current_frame);
 	  cthread->current_work_fn = NULL;
 	  cthread->current_frame = NULL;
 	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
@@ -177,10 +177,9 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   wqueue_counters_enter_runtime(cthread);
   trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
-  trace_event(cthread, WQEVENT_TCREATE);
 
   wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
-  /* memset (frame_pointer, 0, size); */
+  trace_tcreate(cthread, frame_pointer);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -536,7 +535,7 @@ worker_thread (void)
 	  cthread->current_frame = fp;
 
 	  wqueue_counters_enter_runtime(current_thread);
-	  trace_task_exec_start(cthread, fp->last_owner, fp->steal_type, fp->creation_timestamp, fp->ready_timestamp, fp->size, misses, allocator_misses);
+	  trace_task_exec_start(cthread, fp);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_DATA_READS)
@@ -566,7 +565,7 @@ worker_thread (void)
 
 	  __compiler_fence;
 
-	  trace_task_exec_end(cthread);
+	  trace_task_exec_end(cthread, fp);
 
 	  cthread->current_work_fn = NULL;
 	  cthread->current_frame = NULL;
@@ -866,9 +865,6 @@ void post_main()
   wstream_df_taskwait ();
 
   dump_events_ostv(num_workers, wstream_df_worker_threads);
-  dump_average_task_duration_summary(num_workers, wstream_df_worker_threads);
-  dump_average_task_duration(1000, num_workers, wstream_df_worker_threads);
-  dump_task_duration_histogram(num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(num_workers, wstream_df_worker_threads);
   dump_transfer_matrix(num_workers);
 }

@@ -38,30 +38,44 @@ void trace_event(wstream_df_thread_p cthread, unsigned int type)
   cthread->num_events++;
 }
 
-void trace_task_exec_start(wstream_df_thread_p cthread, unsigned int from_node, unsigned int type,
-			   uint64_t creation_timestamp, uint64_t ready_timestamp, uint32_t size,
-			   uint64_t cache_misses, uint64_t allocator_cache_misses)
+void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
-  cthread->events[cthread->num_events].texec.from_node = from_node;
-  cthread->events[cthread->num_events].texec.type = type;
-  cthread->events[cthread->num_events].texec.creation_timestamp = creation_timestamp;
-  cthread->events[cthread->num_events].texec.ready_timestamp = ready_timestamp;
-  cthread->events[cthread->num_events].texec.size = size;
-  cthread->events[cthread->num_events].texec.cache_misses = cache_misses;
-  cthread->events[cthread->num_events].texec.allocator_cache_misses = allocator_cache_misses;
+  cthread->events[cthread->num_events].type = WQEVENT_TCREATE;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->events[cthread->num_events].tcreate.frame = (uint64_t)frame;
+  cthread->num_events++;
+}
+
+void trace_task_exec_start(wstream_df_thread_p cthread, struct wstream_df_frame* frame)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].texec.type = frame->steal_type;
+  cthread->events[cthread->num_events].texec.creation_timestamp = frame->creation_timestamp;
+  cthread->events[cthread->num_events].texec.ready_timestamp = frame->ready_timestamp;
   cthread->events[cthread->num_events].type = WQEVENT_START_TASKEXEC;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->events[cthread->num_events].texec_start.frame = (uint64_t)frame;
   cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
 }
 
-void trace_task_exec_end(wstream_df_thread_p cthread)
+void trace_task_exec_end(wstream_df_thread_p cthread, struct wstream_df_frame* frame)
 {
-  trace_event(cthread, WQEVENT_END_TASKEXEC);
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].type = WQEVENT_END_TASKEXEC;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->events[cthread->num_events].texec_end.frame = (uint64_t)frame;
+  cthread->num_events++;
 }
 
 void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
@@ -244,7 +258,7 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
 {
   uint64_t duration, create_to_exec_time, create_to_ready_time, ready_to_exec_time;
   int64_t state_duration;
-  int i, idx_start, idx_end, idx, idx_tmp;
+  int i, idx_start, idx_end, idx_tmp;
   wstream_df_thread_p th;
 
   *max_duration = 0;
@@ -255,7 +269,6 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
   *max_create_to_ready_time = 0;
 
   for(i = 0; i < num_workers; i++) {
-    idx = -1;
     idx_start = -1;
 
     th = &wstream_df_worker_threads[i];
@@ -291,372 +304,6 @@ void get_task_duration_stats(int num_workers, wstream_df_thread_p wstream_df_wor
       }
     }
   }
-}
-
-void dump_task_duration_histogram_worker(int worker_start, int worker_end,
-					 wstream_df_thread_p wstream_df_worker_threads,
-					 uint64_t total_duration, uint64_t num_tasks,
-					 uint64_t max_duration)
-{
-  uint64_t duration;
-  int i, idx_start, idx_end, idx_hist, idx_tmp;
-  wstream_df_thread_p th;
-  uint64_t histogram[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_all[NUM_WQEVENT_TASKHIST_BINS];
-  uint64_t histogram_dur[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_dur_all[NUM_WQEVENT_TASKHIST_BINS];
-  uint64_t histogram_ctet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_ctrt[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_rtet[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_size[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_otherstates[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_misses[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t histogram_allocator_misses[NUM_WQEVENT_TASKHIST_BINS][MEM_NUM_LEVELS][2];
-  uint64_t curr_bin;
-  int64_t state_duration;
-  int64_t duration_other_states;
-  FILE* fp;
-  int common_level;
-  int steal_type;
-  int level;
-  char filename[256];
-
-  uint64_t create_to_exec_time;
-  uint64_t create_to_ready_time;
-  uint64_t ready_to_exec_time;
-
-  memset(histogram, 0, sizeof(histogram));
-  memset(histogram_all, 0, sizeof(histogram_all));
-  memset(histogram_dur, 0, sizeof(histogram_dur));
-  memset(histogram_dur_all, 0, sizeof(histogram_dur_all));
-  memset(histogram_ctet, 0, sizeof(histogram_ctet));
-  memset(histogram_ctrt, 0, sizeof(histogram_ctrt));
-  memset(histogram_rtet, 0, sizeof(histogram_rtet));
-  memset(histogram_size, 0, sizeof(histogram_size));
-  memset(histogram_otherstates, 0, sizeof(histogram_otherstates));
-  memset(histogram_misses, 0, sizeof(histogram_misses));
-  memset(histogram_allocator_misses, 0, sizeof(histogram_allocator_misses));
-
-  for(i = worker_start; i < worker_end; i++) {
-    idx_start = -1;
-
-    th = &wstream_df_worker_threads[i];
-
-    while((idx_start = get_next_event(th, idx_start, WQEVENT_START_TASKEXEC)) != -1) {
-      idx_end = get_next_event(th, idx_start, WQEVENT_END_TASKEXEC);
-      if(idx_end != -1) {
-	common_level = mem_lowest_common_level(i, th->events[idx_start].texec.from_node);
-	steal_type = th->events[idx_start].texec.type;
-	assert(th->events[idx_start].texec.type != STEAL_TYPE_UNKNOWN);
-
-	idx_tmp = idx_start+1;
-	duration = 0;
-	while((state_duration = get_state_duration(th, &idx_tmp, idx_end)) != -1)
-	  duration += state_duration;
-
-	duration_other_states = th->events[idx_end].time - th->events[idx_start].time - duration;
-
-	idx_hist = (duration*(NUM_WQEVENT_TASKHIST_BINS-1)) / max_duration;
-	histogram[idx_hist][common_level][steal_type]++;
-	histogram_dur[idx_hist][common_level][steal_type] += duration;
-
-	create_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.creation_timestamp;
-	create_to_ready_time = th->events[idx_start].texec.ready_timestamp - th->events[idx_start].texec.creation_timestamp;
-	ready_to_exec_time = th->events[idx_start].time - th->events[idx_start].texec.ready_timestamp;
-
-	histogram_ctet[idx_hist][common_level][steal_type] += create_to_exec_time;
-	histogram_rtet[idx_hist][common_level][steal_type] += ready_to_exec_time;
-	histogram_ctrt[idx_hist][common_level][steal_type] += create_to_ready_time;
-	histogram_size[idx_hist][common_level][steal_type] += th->events[idx_start].texec.size;
-	histogram_otherstates[idx_hist][common_level][steal_type] += duration_other_states;
-	histogram_misses[idx_hist][common_level][steal_type] += th->events[idx_start].texec.cache_misses;
-	histogram_allocator_misses[idx_hist][common_level][steal_type] += th->events[idx_start].texec.allocator_cache_misses;
-
-	idx_start = idx_end;
-      }
-    }
-  }
-
-  snprintf(filename, sizeof(filename), "%d-%d-%s", worker_start, worker_end, WQEVENT_SAMPLING_TASKHISTFILE);
-  fp = fopen(filename, "w+");
-  assert(fp != NULL);
-
-  i = 1;
-  fprintf(fp, "# %d: task length\n", i);
-  for(level = 0; level < MEM_NUM_LEVELS; level++) {
-      for(steal_type = 0; steal_type < 2; steal_type++) {
-	i++;
-	fprintf(fp, "# %d: Number of tasks (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Number of tasks [%%] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Duration [cycles] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-	i++;
-	fprintf(fp, "# %d: Duration [%%] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Duration, other states than Texec [cycles] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-	i++;
-	fprintf(fp, "# %d: Duration per task, other states than Texec [cycles] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Average create to exec time [cycles] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Average ready to exec time [cycles] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Average create to ready time [cycles] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Average frame size [bytes] (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Misses (sum) on writing nodes since first write (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-
-	i++;
-	fprintf(fp, "# %d: Misses on allocating node since task creation (%s, %s)\n",
-		i, mem_level_name(level),
-		steal_type_str(steal_type));
-      }
-  }
-
-  for(i = 0; i < NUM_WQEVENT_TASKHIST_BINS; i++) {
-    curr_bin = (max_duration*i) / NUM_WQEVENT_TASKHIST_BINS;
-
-    fprintf(fp, "%"PRIu64" ", curr_bin);
-
-    for(level = 0; level < MEM_NUM_LEVELS; level++) {
-      for(steal_type = 0; steal_type < 2; steal_type++) {
-	fprintf(fp, "%"PRIu64" %Lf %"PRIu64" %Lf %"PRIu64" %Lf %Lf %Lf %Lf %Lf %Lf %Lf ",
-		histogram[i][level][steal_type],
-		100.0 * ((long double)histogram[i][level][steal_type]) / ((long double)num_tasks),
-		histogram_dur[i][level][steal_type],
-		100.0 * ((long double)histogram_dur[i][level][steal_type]) / ((long double)total_duration),
-		histogram_otherstates[i][level][steal_type],
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_otherstates[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_rtet[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_ctrt[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_size[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_misses[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0,
-		histogram[i][level][steal_type] != 0 ? ((long double)histogram_allocator_misses[i][level][steal_type]) / ((long double)histogram[i][level][steal_type]) : 0.0);
-      }
-    }
-
-    fprintf(fp, "\n");
-  }
-
-  fclose(fp);
-}
-
-void dump_task_duration_histogram(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
-{
-  uint64_t total_duration = 0;
-  uint64_t num_tasks = 0;
-  uint64_t max_duration = 0;
-  uint64_t max_create_to_exec_time = 0;
-  uint64_t max_create_to_ready_time = 0;
-  uint64_t max_ready_to_exec_time = 0;
-
-  get_task_duration_stats(num_workers, wstream_df_worker_threads,
-			  &total_duration, &num_tasks, &max_duration,
-			  &max_create_to_exec_time, &max_create_to_ready_time,
-			  &max_ready_to_exec_time);
-
-  dump_task_duration_histogram_worker(0, num_workers, wstream_df_worker_threads,
-				      total_duration, num_tasks, max_duration);
-}
-
-void dump_average_task_duration(unsigned int num_intervals, int num_workers, wstream_df_thread_p wstream_df_worker_threads)
-{
-  int curr_idx[num_workers];
-  int end_idx, tmp_idx;
-  int i;
-  int curr_worker = -1;
-  uint64_t min_texec_time;
-  uint64_t duration = 0;
-  uint64_t duration_gross = 0;
-  int64_t texec_duration;
-  uint64_t min_time = get_min_time(num_workers, wstream_df_worker_threads);
-  uint64_t max_time = get_max_time(num_workers, wstream_df_worker_threads);
-  uint64_t interval_length = (max_time - min_time) / num_intervals;
-  uint64_t interval_end = min_time + interval_length;
-  unsigned int tasks_in_interval = 0;
-  wstream_df_thread_p th;
-  FILE* fp = fopen(WQEVENT_SAMPLING_TASKLENGTHFILE, "w+");
-  assert(fp != NULL);
-
-  /* Initialize curr_idx with indexes of the first task executions */
-  for(i = 0; i < num_workers; i++) {
-    th = &wstream_df_worker_threads[i];
-    curr_idx[i] = get_next_event(th, -1, WQEVENT_START_TASKEXEC);
-  }
-
-  do {
-    min_texec_time = UINT64_MAX;
-    curr_worker = -1;
-
-    /* Find worker whose next task execution has the lowest timestamp */
-    for(i = 0; i < num_workers; i++) {
-      if(curr_idx[i] != -1) {
-	th = &wstream_df_worker_threads[i];
-
-	if(th->events[curr_idx[i]].time < min_texec_time) {
-	  min_texec_time = th->events[curr_idx[i]].time;
-	  curr_worker = i;
-	}
-      }
-    }
-
-    /* If there still is a worker executing a task, then process */
-    if(curr_worker != -1) {
-      th = &wstream_df_worker_threads[curr_worker];
-
-      /* Find end of the task execution */
-      end_idx = get_next_event(th, curr_idx[curr_worker], WQEVENT_END_TASKEXEC);
-
-      if(end_idx != -1) {
-	/* If we enter a new interval, dump information of the previous interval */
-	if(th->events[curr_idx[curr_worker]].time > interval_end
-	   && tasks_in_interval > 0)
-	  {
-	    fprintf(fp, "%"PRIu64" %"PRIu64" %"PRIu64"\n",
-		    (interval_end - interval_length/2) - min_time,
-		    duration/(uint64_t)tasks_in_interval,
-		    duration_gross/(uint64_t)tasks_in_interval);
-	    interval_end += interval_length;
-	    duration = 0;
-	    duration_gross = 0;
-	    tasks_in_interval = 0;
-	  }
-
-	/* Cumulate duration of texec states between start and end of the execution */
-	tmp_idx = curr_idx[curr_worker];
-	while((texec_duration = get_state_duration(th, &tmp_idx, end_idx)) != -1)
-	    duration += texec_duration;
-
-	duration_gross += th->events[end_idx].time - th->events[curr_idx[curr_worker]].time;
-
-	/* Update worker's index */
-	curr_idx[curr_worker] = get_next_event(th, end_idx, WQEVENT_START_TASKEXEC);
-	tasks_in_interval++;
-      } else {
-	curr_idx[curr_worker] = -1;
-      }
-    }
-  } while(curr_worker != -1);
-
-  /* Dump last interval */
-  if(tasks_in_interval > 0) {
-    fprintf(fp, "%"PRIu64" %"PRIu64" %"PRIu64"\n",
-	    (interval_end - interval_length/2) - min_time,
-	    duration/(uint64_t)tasks_in_interval,
-	    duration_gross/(uint64_t)tasks_in_interval);
-  }
-
-  fclose(fp);
-}
-
-void dump_average_task_duration_summary(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
-{
-  uint64_t task_durations_push[MEM_NUM_LEVELS];
-  uint64_t task_durations_steal[MEM_NUM_LEVELS];
-  uint64_t num_tasks_push[MEM_NUM_LEVELS];
-  uint64_t num_tasks_steal[MEM_NUM_LEVELS];
-  uint64_t duration;
-  wstream_df_thread_p th;
-  unsigned int i;
-  int start_idx, end_idx, tmp_idx;
-  int level;
-  uint64_t total_num_tasks = 0;
-  uint64_t total_duration = 0;
-  int64_t state_duration;
-
-  memset(task_durations_push, 0, sizeof(task_durations_push));
-  memset(task_durations_steal, 0, sizeof(task_durations_steal));
-  memset(num_tasks_push, 0, sizeof(num_tasks_push));
-  memset(num_tasks_steal, 0, sizeof(num_tasks_steal));
-
-  for (i = 0; i < (unsigned int)num_workers; ++i) {
-    th = &wstream_df_worker_threads[i];
-    end_idx = 0;
-
-    if(th->num_events > 0) {
-      while((start_idx = get_next_event(th, end_idx, WQEVENT_START_TASKEXEC)) != -1 && end_idx != -1) {
-	end_idx = get_next_event(th, start_idx, WQEVENT_END_TASKEXEC);
-
-	if(end_idx != -1) {
-	  assert(th->events[end_idx].time > th->events[start_idx].time);
-
-	  level = mem_lowest_common_level(th->worker_id, th->events[start_idx].texec.from_node);
-	  duration = 0;
-	  tmp_idx = start_idx+1;
-	  while((state_duration = get_state_duration(th, &tmp_idx, end_idx)) != -1)
-	    duration += state_duration;
-
-	  if(th->events[start_idx].texec.type == STEAL_TYPE_PUSH) {
-		  task_durations_push[level] += duration;
-		  num_tasks_push[level]++;
-	  } else if(th->events[start_idx].texec.type == STEAL_TYPE_STEAL) {
-		  task_durations_steal[level] += duration;
-		  num_tasks_steal[level]++;
-	  } else {
-	    assert(0);
-	  }
-
-	  total_duration += duration;
-	  total_num_tasks++;
-	}
-      }
-    }
-  }
-
-  for(level = 0; level < MEM_NUM_LEVELS; level++) {
-	  printf("Overall task num / duration (push, %s): "
-		 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%), "
-		 "%"PRIu64" cycles / task\n",
-		 mem_level_name(level),
-		 num_tasks_push[level], task_durations_push[level],
-		 100.0*(long double)num_tasks_push[level]/(long double)total_num_tasks,
-		 100.0*(long double)task_durations_push[level]/(long double)total_duration,
-		 num_tasks_push[level] == 0 ? 0 : task_durations_push[level] / num_tasks_push[level]);
-
-	  printf("Overall task num / duration (steal, %s): "
-		 "%"PRIu64" / %"PRIu64" cycles (%.6Lf%% / %.6Lf%%), "
-		 "%"PRIu64" cycles / task\n",
-		 mem_level_name(level),
-		 num_tasks_steal[level], task_durations_steal[level],
-		 100.0*(long double)num_tasks_steal[level]/(long double)total_num_tasks,
-		 100.0*(long double)task_durations_steal[level]/(long double)total_duration,
-		 num_tasks_steal[level] == 0 ? 0 : task_durations_steal[level] / num_tasks_steal[level]);
-  }
-
-  printf("Overall average task duration: %"PRIu64" cycles / task\n", total_duration/total_num_tasks);
 }
 
 int conditional_fprintf(int do_dump, FILE* fp, const char *format, ...)
@@ -851,7 +498,9 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
 	  }
-	} else if(th->events[k].type == WQEVENT_TCREATE) {
+	} else if(th->events[k].type == WQEVENT_TCREATE ||
+		  th->events[k].type == WQEVENT_START_TASKEXEC ||
+		  th->events[k].type == WQEVENT_END_TASKEXEC) {
 	  /* Tcreate event (simply dumped as an event) */
 
 	  if(do_dump) {
@@ -861,7 +510,17 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_sge.header.worker = th->worker_id;
 	    dsk_sge.header.active_task = th->events[k].active_task;
 	    dsk_sge.header.active_frame = th->events[k].active_frame;
-	    dsk_sge.type = SINGLE_TYPE_TCREATE;
+
+	    if(th->events[k].type == WQEVENT_TCREATE) {
+	      dsk_sge.type = SINGLE_TYPE_TCREATE;
+	      dsk_sge.what = th->events[k].tcreate.frame;
+	    } else if(th->events[k].type == WQEVENT_START_TASKEXEC) {
+	      dsk_sge.type = SINGLE_TYPE_TEXEC_START;
+	      dsk_sge.what = th->events[k].texec_start.frame;
+	    } else if(th->events[k].type == WQEVENT_END_TASKEXEC) {
+	      dsk_sge.type = SINGLE_TYPE_TEXEC_END;
+	      dsk_sge.what = th->events[k].texec_end.frame;
+	    }
 
 	    write_struct_convert(fp, &dsk_sge, sizeof(dsk_sge), trace_single_event_conversion_table, 0);
 	  }

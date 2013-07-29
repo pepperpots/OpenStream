@@ -32,13 +32,21 @@ typedef struct worker_event {
     } steal;
 
     struct {
-      uint16_t from_node;
+      uint64_t frame;
+    } tcreate;
+
+    struct {
+      uint64_t frame;
+    } texec_start;
+
+    struct {
+      uint64_t frame;
+    } texec_end;
+
+    struct {
       uint16_t type;
       uint64_t creation_timestamp;
       uint64_t ready_timestamp;
-      uint64_t cache_misses;
-      uint64_t allocator_cache_misses;
-      uint32_t size;
     } texec;
 
     struct {
@@ -73,11 +81,13 @@ typedef struct worker_event {
   unsigned int previous_state_idx;
 
 struct wstream_df_thread;
+struct wstream_df_frame;
 
 void trace_init(struct wstream_df_thread* cthread);
 void trace_event(struct wstream_df_thread* cthread, unsigned int type);
-void trace_task_exec_start(struct wstream_df_thread* cthread, unsigned int from_node, unsigned int type, uint64_t creation_timestamp, uint64_t ready_timestamp, uint32_t size, uint64_t cache_misses, uint64_t allocator_cache_misses);
-void trace_task_exec_end(struct wstream_df_thread* cthread);
+void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
+void trace_task_exec_start(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
+void trace_task_exec_end(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
 void trace_state_restore(struct wstream_df_thread* cthread);
 void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
@@ -86,17 +96,14 @@ void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, un
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-void dump_average_task_duration_summary(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-void dump_average_task_duration(unsigned int num_intervals, int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-void dump_task_duration_histogram(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
-
 #else
 
 #define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS
 
-#define trace_init(cthread)  do { } while(0)
-#define trace_task_exec_end(cthread) do { } while(0)
-#define trace_task_exec_start(cthread, from_node, type, creation_timestamp, ready_timestamp, size, cache_misses, allocator_cache_misses) do { } while(0)
+#define trace_init(cthread) do { } while(0)
+#define trace_tcreate(cthread, frame) do { } while(0)
+#define trace_task_exec_end(cthread, frame) do { } while(0)
+#define trace_task_exec_start(cthread, frame) do { } while(0)
 #define trace_event(cthread, type) do { } while(0)
 #define trace_state_change(cthread, state) do { } while(0)
 #define trace_steal(cthread, src_worker, src_cpu, size, fp) do { } while(0)
@@ -106,10 +113,6 @@ void dump_task_duration_histogram(int num_workers, struct wstream_df_thread* wst
 #define trace_counter(cthread, counter_id, value) do { } while(0)
 
 #define dump_events_ostv(num_workers, wstream_df_worker_threads)  do { } while(0)
-#define dump_average_task_duration_summary(num_workers, wstream_df_worker_threads) do { } while(0)
-#define dump_average_task_duration(num_intervals, num_workers, wstream_df_worker_threads) do { } while(0)
-#define dump_avg_state_parallelism(state, max_intervals, num_workers, wstream_df_worker_threads) do { } while(0)
-#define dump_task_duration_histogram(num_workers, wstream_df_worker_threads) do { } while(0)
 #endif
 
 #endif
