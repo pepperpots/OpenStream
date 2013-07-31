@@ -62,7 +62,6 @@ void trace_task_exec_start(wstream_df_thread_p cthread, struct wstream_df_frame*
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].texec_start.frame = (uint64_t)frame;
-  cthread->previous_state_idx = cthread->num_events;
   cthread->num_events++;
 }
 
