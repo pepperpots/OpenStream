@@ -385,7 +385,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
     do_dump = 1;
 
     if(th->num_events > 0) {
-      for(k = 0; k < th->num_events-1; k++) {
+      for(k = 0; k < th->num_events; k++) {
 	if(MAX_WQEVENT_PARAVER_CYCLES != -1 &&
 	   th->events[k].time-min_time > (int64_t)MAX_WQEVENT_PARAVER_CYCLES)
 	  {
@@ -544,10 +544,10 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
       if(do_dump) {
 	dsk_se.header.type = EVENT_TYPE_STATE;
 	dsk_se.header.time = th->events[last_state_idx].time-min_time;
-	dsk_se.header.cpu = th->events[k].cpu;
+	dsk_se.header.cpu = th->events[k-1].cpu;
 	dsk_se.header.worker = th->worker_id;
-	dsk_se.header.active_task = th->events[k].active_task;
-	dsk_se.header.active_frame = th->events[k].active_frame;
+	dsk_se.header.active_task = th->events[k-1].active_task;
+	dsk_se.header.active_frame = th->events[k-1].active_frame;
 	dsk_se.state = WORKER_STATE_SEEKING;
 	dsk_se.end_time = max_time-min_time;
 
