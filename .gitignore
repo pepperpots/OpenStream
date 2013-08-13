@@ -63,6 +63,7 @@ examples/jacobi/x86_jacobi
 examples/jacobi/x86_jacobi_c11
 examples/jacobi/x86_jacobi_dumbc11
 examples/jacobi/x86_jacobi_nofences
+examples/kmeans/kmeans
 examples/knapsack/x86_knapsack
 examples/knapsack/x86_knapsack_c11
 examples/knapsack/x86_knapsack_dumbc11
