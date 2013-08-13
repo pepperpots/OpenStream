@@ -1,5 +1,5 @@
 /**
- * Serial implementation of K-means, compatible to the non-fuzzy
+ * OpenMP implementation of K-means, compatible to the non-fuzzy
  * k-means version from minebench 3.0 without z-score transformation.
  *
  * Copyright (C) 2013 Andi Drebes <andi.drebes@lip6.fr>
@@ -43,12 +43,17 @@ float kmeans(int k, int nd, float* ccenters, int n, float* vals, int* membership
 {
 	float min_dist;
 	float curr_dist;
-	int min_cid = 0;
+	int min_cid;
 	float delta = 0.0f;
+	int i;
 
 	/* Determine nearest cluster for each point */
-	for(int i = 0; i < n; i++) {
+	#pragma omp parallel for \
+		reduction(+:delta) \
+		private(curr_dist, min_dist, min_cid)
+	for(i = 0; i < n; i++) {
 		min_dist = FLT_MAX;
+		min_cid = 0;
 
 		/* Calculate distance for each cluster center and
 		 * find id of the nearest cluster
