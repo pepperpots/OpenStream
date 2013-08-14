@@ -27,7 +27,6 @@
 float frand(void);
 void init_membership(int n, int* membership);
 void init_clusters(int k, int nd, float* ccenters, int n, float* vals);
-void update_clusters(int k, int nd, float* ccenters, int* nmembers, int n, float* vals, int* membership);
 int read_binary_file(const char* filename, int* nd, int* n, float** vals);
 void init_random_points_random_walk_clust(int nd, int n, int k, float* vals);
 

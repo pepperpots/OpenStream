@@ -22,9 +22,93 @@
 #include <float.h>
 #include <malloc.h>
 #include <getopt.h>
+#include <string.h>
+#include <omp.h>
 #include "../common/common.h"
 #include "../common/sync.h"
 #include "kmeans_common.h"
+
+/**
+ * Calculates the new cluster centers based on the new memberships
+ *
+ * k: number of clusters
+ * nd: number of dimensions
+ * ccenters: array that contains the updated coordinates after the call
+ * nmembers: stores how many members each cluster has
+ * n: number of points
+ * vals: the points
+ * membership: contains the ids of the clusters the points are currently
+ *             associated to
+ */
+void update_clusters(int k, int nd, float* ccenters, int* nmembers, int n, float* vals, int* membership)
+{
+	/* Arrays for accumulation */
+	float** ccenters_local;
+	int** nmembers_local;
+
+	int num_threads;
+	int id;
+
+	/* Reset cluster centers and number of members per cluster */
+	memset(ccenters, 0, sizeof(float)*k*nd);
+	memset(nmembers, 0, sizeof(int)*k);
+
+	#pragma omp parallel shared(num_threads, ccenters_local, nmembers_local) \
+		private(id) firstprivate(k, nd, ccenters, n, vals, membership)
+	{
+		#pragma omp single
+		{
+			/* Init table with pointers to local arrays */
+			num_threads = omp_get_num_threads();
+			ccenters_local = calloc(num_threads, sizeof(float*));
+			nmembers_local = calloc(num_threads, sizeof(int*));
+		}
+
+		#pragma omp barrier
+
+		/* Determine ID and allocate space for local arrays */
+		id = omp_get_thread_num();
+		ccenters_local[id] = calloc(k*nd, sizeof(float));
+		nmembers_local[id] = calloc(k, sizeof(int));
+
+		#pragma omp for
+		/* Accumulate coordinates and count members locally */
+		for(int i = 0; i < n; i++) {
+			for(int dim = 0; dim < nd; dim++)
+				ccenters_local[id][membership[i] * nd + dim] += vals[i*nd + dim];
+
+			nmembers_local[id][membership[i]]++;
+		}
+	}
+
+	/* Aggregate local arrays */
+	for(id = 0; id < num_threads; id++) {
+		/* If no local array allocated: skip */
+		if(!ccenters_local[id])
+			continue;
+
+		for(int clust = 0; clust < k; clust++) {
+			nmembers[clust] += nmembers_local[id][clust];
+
+			if(nmembers_local[id][clust] > 0)
+				for(int dim = 0; dim < nd; dim++)
+					ccenters[clust * nd + dim] += ccenters_local[id][clust * nd + dim];
+		}
+
+		/* Free local arrays */
+		free(nmembers_local[id]);
+		free(ccenters_local[id]);
+	}
+
+	/* Free global table for local arrays */
+	free(nmembers_local);
+	free(ccenters_local);
+
+	/* Normalize coordinates */
+	for(int clust = 0; clust < k; clust++)
+		for(int dim = 0; dim < nd; dim++)
+			ccenters[clust*nd + dim] /= nmembers[clust];
+}
 
 /**
  * Performns one single iteration of the k-means algorithm.

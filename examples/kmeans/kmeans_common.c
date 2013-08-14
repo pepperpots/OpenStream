@@ -64,38 +64,6 @@ void init_clusters(int k, int nd, float* ccenters, int n, float* vals)
 }
 
 /**
- * Calculates the new cluster centers based on the new memberships
- *
- * k: number of clusters
- * nd: number of dimensions
- * ccenters: array that contains the updated coordinates after the call
- * nmembers: stores how many members each cluster has
- * n: number of points
- * vals: the points
- * membership: contains the ids of the clusters the points are currently
- *             associated to
- */
-void update_clusters(int k, int nd, float* ccenters, int* nmembers, int n, float* vals, int* membership)
-{
-	/* Reset cluster centers and number of members per cluster */
-	memset(ccenters, 0, sizeof(float)*k*nd);
-	memset(nmembers, 0, sizeof(int)*k);
-
-	/* Accumulate coordinates and count members */
-	for(int i = 0; i < n; i++) {
-		for(int dim = 0; dim < nd; dim++)
-			ccenters[membership[i] * nd + dim] += vals[i*nd + dim];
-
-		nmembers[membership[i]]++;
-	}
-
-	/* Normalize coordinates */
-	for(int clust = 0; clust < k; clust++)
-		for(int dim = 0; dim < nd; dim++)
-			ccenters[clust*nd + dim] /= nmembers[clust];
-}
-
-/**
  * Read the contents of a file in minebench binary format.
  *
  * filename: full path to the file to be loaded
