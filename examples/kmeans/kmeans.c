@@ -60,7 +60,7 @@ void update_clusters(int k, int nd, float* ccenters, int* nmembers, int n, float
 }
 
 /**
- * Performns one single iteration of the k-means algorithm.
+ * Performs one single iteration of the k-means algorithm.
  *
  * k: number of clusters
  * nd: number of dimensions
