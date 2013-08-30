@@ -30,6 +30,7 @@ static int* wstream_df_worker_cpus;
 /*************************************************************************/
 
 static void worker_thread ();
+static void trace_signal_handler(int sig);
 
 int wstream_self(void)
 {
@@ -856,6 +857,9 @@ void pre_main()
 
   wstream_df_worker_threads[0].current_work_fn = (void*)main;
   wstream_df_worker_threads[0].current_frame = NULL;
+
+  if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
+    fprintf(stderr, "Cannot install signal handler for SIGUSR1\n");
 }
 
 __attribute__((destructor))
@@ -1169,4 +1173,9 @@ __builtin_ia32_tick (void *s, size_t burst)
     }
 
   wstream_df_resolve_dependences ((void *) cons_view, s, true);
+}
+
+static void trace_signal_handler(int sig)
+{
+  dump_events_ostv(num_workers, wstream_df_worker_threads);
 }
