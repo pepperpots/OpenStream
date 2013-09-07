@@ -108,7 +108,7 @@ typedef struct wstream_df_frame
   int steal_type;
   int last_owner;
   int bytes_cpu_in[MAX_CPUS];
-  int bytes_cpu_out[MAX_CPUS];
+  long long bytes_cpu_ts[MAX_CPUS];
   long long cache_misses[MAX_CPUS];
   uint64_t creation_timestamp;
   uint64_t ready_timestamp;

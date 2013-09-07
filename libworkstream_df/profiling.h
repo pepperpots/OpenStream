@@ -77,6 +77,17 @@ dump_global_wqueue_counters ();
 	(*(ctr)) += delta; \
 	} while (0)
 
+#define set_wqueue_counter(ctr, val) \
+	do { \
+	(*(ctr)) = val; \
+	} while (0)
+
+#define set_wqueue_counter_if_zero(ctr, val) \
+	do { \
+	if((*(ctr)) == 0) \
+		(*(ctr)) = val; \
+	} while (0)
+
 #else
 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS
@@ -86,6 +97,8 @@ dump_global_wqueue_counters ();
 #define stop_wqueue_counters() do {} while(0)
 #define dump_wqueue_counters(num_workers, wstream_df_worker_threads) do {} while(0)
 #define inc_wqueue_counter(ctr, delta) do {} while(0)
+#define set_wqueue_counter(ctr, val) do {} while(0)
+#define set_wqueue_counter_if_zero(ctr, val) do {} while(0)
 #endif
 
 #ifdef MATRIX_PROFILE

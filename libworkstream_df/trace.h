@@ -59,6 +59,7 @@ typedef struct worker_event {
     struct {
       uint32_t src_cpu;
       uint32_t size;
+      uint64_t prod_ts;
     } data_read;
 
     struct {
@@ -92,7 +93,7 @@ void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
 void trace_state_restore(struct wstream_df_thread* cthread);
 void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
 void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame);
-void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size);
+void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts);
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);

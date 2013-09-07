@@ -143,12 +143,13 @@ void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned i
   cthread->num_events++;
 }
 
-void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size)
+void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].data_read.src_cpu = src_cpu;
   cthread->events[cthread->num_events].data_read.size = size;
+  cthread->events[cthread->num_events].data_read.prod_ts = prod_ts;
   cthread->events[cthread->num_events].type = WQEVENT_DATA_READ;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -477,6 +478,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.dst_worker = th->worker_id;
 	    dsk_ce.size = th->events[k].data_read.size;
 	    dsk_ce.what = th->events[k].active_frame;
+	    dsk_ce.prod_ts = th->events[k].data_read.prod_ts-min_time;
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
 	  }
