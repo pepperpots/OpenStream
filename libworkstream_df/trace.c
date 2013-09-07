@@ -104,12 +104,12 @@ void trace_state_restore(wstream_df_thread_p cthread)
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
 
   cthread->events[cthread->num_events].state_change.state =
-    cthread->events[cthread->previous_state_idx].state_change.state;
+    cthread->events[cthread->events[cthread->previous_state_idx].state_change.previous_state_idx].state_change.state;
 
   cthread->events[cthread->num_events].state_change.previous_state_idx =
     cthread->events[cthread->previous_state_idx].state_change.previous_state_idx;
 
-  cthread->previous_state_idx = cthread->num_events;
+  cthread->previous_state_idx = cthread->events[cthread->previous_state_idx].state_change.previous_state_idx; //cthread->num_events;
   cthread->num_events++;
 }
 

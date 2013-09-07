@@ -518,6 +518,7 @@ worker_thread (void)
 	 saves.  */
     }
 
+trace_state_change(cthread, WORKER_STATE_SEEKING);
   while (true)
     {
 #if ALLOW_PUSHES
@@ -568,10 +569,10 @@ worker_thread (void)
 	  __compiler_fence;
 
 	  trace_task_exec_end(cthread, fp);
-
 	  cthread->current_work_fn = NULL;
 	  cthread->current_frame = NULL;
-	  trace_state_change(cthread, WORKER_STATE_SEEKING);
+
+	  trace_state_restore(cthread);
 
 	  wqueue_counters_enter_runtime(current_thread);
 	  inc_wqueue_counter(&cthread->tasks_executed, 1);
