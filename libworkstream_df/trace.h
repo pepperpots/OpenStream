@@ -33,14 +33,17 @@ typedef struct worker_event {
 
     struct {
       uint64_t frame;
+      uint32_t size;
     } tcreate;
 
     struct {
       uint64_t frame;
+      uint32_t size;
     } texec_start;
 
     struct {
       uint64_t frame;
+      uint32_t size;
     } texec_end;
 
     struct {

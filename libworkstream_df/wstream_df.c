@@ -178,10 +178,12 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   wqueue_counters_enter_runtime(cthread);
   trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
+  trace_tcreate(cthread, NULL);
 
+#if ALLOW_WQEVENT_SAMPLING
+  int curr_idx = cthread->num_events-1;
+#endif
   wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
-
-  trace_tcreate(cthread, frame_pointer);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -190,6 +192,11 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->work_fn = (void (*) (void *)) wfn;
   frame_pointer->creation_timestamp = rdtsc();
   frame_pointer->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
+
+#if ALLOW_WQEVENT_SAMPLING
+  cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
+  cthread->events[curr_idx].tcreate.size = (uint32_t)frame_pointer->size;
+#endif
 
   inc_wqueue_counter(&cthread->tasks_created, 1);
 
@@ -298,7 +305,6 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	    }
 	}
 #endif
-
       if (cthread->own_next_cached_thread != NULL)
 	cdeque_push_bottom (&cthread->work_deque,
 			    (wstream_df_type) cthread->own_next_cached_thread);
@@ -529,7 +535,7 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_DATA_READS)
 	  for(int cpu = 0; cpu < MAX_CPUS; cpu++) {
 	    if(fp->bytes_cpu_in[cpu])
-	      trace_data_read(cthread, cpu, fp->bytes_cpu_in[cpu]);
+	      trace_data_read(cthread, cpu, fp->bytes_cpu_in[cpu], fp->bytes_cpu_ts[cpu]);
 	  }
 #endif
 
