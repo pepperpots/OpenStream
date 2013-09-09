@@ -17,6 +17,7 @@ WXPROPERTYGRID_VERSION=1.4.15
 PAPI_VERSION=5.1.0.2
 CILK_VERSION=5.4.6
 CONTRIB_OPT=-O3
+NUMACTL_VERSION=2.0.8
 
 EXAMPLE_DEPS=$(CONTRIB_LIBDIR)/libblas.so \
 	$(CONTRIB_LIBDIR)/liblapack.so \
@@ -38,7 +39,7 @@ exampledeps: $(EXAMPLE_DEPS)
 ################################################################################
 bootstrap: $(BOOTSTRAP_DEPS)
 
-$(INST_DIR)/lib64/libwstream_df.so: $(INST_DIR)/bin/gcc
+$(INST_DIR)/lib64/libwstream_df.so: $(INST_DIR)/bin/gcc libnuma
 	$(MAKE) -C libworkstream_df
 	$(MAKE) -C libworkstream_df install
 
@@ -463,3 +464,24 @@ $(CONTRIB_DIR)/cilk-$(CILK_VERSION)/exdep: $(ARCHIVES_DIR)/cilk-$(CILK_VERSION).
 $(ARCHIVES_DIR)/cilk-$(CILK_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
 	wget 'http://supertech.csail.mit.edu/cilk/cilk-$(CILK_VERSION).tar.gz' -O $@
+
+################################################################################
+# Libnuma                                                                      #
+################################################################################
+
+libnuma: $(CONTRIB_BINDIR)/numactl
+
+$(CONTRIB_BINDIR)/numactl: $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)
+	$(MAKE) PREFIX=$(INST_DIR) -C $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION) install
+
+$(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)/Makefile: $(ARCHIVES_DIR)/numactl-$(NUMACTL_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION) ] ; \
+		then rm -rf "$(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	touch $@
+
+$(ARCHIVES_DIR)/numactl-$(NUMACTL_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget 'ftp://oss.sgi.com/www/projects/libnuma/download/numactl-$(NUMACTL_VERSION).tar.gz' -O $@

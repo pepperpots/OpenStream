@@ -39,6 +39,7 @@ typedef struct worker_event {
     struct {
       uint64_t frame;
       uint32_t size;
+      int32_t numa_node;
     } texec_start;
 
     struct {

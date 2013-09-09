@@ -3,6 +3,23 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <numaif.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <sys/mman.h>
+
+static inline int slab_get_numa_node(void* address)
+{
+	int node;
+
+	if(move_pages(getpid(), 1, &address, NULL, &node, 0)) {
+		fprintf(stderr, "Could not get node info\n");
+		exit(1);
+	}
+
+	return node;
+}
 
 #define __slab_align 64
 #define __slab_min_size 6 // 64 -- smallest slab
@@ -27,6 +44,7 @@ typedef struct slab_metainfo {
 	int max_initial_writer_id;
 	unsigned int max_initial_writer_size;
 	unsigned int size;
+	int numa_node;
 } slab_metainfo_t, *slab_metainfo_p;
 
 #define ROUND_UP(x,y) (((x)+(y)-1)/(y))
@@ -105,12 +123,34 @@ slab_set_max_initial_writer_of(void* ptr, int miw, unsigned int size)
   metainfo->max_initial_writer_size = size;
 }
 
+static inline int
+slab_numa_node_of(void* ptr)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  return metainfo->numa_node;
+}
+
+static inline void
+slab_set_numa_node_of(void* ptr, int node)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  metainfo->numa_node = node;
+}
+
+static inline void
+slab_update_numa_node_of(void* ptr)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  metainfo->numa_node = slab_get_numa_node((char*)ptr+metainfo->size / 2);
+}
+
 static inline void
 slab_metainfo_int(slab_cache_p slab_cache, slab_metainfo_p metainfo)
 {
       metainfo->allocator_id = slab_cache->allocator_id;
       metainfo->max_initial_writer_id = -1;
       metainfo->max_initial_writer_size = 0;
+      metainfo->numa_node = -1;
 }
 
 static inline void
@@ -250,6 +290,8 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_max_initial_writer_size_of(P)
 #  define wstream_set_max_initial_writer_of(P, MIW, SZ)	\
 	slab_set_max_initial_writer_of(P, MIW, SZ)
+#  define wstream_update_numa_node_of(P) \
+  slab_update_numa_node_of(P)
 #else
 #  define wstream_alloc(SLAB, PP,A,S)			\
   assert (!posix_memalign ((void **) (PP), (A), (S)))
@@ -261,6 +303,7 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
 #  define wstream_max_initial_writer_of(P) (0)
 #  define wstream_max_initial_writer_size_of(P) (0)
 #  define wstream_set_max_initial_writer_of(P, MIW, SZ) do { } while(0)
+#  define wstream_update_numa_node_of(P) do { } while(0)
 #endif
 
 
