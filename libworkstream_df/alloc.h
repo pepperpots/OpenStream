@@ -21,6 +21,7 @@ static inline int slab_get_numa_node(void* address)
 	return node;
 }
 
+#define __slab_max_slabs 64
 #define __slab_align 64
 #define __slab_min_size 6 // 64 -- smallest slab
 #define __slab_max_size 20 // 262144 = 256KB -- biggest slab
@@ -156,21 +157,26 @@ slab_metainfo_int(slab_cache_p slab_cache, slab_metainfo_p metainfo)
 static inline void
 slab_refill (slab_cache_p slab_cache, unsigned int idx)
 {
-  const unsigned int num_slabs = 1 << (__slab_alloc_size - idx);
+  unsigned int num_slabs = 1 << (__slab_alloc_size - idx);
   const unsigned int slab_size = 1 << idx;
   unsigned int i;
   slab_p s;
   void* alloc = NULL;
   slab_metainfo_p metainfo;
 
+  if(num_slabs > __slab_max_slabs)
+	  num_slabs = __slab_max_slabs;
+
+  int alloc_size = num_slabs * (slab_size + __slab_metainfo_size);
+
+
   assert (!posix_memalign (&alloc,
 			   __slab_align,
-			   (1 << __slab_alloc_size) +
-			   __slab_metainfo_size * num_slabs));
+			   alloc_size));
 
   slab_cache->slab_free_pool[idx] = (slab_p)(((char*)alloc) + __slab_metainfo_size);
   slab_cache->slab_refills++;
-  slab_cache->slab_bytes += 1 << __slab_alloc_size;
+  slab_cache->slab_bytes += num_slabs * slab_size;
 
   s = slab_cache->slab_free_pool[idx]; // avoid useless warning;
   for (i = 0; i < num_slabs; ++i)
