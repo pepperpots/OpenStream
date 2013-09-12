@@ -808,6 +808,10 @@ void pre_main()
 
   wstream_init_alloc(&wstream_df_worker_threads[0].slab_cache, 0);
 
+#if ALLOW_PUSHES
+  fifo_init(&wstream_df_worker_threads[0].push_fifo);
+#endif
+
 #ifdef _PRINT_STATS
   printf ("Creating %d workers for %d cores\n", num_workers, ncores);
 #endif
