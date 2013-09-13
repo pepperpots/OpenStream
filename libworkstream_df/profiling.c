@@ -242,6 +242,8 @@ init_wqueue_counters (wstream_df_thread_p th)
 	th->tasks_executed_localalloc = 0;
 	th->tasks_executed_max_initial_writer = 0;
 
+	memset(th->bytes_mem, 0, sizeof(th->bytes_mem));
+
 #if ALLOW_PUSHES
 	th->steals_pushed = 0;
 	th->pushes_fails = 0;
