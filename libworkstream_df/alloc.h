@@ -146,7 +146,7 @@ slab_update_numa_node_of(void* ptr)
 }
 
 static inline void
-slab_metainfo_int(slab_cache_p slab_cache, slab_metainfo_p metainfo)
+slab_metainfo_init(slab_cache_p slab_cache, slab_metainfo_p metainfo)
 {
       metainfo->allocator_id = slab_cache->allocator_id;
       metainfo->max_initial_writer_id = -1;
@@ -182,7 +182,7 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
   for (i = 0; i < num_slabs; ++i)
     {
       metainfo = slab_metainfo(s);
-      slab_metainfo_int(slab_cache, metainfo);
+      slab_metainfo_init(slab_cache, metainfo);
 
       if(i == num_slabs-1) {
 	s->next = NULL;
@@ -209,7 +209,7 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
       slab_cache->slab_toobig++;
       assert (!posix_memalign ((void **) &res, __slab_align, size + __slab_metainfo_size));
       metainfo = res;
-      slab_metainfo_int(slab_cache, metainfo);
+      slab_metainfo_init(slab_cache, metainfo);
       metainfo->size = size;
       return (((char*)res) + __slab_metainfo_size);
     }
