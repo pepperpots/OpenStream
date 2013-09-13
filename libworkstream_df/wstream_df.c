@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "config.h"
 #include "trace.h"
@@ -855,8 +856,10 @@ void pre_main()
   wstream_df_worker_threads[0].current_work_fn = (void*)main;
   wstream_df_worker_threads[0].current_frame = NULL;
 
+#if ALLOW_WQEVENT_SAMPLING
   if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
     fprintf(stderr, "Cannot install signal handler for SIGUSR1\n");
+#endif
 }
 
 __attribute__((destructor))
