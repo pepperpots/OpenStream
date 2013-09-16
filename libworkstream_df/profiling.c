@@ -328,6 +328,9 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 
 void dump_numa_counters_single(wstream_df_numa_node_p numa_node)
 {
+	printf ("Node %d: node_allocated_frame_bytes = %lld\n",
+		numa_node->id,
+		numa_node->frame_bytes_allocated);
 	printf ("Node %d: slab_bytes = %lld\n",
 		numa_node->id,
 		numa_node->slab_cache.slab_bytes);

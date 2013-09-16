@@ -299,6 +299,12 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 	wstream_set_max_initial_writer_of(fp, max_worker, max_data);
 	wstream_update_numa_node_of(fp);
+
+	int node_id = wstream_numa_node_of(fp);
+	if(node_id >= 0) {
+	  wstream_df_numa_node_p node = numa_node_by_id(node_id);
+	  node->frame_bytes_allocated += fp->size;
+	}
       }
 
       if (fp->work_fn == (void *) 1)

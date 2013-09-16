@@ -194,6 +194,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_numa_node
   wstream_df_thread_p workers[MAX_CPUS];
   unsigned int num_workers;
   int id;
+  unsigned long long frame_bytes_allocated;
 } wstream_df_numa_node_t, *wstream_df_numa_node_p;
 
 static inline void numa_node_init(wstream_df_numa_node_p node, int node_id)
@@ -202,6 +203,7 @@ static inline void numa_node_init(wstream_df_numa_node_p node, int node_id)
   node->leader = NULL;
   node->num_workers = 0;
   node->id = node_id;
+  node->frame_bytes_allocated = 0;
 }
 
 static inline void numa_node_add_thread(wstream_df_numa_node_p node, wstream_df_thread_p thread)
