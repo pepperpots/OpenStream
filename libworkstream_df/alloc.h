@@ -12,11 +12,15 @@
 static inline int slab_get_numa_node(void* address)
 {
 	int node;
+	void* addr_aligned = (void*)(((long)address) & ~(0xfff));
 
-	if(move_pages(getpid(), 1, &address, NULL, &node, 0)) {
+	if(move_pages(getpid(), 1, &addr_aligned, NULL, &node, 0)) {
 		fprintf(stderr, "Could not get node info\n");
 		exit(1);
 	}
+
+	if(node < 0)
+	  node = -1;
 
 	return node;
 }
