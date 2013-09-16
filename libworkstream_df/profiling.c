@@ -293,39 +293,6 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 		th->worker_id,
 		th->steals_fails);
 
-#if !NO_SLAB_ALLOCATOR
-	printf ("Thread %d: slab_bytes = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_bytes);
-	printf ("Thread %d: slab_final_objects = %d\n",
-		th->worker_id,
-		th->slab_cache.num_objects);
-	printf ("Thread %d: slab_refills = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_refills);
-	printf ("Thread %d: slab_allocations = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_allocations);
-	printf ("Thread %d: slab_frees = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_frees);
-	printf ("Thread %d: slab_freed_bytes = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_freed_bytes);
-	printf ("Thread %d: slab_hits = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_hits);
-	printf ("Thread %d: slab_toobig = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_toobig);
-	printf ("Thread %d: slab_toobig_frees = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_toobig_frees);
-	printf ("Thread %d: slab_toobig_freed_bytes = %lld\n",
-		th->worker_id,
-		th->slab_cache.slab_toobig_freed_bytes);
-#endif
-
 #if ALLOW_PUSHES
 	printf ("Thread %d: pushes_fails = %lld\n",
 		th->worker_id,
@@ -359,6 +326,40 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	}
 }
 
+void dump_numa_counters_single(wstream_df_numa_node_p numa_node)
+{
+	printf ("Node %d: slab_bytes = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_bytes);
+	printf ("Node %d: slab_final_objects = %d\n",
+		numa_node->id,
+		numa_node->slab_cache.num_objects);
+	printf ("Node %d: slab_refills = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_refills);
+	printf ("Node %d: slab_allocations = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_allocations);
+	printf ("Node %d: slab_frees = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_frees);
+	printf ("Node %d: slab_freed_bytes = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_freed_bytes);
+	printf ("Node %d: slab_hits = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_hits);
+	printf ("Node %d: slab_toobig = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_toobig);
+	printf ("Node %d: slab_toobig_frees = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_toobig_frees);
+	printf ("Node %d: slab_toobig_freed_bytes = %lld\n",
+		numa_node->id,
+		numa_node->slab_cache.slab_toobig_freed_bytes);
+}
+
 void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream_df_worker_threads)
 {
 	unsigned int i, level;
@@ -378,6 +379,10 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 
 		for(level = 0; level < MEM_NUM_LEVELS; level++)
 			bytes_mem[level] += wstream_df_worker_threads[i].bytes_mem[level];
+	}
+
+	for (i = 0; i < MAX_NUMA_NODES; ++i) {
+		dump_numa_counters_single(numa_node_by_id(i));
 	}
 
 	for(level = 0; level < MEM_NUM_LEVELS; level++)

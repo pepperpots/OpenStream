@@ -13,6 +13,7 @@
 #define WSTREAM_STACK_SIZE 1 << 16
 
 #define MAX_CPUS 64
+#define MAX_NUMA_NODES 64
 
 #define WQUEUE_PROFILE 0
 #define MATRIX_PROFILE "wqueue_matrix.out"
@@ -159,6 +160,11 @@ static inline void mem_estimate_frame_transfer_costs(int metadata_owner,
 			}
 		}
 	}
+}
+
+static inline unsigned int mem_numa_node(unsigned int cpu)
+{
+	return cpu;
 }
 
 #ifdef WS_PAPI_PROFILE

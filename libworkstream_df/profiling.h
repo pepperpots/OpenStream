@@ -9,6 +9,7 @@
 #endif
 
 struct wstream_df_thread;
+struct wstream_df_numa_node;
 
 #if ALLOW_PUSHES
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \

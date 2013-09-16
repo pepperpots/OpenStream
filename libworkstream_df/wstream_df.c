@@ -22,6 +22,8 @@ static __thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
 static wstream_df_thread_p wstream_df_worker_threads;
+static wstream_df_numa_node_t wstream_df_numa_nodes[MAX_NUMA_NODES];
+wstream_df_numa_node_p wstream_df_default_node;
 static int num_workers;
 static int* wstream_df_worker_cpus;
 
@@ -32,6 +34,18 @@ static int* wstream_df_worker_cpus;
 
 static void worker_thread ();
 static void trace_signal_handler(int sig);
+
+static inline void wstream_free_frame(wstream_df_frame_p fp)
+{
+  int node_id = wstream_numa_node_of(fp);
+
+  if(node_id != -1) {
+    wstream_df_numa_node_p node = numa_node_by_id(node_id);
+    wstream_free(&node->slab_cache, fp);
+  } else {
+    wstream_free(&wstream_df_default_node->slab_cache, fp);
+ }
+}
 
 int wstream_self(void)
 {
@@ -48,7 +62,7 @@ wstream_df_create_barrier ()
 {
   barrier_p barrier;
 
-  wstream_alloc (&current_thread->slab_cache, &barrier, 64, sizeof (barrier_t));
+  wstream_alloc (current_thread->slab_cache, &barrier, 64, sizeof (barrier_t));
   memset (barrier, 0, sizeof (barrier_t));
 
   /* Add one guard elemment, it will be matched by one increment of
@@ -66,7 +80,7 @@ try_pass_barrier (barrier_p bar)
   if (bar->barrier_counter_created == exec)
     {
       if (bar->barrier_unused == true)
-	wstream_free (&current_thread->slab_cache, bar);
+	wstream_free (current_thread->slab_cache, bar);
       else
 	{
 	  wstream_df_thread_p cthread = current_thread;
@@ -132,7 +146,7 @@ wstream_df_taskwait ()
 	 this scheduler will be, so leave NULL then set when a barrier
 	 passes to the barrier's continuation).  */
 
-      wstream_alloc(&cthread->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
+      wstream_alloc(cthread->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
       ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
       ws_prepcontext (&cbar->continuation_context, NULL, WSTREAM_STACK_SIZE, NULL);
 
@@ -153,10 +167,10 @@ wstream_df_taskwait ()
 	 the context that was swapped out (can only happen in TEND).  The
 	 stack-stored variable BAR should have been preserved even if the
 	 thread-local "current_barrier" has not.  */
-      wstream_free (&cthread->slab_cache, cthread->current_stack);
+      wstream_free (cthread->slab_cache, cthread->current_stack);
     }
 
-  wstream_free (&cthread->slab_cache, cbar);
+  wstream_free (cthread->slab_cache, cbar);
   /* Restore thread-local variables.  */
   cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
@@ -184,7 +198,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 #if ALLOW_WQEVENT_SAMPLING
   int curr_idx = cthread->num_events-1;
 #endif
-  wstream_alloc(&cthread->slab_cache, &frame_pointer, 64, size);
+  wstream_alloc(cthread->slab_cache, &frame_pointer, 64, size);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
@@ -289,7 +303,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
       if (fp->work_fn == (void *) 1)
 	{
-	  wstream_free(&cthread->slab_cache, fp);
+	  wstream_free_frame(fp);
 	  trace_state_restore(cthread);
 	  return;
 	}
@@ -362,7 +376,7 @@ __builtin_ia32_tend (void *fp)
   if(wstream_max_initial_writer_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_max_initial_writer, 1);
 
-  wstream_free (&cthread->slab_cache, cfp);
+  wstream_free_frame (cfp);
 
   /* If this task belongs to a barrier, increment the exec count and
      try to pass the barrier.  */
@@ -522,8 +536,7 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 #endif
 #endif
 
-      uint64_t misses, allocator_misses;
-      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads, &misses, &allocator_misses);
+      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
 
       if(fp != NULL)
 	{
@@ -584,11 +597,6 @@ wstream_df_worker_thread_fn (void *data)
 {
   current_thread = ((wstream_df_thread_p) data);
   wstream_df_thread_p cthread = ((wstream_df_thread_p) data);
-
-  if (cthread->worker_id != 0)
-    {
-	    wstream_init_alloc(&cthread->slab_cache, cthread->worker_id);
-    }
 
   init_wqueue_counters (cthread);
 
@@ -705,6 +713,12 @@ int cpu_used(int cpu)
   return (cpu_to_worker_id(cpu) != -1);
 }
 
+wstream_df_numa_node_p numa_node_by_id(unsigned int id)
+{
+  assert(id < MAX_NUMA_NODES);
+  return &wstream_df_numa_nodes[id];
+}
+
 static void
 start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 	      unsigned short *cpu_affinities, size_t num_cpu_affinities,
@@ -712,6 +726,8 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 {
   pthread_attr_t thread_attr;
   unsigned int i;
+  int numa_node_id;
+  wstream_df_numa_node_p numa_node;
 
   int id = wstream_df_worker->worker_id;
 
@@ -719,6 +735,10 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     wstream_df_worker->cpu = id % ncores;
   else
     wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
+
+  numa_node_id = mem_numa_node(wstream_df_worker->cpu);
+  numa_node = numa_node_by_id(numa_node_id);
+  numa_node_add_thread(numa_node, wstream_df_worker);
 
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker->push_fifo);
@@ -750,7 +770,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
 
   void *stack;
-  wstream_alloc(&wstream_df_worker_threads[0].slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
+  wstream_alloc(wstream_df_worker_threads[0].slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
   errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
   wstream_df_worker->current_stack = stack;
 
@@ -781,6 +801,7 @@ void pre_main()
   int i, ncores;
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
+  int numa_node;
 
   init_transfer_matrix();
 
@@ -805,9 +826,28 @@ void pre_main()
   for(i = 0; i < MAX_CPUS; i++)
     wstream_df_worker_cpus[i] = -1;
 
+  /* Add a guard frame for the control program (in case threads catch
+     up with the control program).  */
+  current_thread = &wstream_df_worker_threads[0];
+  current_barrier = NULL;
+
+  for(int i = 0; i < MAX_NUMA_NODES; i++)
+    numa_node_init(numa_node_by_id(i), i);
+
+  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
+
+  if (cpu_affinities == NULL)
+    current_thread->cpu = 0;
+  else
+    current_thread->cpu = cpu_affinities[0];
+
+  wstream_df_worker_cpus[current_thread->cpu] = 0;
+
   ncores = wstream_df_num_cores ();
 
-  wstream_init_alloc(&wstream_df_worker_threads[0].slab_cache, 0);
+  numa_node = mem_numa_node(current_thread->cpu);
+  numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
+  wstream_df_default_node = numa_node_by_id(numa_node);
 
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker_threads[0].push_fifo);
@@ -827,11 +867,6 @@ void pre_main()
       wstream_df_worker_threads[i].current_frame = NULL;
     }
 
-  /* Add a guard frame for the control program (in case threads catch
-     up with the control program).  */
-  current_thread = &wstream_df_worker_threads[0];
-  current_barrier = NULL;
-
 #ifdef TRACE_RT_INIT_STATE
   trace_init(&wstream_df_worker_threads[0]);
   trace_state_change(current_thread, WORKER_STATE_RT_INIT);
@@ -839,16 +874,9 @@ void pre_main()
 
   setup_wqueue_counters();
 
-  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
   for (i = 1; i < num_workers; ++i)
     start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
-
-  if (cpu_affinities == NULL)
-    current_thread->cpu = 0;
-  else
-    current_thread->cpu = cpu_affinities[0];
-  wstream_df_worker_cpus[current_thread->cpu] = 0;
 
   free (cpu_affinities);
   init_wqueue_counters(&wstream_df_worker_threads[0]);
@@ -897,7 +925,7 @@ init_stream (void *s, size_t element_size)
 void
 wstream_df_stream_ctor (void **s, size_t element_size)
 {
-  wstream_alloc(&current_thread->slab_cache, s, 64, sizeof (wstream_df_stream_t));
+  wstream_alloc(current_thread->slab_cache, s, 64, sizeof (wstream_df_stream_t));
   init_stream (*s, element_size);
 }
 
@@ -908,7 +936,7 @@ wstream_df_stream_array_ctor (void **s, size_t num_streams, size_t element_size)
 
   for (i = 0; i < num_streams; ++i)
     {
-      wstream_alloc(&current_thread->slab_cache, &s[i], 64, sizeof (wstream_df_stream_t));
+      wstream_alloc(current_thread->slab_cache, &s[i], 64, sizeof (wstream_df_stream_t));
       init_stream (s[i], element_size);
     }
 }
@@ -960,7 +988,7 @@ dec_stream_ref (void *s)
   if (refcount == 0)
     {
       force_empty_queues (s);
-      wstream_free(&current_thread->slab_cache, s);
+      wstream_free(current_thread->slab_cache, s);
     }
 #if 0
   int refcount = stream->refcount;
@@ -1136,7 +1164,7 @@ __builtin_ia32_tick (void *s, size_t burst)
       /* Allocate a fake view, with a fake data block, that allows to
 	 keep the same dependence resolution algorithm.  */
       size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size + sizeof (wstream_df_frame_t);
-      wstream_alloc(&current_thread->slab_cache, &cons_frame, 64, size);
+      wstream_alloc(current_thread->slab_cache, &cons_frame, 64, size);
       memset (cons_frame, 0, size);
 
       /* Avoid one atomic operation by setting the "next" field (which

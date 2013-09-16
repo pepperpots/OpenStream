@@ -20,6 +20,7 @@
 #define PUSH_MIN_FRAME_SIZE (64*1024)
 #define PUSH_MIN_REL_FRAME_SIZE 1.3
 #define NUM_PUSH_SLOTS 32
+#define PUSH_STRATEGY_MAX_WORKER
 #define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
 
 #define NUM_PUSH_REORDER_SLOTS 0
@@ -187,6 +188,11 @@ static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* by
 			}
 		}
 	}
+}
+
+static inline unsigned int mem_numa_node(unsigned int cpu)
+{
+	return cpu / 12;
 }
 
 #ifdef WS_PAPI_PROFILE

@@ -14,5 +14,5 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
 int work_try_push(wstream_df_frame_p fp, int target_worker, wstream_df_thread_p cthread, wstream_df_thread_p wstream_df_worker_threads);
 #endif
 
-wstream_df_frame_p obtain_work(wstream_df_thread_p cthread, wstream_df_thread_p wstream_df_worker_threads, uint64_t* misses, uint64_t* allocator_misses);
+wstream_df_frame_p obtain_work(wstream_df_thread_p cthread, wstream_df_thread_p wstream_df_worker_threads);
 #endif

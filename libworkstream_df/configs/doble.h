@@ -12,6 +12,7 @@
 #define WSTREAM_STACK_SIZE 1 << 16
 
 #define MAX_CPUS 64
+#define MAX_NUMA_NODES 8
 
 #define WQUEUE_PROFILE 1
 #define MATRIX_PROFILE "wqueue_matrix.out"
@@ -20,6 +21,8 @@
 #define PUSH_MIN_FRAME_SIZE (64*1024)
 #define PUSH_MIN_REL_FRAME_SIZE 1.3
 #define NUM_PUSH_SLOTS 32
+#define PUSH_STRATEGY_MAX_WRITER
+//#define PUSH_STRATEGY_OWNER
 #define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
 
 #define NUM_PUSH_REORDER_SLOTS 0
@@ -265,6 +268,10 @@ static inline int mem_num_steal_attempts_at_level(unsigned int level)
 	return steals_at_level[level];
 }
 
+static inline unsigned int mem_numa_node(unsigned int cpu)
+{
+	return cpu / 8;
+}
 
 static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* bytes_cpu, long long* cache_misses, long long* cache_misses_now, int allocator, unsigned long long* costs)
 {

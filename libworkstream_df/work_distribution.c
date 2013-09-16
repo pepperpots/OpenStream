@@ -112,12 +112,15 @@ void import_pushes(wstream_df_thread_p cthread)
 int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
 {
   unsigned int max_worker;
+  int numa_node_id;
   int max_data;
+  wstream_df_numa_node_p numa_node;
 
   /* Overhead for pushing small frames is too high */
   if(fp->size < PUSH_MIN_FRAME_SIZE)
     return 0;
 
+#if defined(PUSH_STRATEGY_MAX_WRITER)
   /* Determine which worker write most of the frame's input data */
   get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 
@@ -127,10 +130,32 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
       max_data = fp->bytes_cpu_in[cthread->cpu];
   }
 
+  if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+    return 0;
+
+#elif defined(PUSH_STRATEGY_OWNER)
+  /* Determine node id of owning NUMA node */
+  numa_node_id = slab_numa_node_of(fp);
+
+  if(numa_node_id != -1) {
+    /* Choose random worker sharing the target node */
+    numa_node = numa_node_by_id(numa_node_id);
+    cthread->rands = cthread->rands * 1103515245 + 12345;
+    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+
+    /* Set amount of data to frame size */
+    max_data = fp->size;
+  } else {
+    /* Node unknown, use local worker by default */
+    max_worker = cthread->worker_id;
+    max_data = fp->bytes_cpu_in[cthread->cpu];
+  }
+#else
+  #error "No push strategy defined"
+#endif
+
   /* Final check */
-  if(/* Target worker should have written at least X% more data */
-     max_data > PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu] &&
-     /* Only migrate to a different worker */
+  if(/* Only migrate to a different worker */
      max_worker != cthread->worker_id &&
      /* Do not migrate to workers that are too close in the memory hierarchy */
      mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(max_worker)) >= PUSH_MIN_MEM_LEVEL)
@@ -140,42 +165,6 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
     }
 
   return 0;
-
-  /* OLD CODE WITH WORKER SELECTION BASED ON TRANSFER COSTS */
-  /* unsigned long long xfer_costs[MAX_CPUS]; */
-  /* int allocator_id, allocator_cpu; */
-  /* unsigned long long min_costs; */
-  /* unsigned int min_worker; */
-
-  /* trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS); */
-  /* long long cache_misses_now[MAX_CPUS]; */
-  /* memset(cache_misses_now, 0, sizeof(cache_misses_now)); */
-
-  /* for(worker_id = 0; worker_id < num_workers; worker_id++) { */
-  /* 	cpu = worker_id_to_cpu(worker_id); */
-  /* 	cache_misses_now[cpu] = mem_cache_misses(&wstream_df_worker_threads[worker_id]); */
-  /* } */
-
-  /* allocator_id = wstream_allocator_of(fp); */
-  /* allocator_cpu = worker_id_to_cpu(allocator_id); */
-
-  /* mem_estimate_frame_transfer_costs(cthread->cpu, */
-  /* 					fp->bytes_cpu, */
-  /* 					fp->cache_misses, */
-  /* 					cache_misses_now, */
-  /* 					allocator_cpu, */
-  /* 					xfer_costs); */
-
-  /* trace_state_restore(cthread); */
-
-  /* min_worker = cthread->worker_id; */
-  /* min_costs = xfer_costs[cthread->worker_id]; */
-
-  /* ... if(xfer_costs[cpu] < min_costs) { */
-  /*   min_costs = xfer_costs[cpu]; */
-  /*   min_worker = worker_id; */
-  /* } */
-
 }
 
 /*
@@ -314,8 +303,7 @@ static wstream_df_frame_p work_take(wstream_df_thread_p cthread)
 }
 
 wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
-			       wstream_df_thread_p wstream_df_worker_threads,
-			       uint64_t* misses, uint64_t* allocator_misses)
+			       wstream_df_thread_p wstream_df_worker_threads)
 {
   unsigned int cpu;
   int level;
@@ -336,8 +324,6 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
   /* A frame pointer could be obtained (locally or via a steal) */
   if (fp != NULL)
     {
-      *misses = 0;
-
       /* Update memory transfer statistics */
       for(cpu = 0; cpu < MAX_CPUS; cpu++)
 	{
@@ -346,14 +332,8 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
 	      level = mem_lowest_common_level(cthread->cpu, cpu);
 	      inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu_in[cpu]);
 	      inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu_in[cpu]);
-
-	      *misses += mem_cache_misses(&wstream_df_worker_threads[cpu_to_worker_id(cpu)]) - fp->cache_misses[cpu];
 	    }
 	}
-
-      allocator = wstream_allocator_of(fp);
-      allocator_cpu = worker_id_to_cpu(allocator);
-      *allocator_misses = mem_cache_misses(&wstream_df_worker_threads[allocator]) - fp->cache_misses[allocator_cpu];
     }
 
   return fp;

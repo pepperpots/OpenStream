@@ -33,7 +33,7 @@ static inline int slab_get_numa_node(void* address)
 
 #if !NO_SLAB_ALLOCATOR
   #define WSTREAM_DF_THREAD_SLAB_FIELDS \
-   slab_cache_t slab_cache
+   slab_cache_p slab_cache
 #else
   #define WSTREAM_DF_THREAD_SLAB_FIELDS
 #endif
@@ -69,6 +69,8 @@ typedef struct slab_cache {
   unsigned long long slab_toobig_freed_bytes;
   unsigned int allocator_id;
   unsigned int num_objects;
+
+  pthread_spinlock_t lock;
 } slab_cache_t, *slab_cache_p;
 
 static inline unsigned int
@@ -218,6 +220,8 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
       return (((char*)res) + __slab_metainfo_size);
     }
 
+  pthread_spin_lock(&slab_cache->lock);
+
   if (slab_cache->slab_free_pool[idx] == NULL)
     slab_refill (slab_cache, idx);
   else
@@ -225,6 +229,8 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
 
   res = (void *) slab_cache->slab_free_pool[idx];
   slab_cache->slab_free_pool[idx] = slab_cache->slab_free_pool[idx]->next;
+
+  pthread_spin_unlock(&slab_cache->lock);
 
   metainfo = slab_metainfo(res);
   metainfo->size = size;
@@ -248,8 +254,11 @@ slab_free (slab_cache_p slab_cache, void *e)
     }
   else
     {
+      pthread_spin_lock(&slab_cache->lock);
       elem->next = slab_cache->slab_free_pool[idx];
       slab_cache->slab_free_pool[idx] = elem;
+      pthread_spin_unlock(&slab_cache->lock);
+
       slab_cache->slab_frees++;
       slab_cache->slab_freed_bytes += metainfo->size;
       slab_cache->num_objects++;
@@ -275,6 +284,8 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_cache->slab_toobig_frees = 0;
   slab_cache->slab_toobig_freed_bytes = 0;
   slab_cache->num_objects = 0;
+
+  pthread_spin_init(&slab_cache->lock, PTHREAD_PROCESS_PRIVATE);
 }
 
 
@@ -292,6 +303,8 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_init_allocator (SLAB, ID)
 #  define wstream_allocator_of(P)		\
   slab_allocator_of(P)
+#  define wstream_numa_node_of(P)		\
+  slab_numa_node_of(P)
 #  define wstream_is_fresh(P)		\
   slab_is_fresh(P)
 #  define wstream_max_initial_writer_of(P)		\
@@ -309,6 +322,7 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   free ((P))
 #  define wstream_init_alloc(SLAB, ID)
 #  define wstream_allocator_of(P) (-1)
+#  define wstream_numa_node_of(P) (-1)
 #  define wstream_is_fresh(P) (0)
 #  define wstream_max_initial_writer_of(P) (0)
 #  define wstream_max_initial_writer_size_of(P) (0)

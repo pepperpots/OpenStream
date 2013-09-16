@@ -171,6 +171,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 
   unsigned int rands;
   unsigned int cpu;
+  struct wstream_df_numa_node* numa_node;
 
   int last_steal_from;
 
@@ -186,11 +187,44 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   void *current_stack; // BUG in swap/get context: stack is not set
 } wstream_df_thread_t, *wstream_df_thread_p;
 
+typedef struct __attribute__ ((aligned (64))) wstream_df_numa_node
+{
+  slab_cache_t slab_cache;
+  wstream_df_thread_p leader;
+  wstream_df_thread_p workers[MAX_CPUS];
+  unsigned int num_workers;
+  int id;
+} wstream_df_numa_node_t, *wstream_df_numa_node_p;
+
+static inline void numa_node_init(wstream_df_numa_node_p node, int node_id)
+{
+  wstream_init_alloc(&node->slab_cache, node_id);
+  node->leader = NULL;
+  node->num_workers = 0;
+  node->id = node_id;
+}
+
+static inline void numa_node_add_thread(wstream_df_numa_node_p node, wstream_df_thread_p thread)
+{
+#if !NO_SLAB_ALLOCATOR
+  thread->slab_cache = &node->slab_cache;
+#endif
+
+  thread->numa_node = node;
+
+  if(!node->leader || node->leader->worker_id > thread->worker_id)
+    node->leader = thread;
+
+  node->workers[node->num_workers] = thread;
+  node->num_workers++;
+}
+
 int wstream_self(void);
 
 int worker_id_to_cpu(unsigned int worker_id);
 int cpu_to_worker_id(int cpu);
 int cpu_used(int cpu);
+wstream_df_numa_node_p numa_node_by_id(unsigned int id);
 
 void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 		    unsigned int* max_worker, int* max_data);
