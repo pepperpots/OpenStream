@@ -14,7 +14,8 @@
 #define WQEVENT_START_TASKEXEC 5
 #define WQEVENT_END_TASKEXEC 6
 #define WQEVENT_DATA_READ 7
-#define WQEVENT_COUNTER 8
+#define WQEVENT_DATA_WRITE 8
+#define WQEVENT_COUNTER 9
 
 typedef struct worker_event {
   uint64_t time;
@@ -67,6 +68,11 @@ typedef struct worker_event {
     } data_read;
 
     struct {
+      uint32_t size;
+      uint64_t dst_frame_addr;
+    } data_write;
+
+    struct {
       uint64_t counter_id;
       int64_t value;
     } counter;
@@ -98,6 +104,7 @@ void trace_state_restore(struct wstream_df_thread* cthread);
 void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
 void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame);
 void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts);
+void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr);
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);

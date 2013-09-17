@@ -161,6 +161,19 @@ void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, un
   cthread->num_events++;
 }
 
+void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].data_write.size = size;
+  cthread->events[cthread->num_events].data_write.dst_frame_addr = dst_frame_addr;
+  cthread->events[cthread->num_events].type = WQEVENT_DATA_WRITE;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->num_events++;
+}
+
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
@@ -483,6 +496,22 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.size = th->events[k].data_read.size;
 	    dsk_ce.what = th->events[k].active_frame;
 	    dsk_ce.prod_ts = th->events[k].data_read.prod_ts-min_time;
+
+	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
+	  }
+	} else if(th->events[k].type == WQEVENT_DATA_WRITE) {
+	  /* Data write events (dumped as communication) */
+	  if(do_dump) {
+	    dsk_ce.header.type = EVENT_TYPE_COMM;
+	    dsk_ce.header.time = th->events[k].time-min_time;
+	    dsk_ce.header.cpu = th->events[k].cpu;
+	    dsk_ce.header.active_task = th->events[k].active_task;
+	    dsk_ce.header.active_frame = th->events[k].active_frame;
+	    dsk_ce.type = COMM_TYPE_DATA_WRITE;
+	    dsk_ce.dst_cpu = th->events[k].cpu;
+	    dsk_ce.dst_worker = th->worker_id;
+	    dsk_ce.size = th->events[k].data_write.size;
+	    dsk_ce.what = th->events[k].data_write.dst_frame_addr;
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
 	  }

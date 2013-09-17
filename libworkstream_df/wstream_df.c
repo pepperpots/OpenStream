@@ -276,6 +276,9 @@ tdecrease_n (void *data, size_t n, bool is_write)
   if(is_write) {
     inc_wqueue_counter(&fp->bytes_cpu_in[cthread->cpu], n);
     set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->cpu], rdtsc());
+#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_DATA_READS)
+    trace_data_write(cthread, n, (uint64_t)fp);
+#endif
 
     if(fp->cache_misses[cthread->cpu] == 0)
       fp->cache_misses[cthread->cpu] = mem_cache_misses(cthread);
