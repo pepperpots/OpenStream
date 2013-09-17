@@ -16,6 +16,7 @@
 #define WQEVENT_DATA_READ 7
 #define WQEVENT_DATA_WRITE 8
 #define WQEVENT_COUNTER 9
+#define WQEVENT_FRAME_INFO 10
 
 typedef struct worker_event {
   uint64_t time;
@@ -81,6 +82,11 @@ typedef struct worker_event {
       enum worker_state state;
       uint32_t previous_state_idx;
     } state_change;
+
+    struct {
+      uint64_t addr;
+      int32_t numa_node;
+    } frame_info;
   };
 } worker_state_change_t, *worker_state_change_p;
 
@@ -106,6 +112,7 @@ void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsi
 void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts);
 void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr);
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
+void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 #else

@@ -27,6 +27,19 @@ void trace_init(struct wstream_df_thread* cthread)
 	cthread->previous_state_idx = 0;
 }
 
+void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].type = WQEVENT_FRAME_INFO;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->events[cthread->num_events].frame_info.addr = (uint64_t)frame;
+  cthread->events[cthread->num_events].frame_info.numa_node = wstream_numa_node_of(frame);
+  cthread->num_events++;
+}
+
 void trace_event(wstream_df_thread_p cthread, unsigned int type)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
@@ -357,6 +370,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
   struct trace_comm_event dsk_ce;
   struct trace_single_event dsk_sge;
   struct trace_counter_event dsk_cre;
+  struct trace_frame_info dsk_fi;
 
   int do_dump;
 
@@ -576,6 +590,19 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_cre.value = th->events[k].counter.value;
 
 	    write_struct_convert(fp, &dsk_cre, sizeof(dsk_cre), trace_counter_event_conversion_table, 0);
+	  }
+	} else if(th->events[k].type == WQEVENT_FRAME_INFO) {
+	  if(do_dump) {
+	    dsk_fi.header.type = EVENT_TYPE_FRAME_INFO;
+	    dsk_fi.header.time = th->events[k].time-min_time;
+	    dsk_fi.header.cpu = th->events[k].cpu;
+	    dsk_fi.header.worker = th->worker_id;
+	    dsk_fi.header.active_task = th->events[k].active_task;
+	    dsk_fi.header.active_frame = th->events[k].active_frame;
+	    dsk_fi.addr = th->events[k].frame_info.addr;
+	    dsk_fi.numa_node = th->events[k].frame_info.numa_node;
+
+	    write_struct_convert(fp, &dsk_fi, sizeof(dsk_fi), trace_frame_info_conversion_table, 0);
 	  }
 	}
       }
