@@ -35,18 +35,14 @@ typedef struct worker_event {
 
     struct {
       uint64_t frame;
-      uint32_t size;
     } tcreate;
 
     struct {
       uint64_t frame;
-      uint32_t size;
-      int32_t numa_node;
     } texec_start;
 
     struct {
       uint64_t frame;
-      uint32_t size;
     } texec_end;
 
     struct {
@@ -86,6 +82,7 @@ typedef struct worker_event {
     struct {
       uint64_t addr;
       int32_t numa_node;
+      uint32_t size;
     } frame_info;
   };
 } worker_state_change_t, *worker_state_change_p;

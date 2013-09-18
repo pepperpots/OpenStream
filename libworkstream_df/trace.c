@@ -37,6 +37,7 @@ void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].frame_info.addr = (uint64_t)frame;
   cthread->events[cthread->num_events].frame_info.numa_node = wstream_numa_node_of(frame);
+  cthread->events[cthread->num_events].frame_info.size = frame->size;
   cthread->num_events++;
 }
 
@@ -60,7 +61,6 @@ void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* f
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].tcreate.frame = (uint64_t)frame;
-  cthread->events[cthread->num_events].tcreate.size = (frame) ? (uint32_t)frame->size : 0;
   cthread->num_events++;
 }
 
@@ -76,8 +76,6 @@ void trace_task_exec_start(wstream_df_thread_p cthread, struct wstream_df_frame*
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].texec_start.frame = (uint64_t)frame;
-  cthread->events[cthread->num_events].texec_start.size = (frame) ? (uint32_t)frame->size : 0;
-  cthread->events[cthread->num_events].texec_start.numa_node = (frame) ? (int32_t)slab_numa_node_of(frame) : -1;
   cthread->num_events++;
 }
 
@@ -90,7 +88,6 @@ void trace_task_exec_end(wstream_df_thread_p cthread, struct wstream_df_frame* f
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].texec_end.frame = (uint64_t)frame;
-  cthread->events[cthread->num_events].texec_end.size = (frame) ? (uint32_t)frame->size : 0;
   cthread->num_events++;
 }
 
@@ -562,18 +559,12 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    if(th->events[k].type == WQEVENT_TCREATE) {
 	      dsk_sge.type = SINGLE_TYPE_TCREATE;
 	      dsk_sge.what = th->events[k].tcreate.frame;
-	      dsk_sge.size = th->events[k].tcreate.size;
-	      dsk_sge.numa_node = -1;
 	    } else if(th->events[k].type == WQEVENT_START_TASKEXEC) {
 	      dsk_sge.type = SINGLE_TYPE_TEXEC_START;
 	      dsk_sge.what = th->events[k].texec_start.frame;
-	      dsk_sge.size = th->events[k].texec_start.size;
-	      dsk_sge.numa_node = th->events[k].texec_start.numa_node;
 	    } else if(th->events[k].type == WQEVENT_END_TASKEXEC) {
 	      dsk_sge.type = SINGLE_TYPE_TEXEC_END;
 	      dsk_sge.what = th->events[k].texec_end.frame;
-	      dsk_sge.size = th->events[k].texec_end.size;
-	      dsk_sge.numa_node = -1;
 	    }
 
 	    write_struct_convert(fp, &dsk_sge, sizeof(dsk_sge), trace_single_event_conversion_table, 0);
@@ -601,6 +592,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_fi.header.active_frame = th->events[k].active_frame;
 	    dsk_fi.addr = th->events[k].frame_info.addr;
 	    dsk_fi.numa_node = th->events[k].frame_info.numa_node;
+	    dsk_fi.size = th->events[k].frame_info.size;
 
 	    write_struct_convert(fp, &dsk_fi, sizeof(dsk_fi), trace_frame_info_conversion_table, 0);
 	  }

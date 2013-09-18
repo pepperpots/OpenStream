@@ -210,7 +210,6 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
 #if ALLOW_WQEVENT_SAMPLING
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
-  cthread->events[curr_idx].tcreate.size = (uint32_t)frame_pointer->size;
 #endif
 
   inc_wqueue_counter(&cthread->tasks_created, 1);
