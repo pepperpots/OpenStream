@@ -481,13 +481,12 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	  if(do_dump) {
 	    dsk_ce.header.type = EVENT_TYPE_COMM;
 	    dsk_ce.header.time = th->events[k].time-min_time;
-	    dsk_ce.header.cpu = th->events[k].steal.src_cpu;
+	    dsk_ce.header.cpu = th->events[k].cpu;
 	    dsk_ce.header.worker = th->events[k].steal.src_worker;
 	    dsk_ce.header.active_task = th->events[k].active_task;
 	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_STEAL;
-	    dsk_ce.dst_cpu = th->events[k].cpu;
-	    dsk_ce.dst_worker = th->worker_id;
+	    dsk_ce.src_or_dst_cpu = th->events[k].steal.src_cpu;
 	    dsk_ce.size = th->events[k].steal.size;
 	    dsk_ce.what = th->events[k].steal.what;
 
@@ -498,12 +497,11 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	  if(do_dump) {
 	    dsk_ce.header.type = EVENT_TYPE_COMM;
 	    dsk_ce.header.time = th->events[k].time-min_time;
-	    dsk_ce.header.cpu = th->events[k].data_read.src_cpu;
+	    dsk_ce.header.cpu = th->events[k].cpu;
 	    dsk_ce.header.active_task = th->events[k].active_task;
 	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_DATA_READ;
-	    dsk_ce.dst_cpu = th->events[k].cpu;
-	    dsk_ce.dst_worker = th->worker_id;
+	    dsk_ce.src_or_dst_cpu = th->events[k].data_read.src_cpu;
 	    dsk_ce.size = th->events[k].data_read.size;
 	    dsk_ce.what = th->events[k].active_frame;
 	    dsk_ce.prod_ts = th->events[k].data_read.prod_ts-min_time;
@@ -519,8 +517,6 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.header.active_task = th->events[k].active_task;
 	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_DATA_WRITE;
-	    dsk_ce.dst_cpu = th->events[k].cpu;
-	    dsk_ce.dst_worker = th->worker_id;
 	    dsk_ce.size = th->events[k].data_write.size;
 	    dsk_ce.what = th->events[k].data_write.dst_frame_addr;
 
@@ -536,8 +532,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.header.active_task = th->events[k].active_task;
 	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_PUSH;
-	    dsk_ce.dst_cpu = th->events[k].push.dst_cpu;
-	    dsk_ce.dst_worker = th->events[k].push.dst_worker;
+	    dsk_ce.src_or_dst_cpu = th->events[k].push.dst_cpu;
 	    dsk_ce.size = th->events[k].push.size;
 	    dsk_ce.what = th->events[k].push.what;
 
