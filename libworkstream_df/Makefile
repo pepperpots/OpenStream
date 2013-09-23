@@ -39,7 +39,7 @@ endif
 	cd .. ; git submodule init
 	cd .. ; git submodule update
 
-trace_file.c trace_file.h ansi_extras.h: ../extras/ostv/configure.ac
+convert.h convert.c trace_file.c trace_file.h ansi_extras.h: ../extras/ostv/configure.ac
 
 # Check if library is built using OpenStream's GCC
 # If this is the case, add dependency to the gcc binary
@@ -54,7 +54,7 @@ endif
 ../install/bin/gcc:
 	cd .. ; $(MAKE)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h $(WSTREAM_DEPS) $(GCCDEP)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h $(WSTREAM_DEPS) $(GCCDEP)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \

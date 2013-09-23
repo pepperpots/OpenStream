@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "trace_file.h"
+#include "convert.h"
 
 #define WQEVENT_STATECHANGE 0
 #define WQEVENT_SINGLEEVENT 1
