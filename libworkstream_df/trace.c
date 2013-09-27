@@ -368,6 +368,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
   struct trace_single_event dsk_sge;
   struct trace_counter_event dsk_cre;
   struct trace_frame_info dsk_fi;
+  struct trace_cpu_info dsk_ci;
 
   int do_dump;
 
@@ -412,6 +413,13 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
     th = &wstream_df_worker_threads[i];
     last_state_idx = -1;
     do_dump = 1;
+
+    /* Write CPU info */
+    dsk_ci.header.type = EVENT_TYPE_CPU_INFO;
+    dsk_ci.header.cpu = th->cpu;
+    dsk_ci.numa_node = th->numa_node->id;
+
+    write_struct_convert(fp, &dsk_ci, sizeof(dsk_ci), trace_cpu_info_conversion_table, 0);
 
     if(th->num_events > 0) {
       for(k = 0; k < th->num_events; k++) {
