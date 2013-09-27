@@ -128,6 +128,7 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 #define trace_state_restore(cthread) do { } while(0)
 #define trace_data_read(cthread, src_cpu, size) do { } while(0)
 #define trace_counter(cthread, counter_id, value) do { } while(0)
+#define trace_frame_info(cthread, frame) do { } while(0)
 
 #define dump_events_ostv(num_workers, wstream_df_worker_threads)  do { } while(0)
 #endif
