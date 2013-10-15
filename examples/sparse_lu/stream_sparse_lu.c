@@ -512,8 +512,6 @@ sequential_factorize (int num_blocks, int block_size,
     }
 }
 
-struct profiler_sync sync;
-
 int
 main (int argc, char* argv[])
 {
@@ -529,8 +527,6 @@ main (int argc, char* argv[])
   FILE *res_file = NULL;
 
   int volatile res = 0;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -605,7 +601,7 @@ main (int argc, char* argv[])
   duplicate (num_blocks, block_size, bckp_data, data);
 
   gettimeofday (start, NULL);
-  PROFILER_NOTIFY_RECORD(&sync);
+  openstream_start_hardware_counters();
   stream_factorize (num_blocks, block_size, data, Rstreams, Wstreams, counters);
 
 #pragma omp task input (Wstreams >> final_view[all_blocks][1])
@@ -613,7 +609,7 @@ main (int argc, char* argv[])
     void * seq_data;
     double stream_time, seq_time;
 
-    PROFILER_NOTIFY_PAUSE(&sync);
+    openstream_pause_hardware_counters();
     gettimeofday (end, NULL);
     stream_time = tdiff (end, start);
 
@@ -657,8 +653,6 @@ main (int argc, char* argv[])
 	    matrix_diff (num_blocks, block_size, bckp_data, seq_data);
 	  }
       }
-
-    PROFILER_NOTIFY_FINISH(&sync);
   }
 
   return 0;

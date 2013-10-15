@@ -88,6 +88,7 @@ init_papi (wstream_df_thread_p th)
 	}
 
 	memset(th->papi_counters, 0, sizeof(th->papi_counters));
+	th->papi_count = 0;
 
 #if !defined(WS_PAPI_UNCORE) || WS_PAPI_UNCORE == 0
 	PAPI_register_thread();
@@ -182,14 +183,6 @@ init_papi (wstream_df_thread_p th)
 	}
 #endif
 
-	if(th->papi_num_events > 0) {
-		/* Start counting */
-		if ((err = PAPI_start(th->papi_event_set)) != PAPI_OK) {
-			fprintf(stderr, "Could not start counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
-	}
-
 #if defined(WS_PAPI_UNCORE) && WS_PAPI_UNCORE != 0
 	pthread_spin_unlock(&papi_spin_lock);
 #endif
@@ -198,6 +191,9 @@ init_papi (wstream_df_thread_p th)
 void
 update_papi(struct wstream_df_thread* th)
 {
+	if(!th->papi_count)
+		return;
+
 	if(th->papi_num_events > 0) {
 		if(PAPI_accum(th->papi_event_set, th->papi_counters) != PAPI_OK) {
 			fprintf(stderr, "Could not read counters for thread %d\n", th->worker_id);

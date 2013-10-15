@@ -124,7 +124,6 @@ int main(int argc, char** argv)
   key_t* keys_out;
   struct timeval start;
   struct timeval end;
-  struct profiler_sync sync;
   int option;
   int check = 0;
 
@@ -177,12 +176,12 @@ int main(int argc, char** argv)
   printf("Start sorting %ld keys...\n", num_keys);
 
   gettimeofday (&start, NULL);
-  PROFILER_NOTIFY_RECORD(&sync);
+  openstream_start_hardware_counters();
 
   /* Sort the array in parallel */
   sort_block_df(keys_in, keys_out, num_keys_log, block_size_log);
 
-  PROFILER_NOTIFY_PAUSE(&sync);
+  openstream_pause_hardware_counters();
   gettimeofday (&end, NULL);
 
   printf("End sorting...\n");
@@ -196,7 +195,6 @@ int main(int argc, char** argv)
 
   free(keys_in);
   free(keys_out);
-  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

@@ -23,6 +23,7 @@ struct wstream_df_numa_node;
 #ifdef WS_PAPI_PROFILE
 
 #define WSTREAM_DF_THREAD_PAPI_FIELDS \
+	int papi_count; \
 	long long papi_counters[WS_PAPI_NUM_EVENTS]; \
 	long long papi_event_mapping[WS_PAPI_NUM_EVENTS]; \
 	int papi_event_set; \

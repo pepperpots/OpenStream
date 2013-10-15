@@ -23,7 +23,6 @@
 #include <malloc.h>
 #include <getopt.h>
 #include "../common/common.h"
-#include "../common/sync.h"
 
 /* Compare upper and lower half in a triangular fashion:
  * top_in[i] is compared to bottom_in[num_keys-i-1].
@@ -89,7 +88,6 @@ int main(int argc, char** argv)
 
 	struct timeval start;
 	struct timeval end;
-	struct profiler_sync sync;
 
 	int option;
 
@@ -140,15 +138,12 @@ int main(int argc, char** argv)
 	printf("Start sorting %ld keys...\n", num_keys);
 
 	gettimeofday (&start, NULL);
-	PROFILER_NOTIFY_RECORD(&sync);
 
 	sort(keys, &keys[num_keys/2], num_keys/2, block_size);
 
-	PROFILER_NOTIFY_PAUSE(&sync);
 	gettimeofday (&end, NULL);
 
 	printf ("%.5f\n", tdiff (&end, &start));fflush(stdout);
-	PROFILER_NOTIFY_FINISH(&sync);
 
 	if(check) {
 		assert(check_ascending(keys, num_keys));

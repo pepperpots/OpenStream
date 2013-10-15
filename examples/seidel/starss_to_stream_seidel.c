@@ -97,8 +97,6 @@ gauss_seidel (int N, double a[N][N], int block_size)
 }
 
 
-struct profiler_sync sync;
-
 int
 main (int argc, char **argv)
 {
@@ -112,8 +110,6 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -198,7 +194,7 @@ main (int argc, char **argv)
       }
 
     gettimeofday (start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
+    openstream_start_hardware_counters();
 
     /* Main kernel start.  ------------------------------------------------------------ */
     for (iter = 0; iter < numiters; iter++)
@@ -258,7 +254,7 @@ main (int argc, char **argv)
 #pragma omp task input (streams[(num_blocks * num_blocks - 1) * 5] >> output) firstprivate (res_file, data, N) firstprivate (start, end)
     {
       gettimeofday (end, NULL);
-      PROFILER_NOTIFY_PAUSE(&sync);
+      openstream_pause_hardware_counters();
 
       printf ("%.5f\n", tdiff (end, start));
 
@@ -274,8 +270,6 @@ main (int argc, char **argv)
 	      fprintf (res_file, "\n");
 	    }
 	}
-
-      PROFILER_NOTIFY_FINISH(&sync);
     }
   }
 

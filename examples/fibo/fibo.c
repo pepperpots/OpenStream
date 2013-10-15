@@ -4,7 +4,6 @@
 #include <complex.h>
 #include <getopt.h>
 #include "../common/common.h"
-#include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
 
@@ -29,10 +28,6 @@ main (int argc, char **argv)
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
-
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:h")) != -1)
     {
@@ -61,17 +56,13 @@ main (int argc, char **argv)
   }
 
   gettimeofday (start, NULL);
-  PROFILER_NOTIFY_RECORD(&sync);
   result = fibo (n);
-  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (end, NULL);
 
   printf ("%.5f\n", tdiff (end, start));
 
   if (_WITH_OUTPUT)
     printf ("Fibo (%d) = %d\n", n, result);
-
-  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

@@ -45,7 +45,6 @@ int num_total_streams;
 
 struct timeval start;
 struct timeval end;
-struct profiler_sync sync;
 
 void create_init_task(int task_num);
 void create_init_sort_task(int task_num);
@@ -356,7 +355,7 @@ int main(int argc, char** argv)
 	printf("Start sorting %ld keys...\n", num_keys);
 
 	gettimeofday (&start, NULL);
-	PROFILER_NOTIFY_RECORD(&sync);
+	openstream_start_hardware_counters();
 
 	for(int i = 0; i < num_blocks; i++) {
 		create_init_task(i);
@@ -367,11 +366,10 @@ int main(int argc, char** argv)
 	#pragma omp taskwait
 
 	/* Cleanup */
-	PROFILER_NOTIFY_PAUSE(&sync);
+	openstream_pause_hardware_counters();
 	gettimeofday (&end, NULL);
 
 	printf ("%.5f\n", tdiff (&end, &start));fflush(stdout);
-	PROFILER_NOTIFY_FINISH(&sync);
 
 	if(check) {
 		assert(check_ascending(keys, num_keys));

@@ -1216,3 +1216,61 @@ static void trace_signal_handler(int sig)
 {
   dump_events_ostv(num_workers, wstream_df_worker_threads);
 }
+
+void openstream_start_hardware_counters_single(wstream_df_thread_p th)
+{
+	printf("START HW!\n");
+	int err;
+
+#ifdef WS_PAPI_PROFILE
+
+	if(th->papi_num_events > 0) {
+		/* reset */
+		if ((err = PAPI_reset(th->papi_event_set)) != PAPI_OK) {
+			fprintf(stderr, "Could not reset counters: %s!\n", PAPI_strerror(err));
+			exit(1);
+		}
+
+		/* Start counting */
+		if ((err = PAPI_start(th->papi_event_set)) != PAPI_OK) {
+			fprintf(stderr, "Could not start counters: %s!\n", PAPI_strerror(err));
+			exit(1);
+		}
+
+		th->papi_count = 1;
+	}
+#endif
+}
+
+void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
+{
+	int err;
+	printf("PAUSE HW!\n");
+
+#ifdef WS_PAPI_PROFILE
+	if(th->papi_num_events > 0) {
+		long long dump[th->papi_num_events];
+
+		update_papi(th);
+		th->papi_count = 0;
+
+		/* Stop counting */
+		if ((err = PAPI_stop(th->papi_event_set, dump)) != PAPI_OK) {
+			fprintf(stderr, "Could not stop counters: %s!\n", PAPI_strerror(err));
+			exit(1);
+		}
+	}
+#endif
+}
+
+void openstream_start_hardware_counters(void)
+{
+	for(int i = 0; i < num_workers; i++)
+		openstream_start_hardware_counters_single(&wstream_df_worker_threads[i]);
+}
+
+void openstream_pause_hardware_counters(void)
+{
+	for(int i = 0; i < num_workers; i++)
+		openstream_pause_hardware_counters_single(&wstream_df_worker_threads[i]);
+}

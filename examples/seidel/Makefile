@@ -10,7 +10,7 @@ endif
 
 all: $(TESTS)
 
-seidel: seidel.c ../common/common.c ../common/sync.c
+seidel: seidel.c ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_seidel: stream_seidel.c ../common/common.c ../common/sync.c
@@ -25,17 +25,17 @@ topsort_deps_stream_seidel: topsort_deps_stream_seidel.c ../common/common.c ../c
 starss_to_stream_seidel: starss_to_stream_seidel.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-starss_seidel: starss_seidel.c ../common/common.c ../common/sync.c
+starss_seidel: starss_seidel.c ../common/common.c
 	$(MCC) --ompss $^ -o $@  -O3 -g
 
-openmp_task_seidel: openmp_task_seidel.c ../common/common.c ../common/sync.c
+openmp_task_seidel: openmp_task_seidel.c ../common/common.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99
 
-openmp_loop_seidel: openmp_loop_seidel.c ../common/common.c ../common/sync.c
+openmp_loop_seidel: openmp_loop_seidel.c ../common/common.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS_X86) $(MEM_CST_TESTS_ARM)
 
-cilk_seidel: cilk_seidel.cilk ../common/common.c ../common/sync.c
+cilk_seidel: cilk_seidel.cilk ../common/common.c
 	$(CILKC) -O2 -Wall $^ -o $@ -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200809L

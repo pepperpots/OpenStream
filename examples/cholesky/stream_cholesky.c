@@ -229,10 +229,6 @@ main(int argc, char *argv[])
   FILE *res_file = NULL;
   FILE *in_file = NULL;
 
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
-
   while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
     {
       switch(option)
@@ -352,7 +348,7 @@ main(int argc, char *argv[])
 
       /* Only effectively can start once the previous task completes.  */
       gettimeofday (&start[iter], NULL);
-      PROFILER_NOTIFY_RECORD(&sync);
+      openstream_start_hardware_counters();
       stream_dpotrf (block_size, blocks, (void *)blocked_data, streams, Rstreams, counters);
 
       for (i = 0; i < num_blocks; ++i)
@@ -363,7 +359,7 @@ main(int argc, char *argv[])
 	}
 
 #pragma omp taskwait
-      PROFILER_NOTIFY_PAUSE(&sync);
+      openstream_pause_hardware_counters();
       gettimeofday (&end[iter], NULL);
 
 
@@ -416,8 +412,6 @@ main(int argc, char *argv[])
     {
       printf ("%.5f \n", stream_time);
     }
-
-  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

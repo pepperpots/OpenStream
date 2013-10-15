@@ -595,8 +595,6 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 	}
 }
 
-struct profiler_sync sync;
-
 int main(int argc, char** argv)
 {
 	int N = (1 << 13);
@@ -652,8 +650,6 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
-	PROFILER_NOTIFY_PREPARE(&sync);
-
 	double* matrix = malloc(N*N*sizeof(double));
 
 	int blocks_x = N / block_size;
@@ -702,7 +698,7 @@ int main(int argc, char** argv)
 	matrix[(N-24)*N+(N-24)] = 500.0;
 
 	gettimeofday(&start, NULL);
-	PROFILER_NOTIFY_RECORD(&sync);
+	openstream_start_hardware_counters();
 
 	/* As there are dependencies between a block's task and the same task
 	 * at the next iteration, recursive task creation as in gauss_seidel_df()
@@ -741,11 +737,8 @@ int main(int argc, char** argv)
 	/* Wait for all the tasks to finish */
 	#pragma omp taskwait
 
-	PROFILER_NOTIFY_PAUSE(&sync);
-
+	openstream_pause_hardware_counters();
 	gettimeofday(&end, NULL);
-
-	PROFILER_NOTIFY_FINISH(&sync);
 
 	printf("%.5f\n", tdiff(&end, &start));
 

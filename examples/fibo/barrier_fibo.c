@@ -50,10 +50,6 @@ main (int argc, char **argv)
   int cutoff = 10;
   int result;
 
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
-
   while ((option = getopt(argc, argv, "n:c:h")) != -1)
     {
       switch(option)
@@ -88,20 +84,18 @@ main (int argc, char **argv)
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
   gettimeofday (start, NULL);
-  PROFILER_NOTIFY_RECORD(&sync);
+  openstream_start_hardware_counters();
   bar_fibo (n, cutoff, &result);
 
 #pragma omp taskwait
 
-  PROFILER_NOTIFY_PAUSE(&sync);
+  openstream_pause_hardware_counters();
   gettimeofday (end, NULL);
 
   printf ("%.5f\n", tdiff (end, start));
 
   if (_WITH_OUTPUT)
     printf ("[taskwait] Fibo (%d, %d) = %d\n", n, cutoff, result);
-
-  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

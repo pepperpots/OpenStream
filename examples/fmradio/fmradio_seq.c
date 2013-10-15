@@ -417,10 +417,6 @@ main(int argc, char* argv[])
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
-
   while ((option = getopt(argc, argv, "i:o:t:f:n:g:h")) != -1)
     {
       switch(option)
@@ -508,7 +504,6 @@ main(int argc, char* argv[])
     int i, j, k;
 
     gettimeofday (start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
 
     for (j = 0; j < niter; ++j)
       {
@@ -546,7 +541,6 @@ main(int argc, char* argv[])
       }
   }
 
-  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (end, NULL);
 
   printf ("%.5f\n", tdiff (end, start));
@@ -559,7 +553,6 @@ main(int argc, char* argv[])
     fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
 
-  PROFILER_NOTIFY_FINISH(&sync);
   fclose (input_file);
   fclose (output_file);
   fclose (text_file);

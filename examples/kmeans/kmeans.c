@@ -24,7 +24,6 @@
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
-#include "../common/sync.h"
 #include "kmeans_common.h"
 
 /**
@@ -125,7 +124,6 @@ int main(int argc, char** argv)
 	int i;
 	int verbose = 0;
 
-	struct profiler_sync sync;
 	struct timeval start;
 	struct timeval end;
 
@@ -213,9 +211,7 @@ int main(int argc, char** argv)
 		       nd, n, k_min, k_max, niter);
 	}
 
-	PROFILER_NOTIFY_PREPARE(&sync);
 	gettimeofday(&start, NULL);
-	PROFILER_NOTIFY_RECORD(&sync);
 
 	/* Use the different number of clusters */
 	for(int k = k_min; k <= k_max; k++) {
@@ -234,9 +230,7 @@ int main(int argc, char** argv)
 			printf("K = %d, iterations = %d, final delta = %f\n", k, i-1, delta);
 	}
 
-	PROFILER_NOTIFY_PAUSE(&sync);
 	gettimeofday(&end, NULL);
-	PROFILER_NOTIFY_FINISH(&sync);
 
 	if(verbose)
 		printf("\n");

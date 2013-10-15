@@ -434,9 +434,6 @@ main(int argc, char* argv[])
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "i:o:t:f:n:g:h")) != -1)
     {
@@ -545,7 +542,7 @@ main(int argc, char* argv[])
     int i, j, k;
 
     gettimeofday (start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
+    openstream_start_hardware_counters();
 
     for (i = 0; i < 6; ++i)
 #pragma omp task output (serializer[i] << sout)
@@ -615,7 +612,7 @@ main(int argc, char* argv[])
 
 #pragma omp task input (finalizer >> finalizer_view[finalizer_view_size])
     {
-      PROFILER_NOTIFY_PAUSE(&sync);
+      openstream_pause_hardware_counters();
       gettimeofday (end, NULL);
 
       printf ("%.5f\n", tdiff (end, start));
@@ -627,8 +624,6 @@ main(int argc, char* argv[])
       for (i = 0; i < out_samples; i += 2)
 	fprintf (text_file, "%-10.4f %-10.4f\n", data_out_flt[i], data_out_flt[i + 1]);
 #endif
-
-      PROFILER_NOTIFY_FINISH(&sync);
 
       fclose (input_file);
       fclose (output_file);

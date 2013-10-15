@@ -96,8 +96,6 @@ gauss_seidel (int N, double a[N][N], int block_size)
       a[i][j] = 0.2 * (a[i][j] + a[i-1][j] + a[i+1][j] + a[i][j-1] + a[i][j+1]);
 }
 
-struct profiler_sync sync;
-
 int
 main (int argc, char **argv)
 {
@@ -111,8 +109,6 @@ main (int argc, char **argv)
   FILE *res_file = NULL;
 
   int volatile res = 0;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
@@ -186,7 +182,7 @@ main (int argc, char **argv)
 	data[N*i + j] = ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
 
     gettimeofday (start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
+    openstream_start_hardware_counters();
 
     /* Main kernel start.  ------------------------------------------------------------ */
     for (iter = 0; iter < numiters; iter++)
@@ -239,7 +235,7 @@ main (int argc, char **argv)
     {
       int i, j;
 
-      PROFILER_NOTIFY_PAUSE(&sync);
+      openstream_pause_hardware_counters();
       gettimeofday (end, NULL);
 
       printf ("%.5f\n", tdiff (end, start));
@@ -256,8 +252,6 @@ main (int argc, char **argv)
 	      fprintf (res_file, "\n");
 	    }
 	}
-
-      PROFILER_NOTIFY_FINISH(&sync);
     }
   }
 

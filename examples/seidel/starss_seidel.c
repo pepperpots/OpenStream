@@ -25,8 +25,6 @@ main (int argc, char **argv)
 
   struct profiler_sync sync;
 
-  PROFILER_NOTIFY_PREPARE(&sync);
-
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
       switch(option)
@@ -97,7 +95,7 @@ main (int argc, char **argv)
     /************ begin kernel *************/
     /***************************************/
     gettimeofday (&start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
+    openstream_start_hardware_counters();
 
     for (iter = 0; iter < numiters; iter++)
       for (i = padding + 1; i < N - 1 + padding; i += block_size)
@@ -118,7 +116,7 @@ main (int argc, char **argv)
 
 #pragma omp taskwait
 
-    PROFILER_NOTIFY_PAUSE(&sync);
+    openstream_pause_hardware_counters();
     gettimeofday (&end, NULL);
     /***************************************/
     /************  end kernel  *************/
@@ -139,8 +137,6 @@ main (int argc, char **argv)
 	    fprintf (res_file, "\n");
 	  }
       }
-
-    PROFILER_NOTIFY_FINISH(&sync);
   }
 
   return 0;

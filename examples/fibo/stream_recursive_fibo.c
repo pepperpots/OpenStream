@@ -44,8 +44,6 @@ stream_fibo (int n, int cutoff, int sout __attribute__ ((stream)))
     }
 }
 
-struct profiler_sync sync;
-
 int
 main (int argc, char **argv)
 {
@@ -58,8 +56,6 @@ main (int argc, char **argv)
 
   struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
   struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
-
-  PROFILER_NOTIFY_PREPARE(&sync);
 
   while ((option = getopt(argc, argv, "n:c:h")) != -1)
     {
@@ -92,13 +88,13 @@ main (int argc, char **argv)
   }
 
   gettimeofday (start, NULL);
-  PROFILER_NOTIFY_RECORD(&sync);
+  openstream_start_hardware_counters();
 #pragma omp task firstprivate (stream)
   stream_fibo (n, cutoff, stream);
 
 #pragma omp task input (stream >> result) firstprivate (start, end)
   {
-    PROFILER_NOTIFY_PAUSE(&sync);
+    openstream_pause_hardware_counters();
     gettimeofday (end, NULL);
 
     printf ("%.5f\n", tdiff (end, start));
@@ -108,8 +104,6 @@ main (int argc, char **argv)
 	printf ("\n[recursive stream] Fibo (%d, %d) = %d \t ((executed in %.5f seconds))\n",
 		n, cutoff, result, tdiff (end, start));
       }
-
-    PROFILER_NOTIFY_FINISH(&sync);
   }
 
   return 0;

@@ -47,10 +47,6 @@ main (int argc, char **argv)
 
   int volatile res = 0;
 
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
-
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
       switch(option)
@@ -110,7 +106,7 @@ main (int argc, char **argv)
 	data[N*i + j] = (double) ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
 
     gettimeofday (&start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
+    openstream_start_hardware_counters();
     // Traverse the hyperplans
     for (a = 0; a < 2 * (num_blocks + numiters); ++a)
       {
@@ -133,7 +129,7 @@ main (int argc, char **argv)
 #pragma omp taskwait
       }
 
-    PROFILER_NOTIFY_PAUSE(&sync);
+    openstream_pause_hardware_counters();
     gettimeofday (&end, NULL);
 
     printf ("%.5f\n", tdiff (&end, &start));
@@ -150,8 +146,6 @@ main (int argc, char **argv)
 	    fprintf (res_file, "\n");
 	  }
       }
-
-    PROFILER_NOTIFY_FINISH(&sync);
   }
 
   return 0;

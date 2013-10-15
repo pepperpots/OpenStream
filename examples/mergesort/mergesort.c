@@ -25,7 +25,6 @@
 #include <getopt.h>
 #include "mergesort.h"
 #include "../common/common.h"
-#include "../common/sync.h"
 
 int main(int argc, char** argv)
 {
@@ -35,7 +34,6 @@ int main(int argc, char** argv)
   key_t* keys_out;
   struct timeval start;
   struct timeval end;
-  struct profiler_sync sync;
   int option;
   int check = 0;
 
@@ -77,16 +75,12 @@ int main(int argc, char** argv)
   init_sequence(keys_in, num_keys);
 
   printf("Start sorting %ld keys...\n", num_keys);
-
   gettimeofday (&start, NULL);
-  PROFILER_NOTIFY_RECORD(&sync);
 
   /* Sort the array sequentially */
   sort_block(keys_in, keys_out, num_keys);
 
-  PROFILER_NOTIFY_PAUSE(&sync);
   gettimeofday (&end, NULL);
-
   printf("End sorting...\n");
 
   printf("%.5f\n", tdiff(&end, &start));
@@ -98,8 +92,6 @@ int main(int argc, char** argv)
 
   free(keys_in);
   free(keys_out);
-
-  PROFILER_NOTIFY_FINISH(&sync);
 
   return 0;
 }

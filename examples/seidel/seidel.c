@@ -35,10 +35,6 @@ main (int argc, char **argv)
 
   int volatile res = 0;
 
-  struct profiler_sync sync;
-
-  PROFILER_NOTIFY_PREPARE(&sync);
-
   while ((option = getopt(argc, argv, "n:s:b:r:o:h")) != -1)
     {
       switch(option)
@@ -99,14 +95,12 @@ main (int argc, char **argv)
 	data[N*i + j] = (double) ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
 
     gettimeofday (start, NULL);
-    PROFILER_NOTIFY_RECORD(&sync);
 
     for (iter = 0; iter < numiters; iter++)
       for (i = 0; i < N - 2; i += block_size)
 	for (j = 0; j < N - 2; j += block_size)
 	  gauss_seidel (N, &data[N * i + j], block_size);
 
-    PROFILER_NOTIFY_PAUSE(&sync);
     gettimeofday (end, NULL);
 
     printf ("%.5f\n", tdiff (end, start));
@@ -125,6 +119,5 @@ main (int argc, char **argv)
       }
   }
 
-  PROFILER_NOTIFY_FINISH(&sync);
   return 0;
 }
