@@ -2,7 +2,7 @@ include ../Makefile.config
 
 MEM_CST_TESTS_X86 = x86_jacobi x86_jacobi_c11 x86_jacobi_dumbc11 x86_jacobi_nofences
 CFLAGS_X86 = $(CFLAGS) -fopenmp -O3 -ffast-math -std=c99 -Wall -Wextra -I../../libworkstream_df/ -D_GNU_SOURCE -fPIC
-LDFLAGS_X86 = $(LDFLAGS) -lm
+LDFLAGS_X86 = $(LDFLAGS) -lm -lnuma
 
 ifneq ($(wildcard ../../install/bin/papi_avail),)
 PAPI_DIR = ../../install/
@@ -25,6 +25,7 @@ MEM_CST_TESTS_DEPS_X86 = barrier_jacobi.c \
 	../../libworkstream_df/fibers.c \
 	../../libworkstream_df/profiling.c \
 	../../libworkstream_df/trace_file.c \
+	../../libworkstream_df/convert.c \
 	../../libworkstream_df/work_distribution.c \
 	../common/common.c
 x86_jacobi: CFLAGS_X86 += -D_GNU_SOURCE
