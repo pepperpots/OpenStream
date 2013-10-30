@@ -1219,10 +1219,8 @@ static void trace_signal_handler(int sig)
 
 void openstream_start_hardware_counters_single(wstream_df_thread_p th)
 {
-	printf("START HW!\n");
-	int err;
-
 #ifdef WS_PAPI_PROFILE
+	int err;
 
 	if(th->papi_num_events > 0) {
 		/* reset */
@@ -1244,10 +1242,9 @@ void openstream_start_hardware_counters_single(wstream_df_thread_p th)
 
 void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
 {
-	int err;
-	printf("PAUSE HW!\n");
-
 #ifdef WS_PAPI_PROFILE
+	int err;
+
 	if(th->papi_num_events > 0) {
 		long long dump[th->papi_num_events];
 
