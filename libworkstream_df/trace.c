@@ -11,7 +11,8 @@
 static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "wq_length",
   "wq_steals",
-  "wq_pushes"
+  "wq_pushes",
+  "slab_refills",
 };
 
 #if ALLOW_WQEVENT_SAMPLING
@@ -207,6 +208,7 @@ void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64
 void trace_runtime_counters(struct wstream_df_thread* cthread)
 {
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_WQLENGTH, cthread->work_deque.bottom - cthread->work_deque.top);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_SLAB_REFILLS, cthread->slab_cache->slab_refills);
 
   uint64_t steals = 0;
   for(int level = 0; level < MEM_NUM_LEVELS; level++)
