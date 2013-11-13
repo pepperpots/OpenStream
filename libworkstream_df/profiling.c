@@ -202,7 +202,7 @@ update_papi(struct wstream_df_thread* th)
 
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_PAPI_COUNTERS)
 		for(int i = 0; i < th->papi_num_events; i++)
-			trace_counter(th, th->papi_event_mapping[i], th->papi_counters[i]);
+			trace_counter(th, th->papi_event_mapping[i]+PAPI_COUNTER_BASE, th->papi_counters[i]);
 #endif
 	}
 }

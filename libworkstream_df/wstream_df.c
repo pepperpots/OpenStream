@@ -564,7 +564,9 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 #endif
 
 	  update_papi(cthread);
+	  trace_runtime_counters(cthread);
 	  fp->work_fn (fp);
+	  trace_runtime_counters(cthread);
 	  update_papi(cthread);
 
 	  __compiler_fence;

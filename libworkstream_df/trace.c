@@ -8,6 +8,12 @@
 #include "wstream_df.h"
 #include "arch.h"
 
+static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
+  "wq_length",
+  "wq_steals",
+  "wq_pushes"
+};
+
 #if ALLOW_WQEVENT_SAMPLING
 static const char* state_names[] = {
   "seeking",
@@ -196,6 +202,27 @@ void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
 }
+
+#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_QUEUE_STATS) && WQUEUE_PROFILE
+void trace_runtime_counters(struct wstream_df_thread* cthread)
+{
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_WQLENGTH, cthread->work_deque.bottom - cthread->work_deque.top);
+
+  uint64_t steals = 0;
+  for(int level = 0; level < MEM_NUM_LEVELS; level++)
+    steals += cthread->steals_mem[level];
+
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_STEALS, steals);
+
+#if ALLOW_PUSHES
+  uint64_t pushes = 0;
+  for(int level = 0; level < MEM_NUM_LEVELS; level++)
+    pushes += cthread->pushes_mem[level];
+
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_PUSHES, pushes);
+#endif
+}
+#endif
 
 int get_next_event(wstream_df_thread_p th, int curr, unsigned int type)
 {
@@ -392,19 +419,33 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 
 #ifdef TRACE_PAPI_COUNTERS
   const char* events[] = WS_PAPI_EVENTS;
-  struct trace_counter_description dsk_cd;
-  int name_len;
 
   for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
-    name_len = strlen(events[i]);
+    struct trace_counter_description dsk_cd;
+    int name_len = strlen(events[i]);
 
     dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
     dsk_cd.name_len = name_len;
-    dsk_cd.counter_id = i;
+    dsk_cd.counter_id = i+PAPI_COUNTER_BASE;
 
     write_struct_convert(fp, &dsk_cd, sizeof(dsk_cd), trace_counter_description_conversion_table, 0);
 
     fwrite(events[i], name_len, 1, fp);
+  }
+#endif
+
+#ifdef TRACE_QUEUE_STATS
+  for(int i = 0; i < NUM_RUNTIME_COUNTERS; i++) {
+    struct trace_counter_description dsk_cd;
+    int name_len = strlen(runtime_counter_names[i]);
+
+    dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
+    dsk_cd.name_len = name_len;
+    dsk_cd.counter_id = i+RUNTIME_COUNTER_BASE;
+
+    write_struct_convert(fp, &dsk_cd, sizeof(dsk_cd), trace_counter_description_conversion_table, 0);
+
+    fwrite(runtime_counter_names[i], name_len, 1, fp);
   }
 #endif
 

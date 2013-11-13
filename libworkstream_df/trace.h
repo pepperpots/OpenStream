@@ -19,6 +19,16 @@
 #define WQEVENT_COUNTER 9
 #define WQEVENT_FRAME_INFO 10
 
+#define PAPI_COUNTER_BASE 1000
+#define RUNTIME_COUNTER_BASE 2000
+
+enum runtime_counter_ids {
+  RUNTIME_COUNTER_WQLENGTH = 0,
+  RUNTIME_COUNTER_STEALS,
+  RUNTIME_COUNTER_PUSHES,
+  NUM_RUNTIME_COUNTERS
+};
+
 typedef struct worker_event {
   uint64_t time;
   uint32_t type;
@@ -130,7 +140,13 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 #define trace_counter(cthread, counter_id, value) do { } while(0)
 #define trace_frame_info(cthread, frame) do { } while(0)
 
-#define dump_events_ostv(num_workers, wstream_df_worker_threads)  do { } while(0)
+#define dump_events_ostv(num_workers, wstream_df_worker_threads) do { } while(0)
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_QUEUE_STATS) && WQUEUE_PROFILE
+void trace_runtime_counters(struct wstream_df_thread* cthread);
+#else
+#define trace_runtime_counters(cthread) do { } while(0)
 #endif
 
 #endif

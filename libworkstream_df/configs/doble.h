@@ -6,7 +6,9 @@
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PAPI_PROFILE
 //#define _PRINT_STATS
-//#define _WS_NO_YIELD_SPIN
+#define _WS_NO_YIELD_SPIN
+
+#define TRACE_QUEUE_STATS
 
 #define WSTREAM_DF_DEQUE_LOG_SIZE 8
 #define WSTREAM_STACK_SIZE 1 << 16
