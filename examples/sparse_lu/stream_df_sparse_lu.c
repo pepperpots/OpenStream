@@ -646,6 +646,7 @@ main (int argc, char* argv[])
   duplicate (num_blocks, block_size, bckp_data, data);
 
   gettimeofday (start, NULL);
+  openstream_start_hardware_counters();
 
   init_streams (num_blocks, block_size, data, streams, fill_flags);
   stream_factorize (num_blocks, block_size, streams, fill_flags);
@@ -659,6 +660,7 @@ main (int argc, char* argv[])
     double stream_time, seq_time;
 
     gettimeofday (end, NULL);
+    openstream_pause_hardware_counters();
     stream_time = tdiff (end, start);
 
     if (! _WITH_SPEEDUPS)
