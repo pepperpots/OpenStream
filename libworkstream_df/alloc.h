@@ -8,21 +8,44 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include "config.h"
 
-static inline int slab_get_numa_node(void* address)
+#define SLAB_NUMA_CHUNK_SIZE 65536
+
+static inline int slab_get_numa_node(void* address, unsigned int size)
 {
 	int node;
-	void* addr_aligned = (void*)(((long)address) & ~(0xfff));
+	void* addr_aligned = (void*)(((unsigned long)address) & ~(0xfff));
+	int nodes[MAX_NUMA_NODES];
 
-	if(move_pages(getpid(), 1, &addr_aligned, NULL, &node, 0)) {
-		fprintf(stderr, "Could not get node info\n");
-		exit(1);
+	memset(nodes, 0, MAX_NUMA_NODES*sizeof(int));
+
+	for(unsigned int i = 0; i < size; i += SLAB_NUMA_CHUNK_SIZE) {
+		void* addr_aligned_p = (void*)(((unsigned long)addr_aligned)+i);
+		if(move_pages(0, 1, &addr_aligned_p, NULL, &node, 0)) {
+			fprintf(stderr, "Could not get node info\n");
+			exit(1);
+		}
+
+		if(node >= 0)
+			nodes[node]++;
 	}
 
-	if(node < 0)
-	  node = -1;
+	int max_node = -1;
+	int max_size = -1;
+	for(int i = 0; i < 8; i++) {
+		if(max_node == -1 || max_size < nodes[i]) {
+			max_node = i;
+			max_size = nodes[i];
+		}
+	}
 
-	return node;
+	if(max_node < 0) {
+	  node = -1;
+	  fprintf(stderr, "Could not determine node of %p\n", address);
+	}
+
+	return max_node;
 }
 
 #define __slab_max_slabs 64
@@ -148,7 +171,9 @@ static inline void
 slab_update_numa_node_of(void* ptr)
 {
   slab_metainfo_p metainfo = slab_metainfo(ptr);
-  metainfo->numa_node = slab_get_numa_node((char*)ptr+metainfo->size / 2);
+
+  if(get_slab_index(metainfo->size) <= __slab_max_size)
+	  metainfo->numa_node = slab_get_numa_node((char*)ptr, metainfo->size);
 }
 
 static inline void
