@@ -51,8 +51,8 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 #define __slab_max_slabs 64
 #define __slab_align 64
 #define __slab_min_size 6 // 64 -- smallest slab
-#define __slab_max_size 20 // 262144 = 256KB -- biggest slab
-#define __slab_alloc_size 21 // 1048576 = 1MB -- amount of memory that should be allocated in one go
+#define __slab_max_size 21 // 2MiB -- biggest slab
+#define __slab_alloc_size 21 // 2MiB -- amount of memory that should be allocated in one go
 
 #if !NO_SLAB_ALLOCATOR
   #define WSTREAM_DF_THREAD_SLAB_FIELDS \
