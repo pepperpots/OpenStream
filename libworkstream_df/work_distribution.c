@@ -137,7 +137,7 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   /* Determine node id of owning NUMA node */
   numa_node_id = slab_numa_node_of(fp);
 
-  if(numa_node_id != -1) {
+  if(numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
     numa_node = numa_node_by_id(numa_node_id);
     cthread->rands = cthread->rands * 1103515245 + 12345;
