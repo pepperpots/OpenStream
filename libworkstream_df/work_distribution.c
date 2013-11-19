@@ -147,8 +147,19 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
     max_data = fp->size;
   } else {
     /* Node unknown, use local worker by default */
-    max_worker = cthread->worker_id;
-    max_data = fp->bytes_cpu_in[cthread->cpu];
+      get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
+
+      /* By default the current worker is suited best */
+      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+	max_worker = cthread->worker_id;
+	max_data = fp->bytes_cpu_in[cthread->cpu];
+      }
+
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+	return 0;
+
+      max_worker = cthread->worker_id;
+      max_data = fp->bytes_cpu_in[cthread->cpu];
   }
 #else
   #error "No push strategy defined"
