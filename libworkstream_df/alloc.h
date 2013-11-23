@@ -80,6 +80,7 @@ typedef struct slab_metainfo {
 
 typedef struct slab_cache {
   slab_p slab_free_pool[__slab_max_size + 1];
+  pthread_spinlock_t locks[__slab_max_size + 1];
 
   unsigned long long slab_bytes;
   unsigned long long slab_refills;
@@ -92,8 +93,6 @@ typedef struct slab_cache {
   unsigned long long slab_toobig_freed_bytes;
   unsigned int allocator_id;
   unsigned int num_objects;
-
-  pthread_spinlock_t lock;
 } slab_cache_t, *slab_cache_p;
 
 static inline unsigned int
@@ -245,7 +244,7 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
       return (((char*)res) + __slab_metainfo_size);
     }
 
-  pthread_spin_lock(&slab_cache->lock);
+  pthread_spin_lock(&slab_cache->locks[idx]);
 
   if (slab_cache->slab_free_pool[idx] == NULL)
     slab_refill (slab_cache, idx);
@@ -255,7 +254,7 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
   res = (void *) slab_cache->slab_free_pool[idx];
   slab_cache->slab_free_pool[idx] = slab_cache->slab_free_pool[idx]->next;
 
-  pthread_spin_unlock(&slab_cache->lock);
+  pthread_spin_unlock(&slab_cache->locks[idx]);
 
   metainfo = slab_metainfo(res);
   metainfo->size = size;
@@ -279,10 +278,10 @@ slab_free (slab_cache_p slab_cache, void *e)
     }
   else
     {
-      pthread_spin_lock(&slab_cache->lock);
+      pthread_spin_lock(&slab_cache->locks[idx]);
       elem->next = slab_cache->slab_free_pool[idx];
       slab_cache->slab_free_pool[idx] = elem;
-      pthread_spin_unlock(&slab_cache->lock);
+      pthread_spin_unlock(&slab_cache->locks[idx]);
 
       slab_cache->slab_frees++;
       slab_cache->slab_freed_bytes += metainfo->size;
@@ -310,7 +309,8 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_cache->slab_toobig_freed_bytes = 0;
   slab_cache->num_objects = 0;
 
-  pthread_spin_init(&slab_cache->lock, PTHREAD_PROCESS_PRIVATE);
+  for (i = 0; i < __slab_max_size + 1; ++i)
+    pthread_spin_init(&slab_cache->locks[i], PTHREAD_PROCESS_PRIVATE);
 }
 
 
