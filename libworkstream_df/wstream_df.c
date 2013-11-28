@@ -181,6 +181,59 @@ wstream_df_taskwait ()
 /***************************************************************************/
 /***************************************************************************/
 
+void *
+__builtin_ia32_tcreate_copymd (void* old_fpp, size_t size)
+{
+  wstream_df_frame_p old_fp = old_fpp;
+  wstream_df_frame_p new_fp;
+  wstream_df_thread_p cthread = current_thread;
+
+  __compiler_fence;
+
+  int max_node = -1;
+  int max_score = -1;
+  int bytes_covered = 0;
+
+  /* Determine node with strongest dependence */
+  for(int j = 0; j < MAX_NUMA_NODES; j++) {
+    int node = (cthread->numa_node->id + j) % MAX_NUMA_NODES;
+    if(max_score == -1 || old_fp->bytes_prematch_nodes[node] > max_score ||
+       (node == cthread->numa_node->id && max_score == old_fp->bytes_prematch_nodes[node]))
+    {
+      max_score = old_fp->bytes_prematch_nodes[node];
+      max_node = node;
+    }
+  }
+
+  wstream_df_numa_node_p node;
+  slab_cache_p slab_cache;
+  slab_cache_p local_slab_cache = cthread->slab_cache;
+
+  /* Ignore preference if current task has been stolen */
+  if(max_node == -1 ||
+     (cthread->current_frame &&
+      ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL))
+  {
+    slab_cache = local_slab_cache;
+  } else {
+    node = numa_node_by_id(max_node);
+    slab_cache = &node->slab_cache;
+  }
+
+  wstream_alloc(slab_cache, &new_fp, 64, size);
+
+  trace_update_tcreate_fp(cthread, new_fp);
+
+  /* Copy metadata and free old frame */
+  memcpy(new_fp, old_fp, old_fp->size);
+  wstream_free(cthread->slab_cache, old_fp);
+  new_fp->size = size;
+
+  trace_state_restore(cthread);
+
+  return new_fp;
+}
+
 /* Create a new thread, with frame pointer size, and sync counter */
 void *
 __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
@@ -214,6 +267,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   inc_wqueue_counter(&cthread->tasks_created, 1);
 
+  memset(frame_pointer->bytes_prematch_nodes, 0, sizeof(frame_pointer->bytes_prematch_nodes));
   memset(frame_pointer->bytes_cpu_in, 0, sizeof(frame_pointer->bytes_cpu_in));
   memset(frame_pointer->bytes_cpu_ts, 0, sizeof(frame_pointer->bytes_cpu_ts));
   memset(frame_pointer->cache_misses, 0, sizeof(frame_pointer->cache_misses));
@@ -235,7 +289,6 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   cbar->barrier_counter_created++;
   frame_pointer->own_barrier = cbar;
 
-  trace_state_restore(cthread);
   return frame_pointer;
 }
 
@@ -402,6 +455,57 @@ __builtin_ia32_tend (void *fp)
 /***************************************************************************/
 /* Dynamic dependence resolution.  */
 /***************************************************************************/
+
+void
+wstream_df_prematch_dependences (void *v, void *s, bool is_read_view_p)
+{
+  wstream_df_stream_p stream = (wstream_df_stream_p) s;
+  wstream_df_view_p view = (wstream_df_view_p) v;
+  wstream_df_list_p prod_queue = &stream->producer_queue;
+  wstream_df_list_p cons_queue = &stream->consumer_queue;
+  wstream_df_thread_p cthread = current_thread;
+
+  int reached_position = 0; //view->reached_position;
+  wstream_df_frame_p this_fp = (wstream_df_frame_p) view->owner;
+
+  pthread_mutex_lock (&stream->stream_lock);
+
+  if (is_read_view_p == true)
+    {
+      if (view->burst != 0)
+      {
+	      wstream_df_view_p prod_view;
+
+	      /* We should assume here that view->burst == view->horizon.  */
+	      while (reached_position < view->horizon
+		     && (prod_view = (wstream_df_view_p) wstream_df_list_head (prod_queue)) != NULL)
+	      {
+		      wstream_df_frame_p prod_fp = prod_view->owner;
+		      int numa_node = wstream_numa_node_of(prod_fp);
+
+		      if(numa_node != -1)
+			this_fp->bytes_prematch_nodes[numa_node] += prod_view->burst;
+
+		      reached_position += prod_view->burst;
+	      }
+      }
+    }
+  else /* Write view.  */
+    {
+      /* wstream_df_view_p cons_view = (wstream_df_view_p) wstream_df_list_head (cons_queue); */
+
+      /* if (cons_view != NULL) */
+      /* { */
+      /* 	      wstream_df_frame_p cons_fp = cons_view->owner; */
+      /* 	      int numa_node = wstream_numa_node_of(cons_fp); */
+
+      /* 	      if(numa_node != -1) */
+      /* 		this_fp->bytes_prematch_nodes[numa_node] += view->burst; */
+      /* } */
+    }
+
+  pthread_mutex_unlock (&stream->stream_lock);
+}
 
 /*
    This solver assumes that for any given stream:
@@ -1067,6 +1171,26 @@ wstream_df_stream_reference (void *s, size_t num_streams)
 	  wstream_df_stream_p stream = (wstream_df_stream_p) ((void **) s)[i];
 	  __sync_add_and_fetch (&stream->refcount, 1);
 	}
+    }
+}
+
+void
+wstream_df_prematch_n_dependences (size_t n, void *v, void *s, bool is_read_view_p)
+{
+  wstream_df_view_p dummy_view = (wstream_df_view_p) v;
+  unsigned int i;
+
+  for (i = 0; i < n; ++i)
+    {
+      wstream_df_stream_p stream = ((wstream_df_stream_p *) s)[i];
+      wstream_df_view_p view = &((wstream_df_view_p) dummy_view->next)[i];
+
+      /* Only connections with the same burst are allowed for now.  */
+      view->burst = dummy_view->burst;
+      view->horizon = dummy_view->horizon;
+      view->owner = dummy_view->owner;
+
+      wstream_df_prematch_dependences ((void *) view, (void *) stream, is_read_view_p);
     }
 }
 

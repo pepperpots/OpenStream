@@ -52,6 +52,7 @@ typedef struct wstream_df_frame
 {
   tree wstream_df_frame_type;
   tree wstream_df_frame_field_work_fn;
+  tree wstream_df_frame_field_bytes_prematch_nodes;
   tree wstream_df_frame_field_bytes_cpu_in;
   tree wstream_df_frame_field_bytes_cpu_ts;
   tree wstream_df_frame_field_cache_misses;
@@ -3043,8 +3044,15 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
   tree c;
   gimple_seq post_tcreate_list = NULL;
   gimple_seq pre_tcreate_list = NULL;
+  gimple_seq resdep_list = NULL;
+  gimple_seq prematch_list = NULL;
+  gimple_seq prematch_data_list = NULL;
+  gimple_seq copymd_list = NULL;
   bool is_wstream_df_frame = false;
   bool has_do_out_taskwait_call = false;
+  tree metadata_size;
+  tree data_offset;
+  tree frame_ptr_prematch = create_tmp_var (ptr_type_node, ".frame_ptr_prematch");
 
   if (is_streaming_task_ctx (ctx))
     {
@@ -3052,11 +3060,15 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
       tree has_lp = boolean_false_node;
       location_t loc = gimple_location (ctx->stmt);
       tree tcreate_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TCREATE);
+      tree tcreate_copymd_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TCREATE_COPYMD);
       tree frame_ptr = gimple_omp_taskreg_data_arg (ctx->stmt);
       tree synch_ctr = size_zero_node;
 
-      tree data_offset = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
+      metadata_size = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
+      data_offset = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
+
       tree view_array_offset = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
+      tree view_array_offset_prematch = fold_convert (size_type_node, gimple_omp_task_arg_size (ctx->stmt));
 
       is_wstream_df_frame = true;
 
@@ -3074,18 +3086,22 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      || OMP_CLAUSE_CODE (c) == OMP_CLAUSE_OUTPUT)
 	    {
 	      tree view = OMP_CLAUSE_VIEW_ID (c);
-	      tree tmp, view_ref, field, ref;
+	      tree tmp, view_ref, view_ref_prematch, field, ref, ref_prematch;
 	      struct wstream_df_view *v = lookup_wstream_df_view (ctx, view);
 	      tree view_array_size = OMP_CLAUSE_VIEW_ARRAY_SIZE (c);
 	      tree effective_array_size = size_zero_node;
+	      tree effective_array_size_prematch = size_zero_node;
 
 	      /* Compute the space we need to set aside for a potential
 		 array of views.  */
-	      if (view_array_size != NULL_TREE)
+	      if (view_array_size != NULL_TREE) {
 		effective_array_size = fold_build2 (MULT_EXPR, size_type_node,
 						    fold_convert (size_type_node, view_array_size),
 						    TYPE_SIZE_UNIT (v->wstream_df_view_type));
-
+		effective_array_size_prematch = fold_build2 (MULT_EXPR, size_type_node,
+						    fold_convert (size_type_node, view_array_size),
+						    TYPE_SIZE_UNIT (v->wstream_df_view_type));
+	      }
 	      /* Compute the cumulated offset needed to reach the data
 		 block.  As we need to go through all of the clauses
 		 before knowing its final position, we'll set the data
@@ -3093,11 +3109,18 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      data_offset = fold_build2 (PLUS_EXPR, TREE_TYPE (data_offset),
 					 data_offset, unshare_expr (effective_array_size));
 
+	      metadata_size = fold_build2 (PLUS_EXPR, TREE_TYPE (metadata_size),
+					 metadata_size, unshare_expr (effective_array_size_prematch));
+
 	      field = lookup_sfield (OMP_CLAUSE_VIEW_ID (c), ctx);
 	      tmp = build_simple_mem_ref_loc (loc, ctx->sender_decl);
 	      view_ref = build3 (COMPONENT_REF, TREE_TYPE (field),
 				 tmp, field, NULL);
 
+	      /* Find ref to view in the preallocated frame */
+	      tmp = build_simple_mem_ref_loc (loc, frame_ptr_prematch);
+	      view_ref_prematch = build3 (COMPONENT_REF, TREE_TYPE (field),
+				 tmp, field, NULL);
 
 	      /* Set the owner of this view's data block as this very
 		 same frame (consumer owns memory).  */
@@ -3105,6 +3128,12 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 			    unshare_expr (view_ref), v->wstream_df_view_field_owner, NULL);
 	      tmp = fold_convert (TREE_TYPE (v->wstream_df_view_field_owner), frame_ptr);
 	      gimplify_assign (ref, tmp, &post_tcreate_list);
+
+	      /* Owner for the view in the preallocated frame */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_owner),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_owner, NULL);
+	      tmp = fold_convert (TREE_TYPE (v->wstream_df_view_field_owner), frame_ptr_prematch);
+	      gimplify_assign (ref, tmp, &prematch_data_list);
 
 	      /* Set the reached position to 0 if this is a normal
 		 view, to the size of the array if it's an array of
@@ -3119,17 +3148,33 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 		 of views.  The current view is only a stub.  */
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_next),
 			    unshare_expr (view_ref), v->wstream_df_view_field_next, NULL);
+
+	      ref_prematch = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_next),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_next, NULL);
+
 	      if (v->is_array_view == false)
-		gimplify_assign (ref, null_pointer_node, &post_tcreate_list);
+		{
+		  gimplify_assign (ref, null_pointer_node, &post_tcreate_list);
+		  gimplify_assign (ref_prematch, null_pointer_node, &prematch_data_list);
+		}
 	      else
 		{
 		  t = fold_build2 (POINTER_PLUS_EXPR, ptr_type_node,
 				   fold_convert (ptr_type_node, frame_ptr),
 				   fold_convert (size_type_node, view_array_offset));
 		  gimplify_assign (ref, t, &post_tcreate_list);
+
+		  t = fold_build2 (POINTER_PLUS_EXPR, ptr_type_node,
+				   fold_convert (ptr_type_node, frame_ptr_prematch),
+				   fold_convert (size_type_node, view_array_offset_prematch));
+		  gimplify_assign (ref_prematch, t, &prematch_data_list);
+
 		  /* Update offset for next array of views.  */
 		  view_array_offset = fold_build2 (PLUS_EXPR, TREE_TYPE (view_array_offset),
-						   view_array_offset, unshare_expr (effective_array_size));
+		  				   view_array_offset, unshare_expr (effective_array_size));
+		  view_array_offset_prematch = fold_build2 (PLUS_EXPR, TREE_TYPE (view_array_offset_prematch),
+		  				   view_array_offset_prematch, unshare_expr (effective_array_size_prematch));
+
 		}
 	    }
 
@@ -3168,7 +3213,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      || OMP_CLAUSE_CODE (c) == OMP_CLAUSE_OUTPUT)
 	    {
 	      tree view = OMP_CLAUSE_VIEW_ID (c);
-	      tree tmp, view_ref, field, ref, resolve_fn, stream;
+	      tree tmp, view_ref, view_ref_prematch, field, ref, ref_prematch, resolve_fn, prematch_fn, stream;
 	      struct wstream_df_view *v = lookup_wstream_df_view (ctx, view);
 	      tree view_burst = OMP_CLAUSE_BURST_SIZE (c);
 	      tree view_array_size = OMP_CLAUSE_VIEW_ARRAY_SIZE (c);
@@ -3195,15 +3240,27 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      view_ref = build3 (COMPONENT_REF, TREE_TYPE (field),
 				 tmp, field, NULL);
 
+	      tmp = build_simple_mem_ref_loc (loc, frame_ptr_prematch);
+	      view_ref_prematch = build3 (COMPONENT_REF, TREE_TYPE (field),
+				 tmp, field, NULL);
+
 	      /* Set the burst size field in the view.  */
+	      /* ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst), */
+	      /* 		    unshare_expr (view_ref), v->wstream_df_view_field_burst, NULL); */
+	      /* gimplify_assign (ref, burst, &post_tcreate_list); */
+
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst),
-			    unshare_expr (view_ref), v->wstream_df_view_field_burst, NULL);
-	      gimplify_assign (ref, burst, &post_tcreate_list);
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_burst, NULL);
+	      gimplify_assign (ref, burst, &prematch_data_list);
 
 	      /* Set the horizon size field in the view.  */
+	      /* ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon), */
+	      /* 		    unshare_expr (view_ref), v->wstream_df_view_field_horizon, NULL); */
+	      /* gimplify_assign (ref, horizon, &post_tcreate_list); */
+
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon),
-			    unshare_expr (view_ref), v->wstream_df_view_field_horizon, NULL);
-	      gimplify_assign (ref, horizon, &post_tcreate_list);
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_horizon, NULL);
+	      gimplify_assign (ref, horizon, &prematch_data_list);
 
 
 	      if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_INPUT)
@@ -3264,6 +3321,11 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      tmp = build_simple_mem_ref_loc (loc, ctx->sender_decl);
 	      view_ref = build3 (COMPONENT_REF, TREE_TYPE (field), tmp, field, NULL);
 	      ref = build_fold_addr_expr (view_ref);
+
+	      tmp = build_simple_mem_ref_loc (loc, frame_ptr_prematch);
+	      view_ref_prematch = build3 (COMPONENT_REF, TREE_TYPE (field), tmp, field, NULL);
+	      ref_prematch = build_fold_addr_expr (view_ref_prematch);
+
 	      stream = OMP_CLAUSE_STREAM_ID (c);
 
 	      //if (TREE_CODE (DECL_INITIAL_TYPE (stream)) == ARRAY_TYPE)
@@ -3283,19 +3345,30 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 
 	      if (v->is_array_view == false)
 		{
+		  prematch_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREMATCH_DEPENDENCES);
+		  t = build_call_expr (prematch_fn, 3, ref_prematch,
+				       stream, is_input_view);
+		  gimplify_and_add (t, &prematch_list);
+
 		  resolve_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_RESOLVE_DEPENDENCES);
 		  t = build_call_expr (resolve_fn, 3, ref,
 				       stream, is_input_view);
+		  gimplify_and_add (t, &resdep_list);
 		}
 	      else
 		{
+		  prematch_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREMATCH_N_DEPENDENCES);
+		  t = build_call_expr (prematch_fn, 4, fold_convert (size_type_node, view_array_size), ref_prematch,
+				       stream, is_input_view);
+		  gimplify_and_add (t, &prematch_list);
+
 		  resolve_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_RESOLVE_N_DEPENDENCES);
 		  //if (TREE_CODE (TREE_TYPE (stream)) == ARRAY_TYPE)
 		  //stream = build_fold_addr_expr (stream);
 		  t = build_call_expr (resolve_fn, 4, fold_convert (size_type_node, view_array_size), ref,
 				       stream, is_input_view);
+		  gimplify_and_add (t, &resdep_list);
 		}
-	      gimplify_and_add (t, &post_tcreate_list);
 
 	      DECL_ABSTRACT_ORIGIN (TREE_OPERAND (view_ref, 1)) = NULL;
 	    }
@@ -3320,8 +3393,12 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
       if (c != NULL_TREE)
 	has_lp = boolean_true_node;
 
-      t = build_call_expr (tcreate_fn, 4, synch_ctr, data_offset, workfn, has_lp);
-      gimplify_assign (frame_ptr, fold_convert (TREE_TYPE (frame_ptr), t), ilist);
+      t = build_call_expr (tcreate_fn, 4, synch_ctr, metadata_size, workfn, has_lp);
+      gimplify_assign (frame_ptr_prematch, fold_convert (TREE_TYPE (frame_ptr_prematch), t), ilist);
+
+      t = build_call_expr (tcreate_copymd_fn, 2, frame_ptr_prematch, data_offset);
+      gimplify_assign (frame_ptr, fold_convert (TREE_TYPE (frame_ptr), t), &copymd_list);
+
     }
 
   for (c = clauses; c ; c = OMP_CLAUSE_CHAIN (c))
@@ -3390,7 +3467,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 				      dest, offset);
 
 		  t = build_call_expr (cpy, 3, dest, val, size);
-		  gimplify_and_add (t, ilist);
+		  gimplify_and_add (t, &prematch_list);
 
 		  /* Ensure that the stream array field points in the
 		     local frame copy.  */
@@ -3399,7 +3476,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 		}
 
 	      t = build_call_expr (ref_fn, 2, val, num_streams);
-	      gimplify_and_add (t, ilist);
+	      gimplify_and_add (t, &prematch_list);
 	    }
 	  /* Fallthru.  */
 	case OMP_CLAUSE_PRIVATE:
@@ -3438,7 +3515,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	  if (is_wstream_df_frame == true)
 	    {
 	      tree field = lookup_sfield (val, ctx);
-	      tree src = build_simple_mem_ref_loc (clause_loc, ctx->sender_decl);
+	      tree src = build_simple_mem_ref_loc (clause_loc, frame_ptr_prematch);
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (field),
 			    src, field, NULL);
 
@@ -3451,7 +3528,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	  else
 	    ref = build_sender_ref (val, ctx);
 
-	  gimplify_assign (ref, x, ilist);
+	  gimplify_assign (ref, x, &prematch_data_list);
 	  if (is_task_ctx (ctx))
 	    DECL_ABSTRACT_ORIGIN (TREE_OPERAND (ref, 1)) = NULL;
 	}
@@ -3480,7 +3557,12 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	  gimplify_assign (var, ref, olist);
 	}
     }
+
+  gimple_seq_add_seq (ilist, prematch_data_list);
+  gimple_seq_add_seq (ilist, prematch_list);
+  gimple_seq_add_seq (ilist, copymd_list);
   gimple_seq_add_seq (ilist, post_tcreate_list);
+  gimple_seq_add_seq (ilist, resdep_list);
   gimple_seq_add_seq (&pre_tcreate_list, *ilist);
   *ilist = pre_tcreate_list;
 }
@@ -7830,6 +7912,17 @@ build_wstream_df_frame_base_type (omp_context *ctx)
   if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
     TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
   ctx->base_frame.wstream_df_frame_field_bytes_cpu_in = field;
+
+  name = create_tmp_var_name ("bytes_prematch_nodes");
+  type = build_array_type_nelts (integer_type_node, MAX_NUMA_NODES);
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /*  insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_bytes_prematch_nodes = field;
 
   name = create_tmp_var_name ("last_owner");
   type = integer_type_node;

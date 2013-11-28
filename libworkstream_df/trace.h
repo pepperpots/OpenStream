@@ -114,6 +114,7 @@ struct wstream_df_frame;
 void trace_init(struct wstream_df_thread* cthread);
 void trace_event(struct wstream_df_thread* cthread, unsigned int type);
 void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
+void trace_update_tcreate_fp(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 void trace_task_exec_start(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 void trace_task_exec_end(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
@@ -132,6 +133,7 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 
 #define trace_init(cthread) do { } while(0)
 #define trace_tcreate(cthread, frame) do { } while(0)
+#define trace_update_tcreate_fp(cthread, frame) do { } while(0)
 #define trace_task_exec_end(cthread, frame) do { } while(0)
 #define trace_task_exec_start(cthread, frame) do { } while(0)
 #define trace_event(cthread, type) do { } while(0)

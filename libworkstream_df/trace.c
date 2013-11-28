@@ -61,6 +61,12 @@ void trace_event(wstream_df_thread_p cthread, unsigned int type)
   cthread->num_events++;
 }
 
+void trace_update_tcreate_fp(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
+{
+  cthread->last_tcreate_event->tcreate.frame = frame;
+  cthread->last_tcreate_event = NULL;
+}
+
 void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
@@ -70,6 +76,7 @@ void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* f
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].tcreate.frame = (uint64_t)frame;
+  cthread->last_tcreate_event = &cthread->events[cthread->num_events];
   cthread->num_events++;
 }
 

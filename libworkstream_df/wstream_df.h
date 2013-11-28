@@ -107,6 +107,7 @@ typedef struct wstream_df_frame
 
   int steal_type;
   int last_owner;
+  int bytes_prematch_nodes[MAX_NUMA_NODES];
   int bytes_cpu_in[MAX_CPUS];
   long long bytes_cpu_ts[MAX_CPUS];
   long long cache_misses[MAX_CPUS];
@@ -177,6 +178,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 
   void* current_work_fn;
   void* current_frame;
+  struct worker_event* last_tcreate_event;
 
   WSTREAM_DF_THREAD_SLAB_FIELDS;
   WSTREAM_DF_THREAD_PUSH_FIELDS;
