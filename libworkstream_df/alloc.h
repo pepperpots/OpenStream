@@ -11,24 +11,37 @@
 #include "config.h"
 
 #define SLAB_NUMA_CHUNK_SIZE 65536
+#define SLAB_NUMA_MAX_ADDR_AT_ONCE 1000
 
 static inline int slab_get_numa_node(void* address, unsigned int size)
 {
-	int node;
 	void* addr_aligned = (void*)(((unsigned long)address) & ~(0xfff));
+	void* addr_check[SLAB_NUMA_MAX_ADDR_AT_ONCE];
+	int on_nodes[SLAB_NUMA_MAX_ADDR_AT_ONCE];
 	int nodes[MAX_NUMA_NODES];
 
 	memset(nodes, 0, MAX_NUMA_NODES*sizeof(int));
 
-	for(unsigned int i = 0; i < size; i += SLAB_NUMA_CHUNK_SIZE) {
-		void* addr_aligned_p = (void*)(((unsigned long)addr_aligned)+i);
-		if(move_pages(0, 1, &addr_aligned_p, NULL, &node, 0)) {
+	for(unsigned int i = 0; i < size; i += SLAB_NUMA_CHUNK_SIZE*SLAB_NUMA_MAX_ADDR_AT_ONCE) {
+		int num_addr = 0;
+
+		for(num_addr = 0;
+		    num_addr < SLAB_NUMA_MAX_ADDR_AT_ONCE &&
+			    (i + num_addr*SLAB_NUMA_CHUNK_SIZE) < size;
+		    num_addr++)
+		{
+			addr_check[num_addr] = (void*)(((unsigned long)addr_aligned)+i
+						       + num_addr*SLAB_NUMA_CHUNK_SIZE);
+		}
+
+		if(move_pages(0, num_addr, addr_check, NULL, on_nodes, 0)) {
 			fprintf(stderr, "Could not get node info\n");
 			exit(1);
 		}
 
-		if(node >= 0)
-			nodes[node]++;
+		for(int j = 0; j < num_addr; j++)
+			if(on_nodes[j] >= 0)
+				nodes[on_nodes[j]]++;
 	}
 
 	int max_node = -1;
@@ -41,7 +54,6 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 	}
 
 	if(max_node < 0) {
-	  node = -1;
 	  fprintf(stderr, "Could not determine node of %p\n", address);
 	}
 
