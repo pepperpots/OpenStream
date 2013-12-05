@@ -2242,7 +2242,7 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 		  view_struct_size = fold_build2 (PLUS_EXPR, size_type_node,
 						  t1, t2);
 		  offset = fold_build2 (MULT_EXPR, size_type_node,
-					view_struct_size, sub2);
+					view_struct_size, fold_convert (size_type_node, sub2));
 
 		  /* Add a shift by one pointer's size to the offset
 		     to allow accessing the "data" field in the
