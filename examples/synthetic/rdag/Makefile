@@ -3,13 +3,13 @@ include ../../Makefile.config
 GENERATOR_NAMES=line_dag cross_dag
 GENERATORS=$(addprefix generators/,$(GENERATOR_NAMES))
 
-TESTS = rdag stream_df_rdag $(GENERATORS)
+TESTS = read_dag stream_df_rdag $(GENERATORS)
 CFLAGS =  -Wall -g -std=c99 -O2  -ffast-math $(PROFILER_CFLAGS) # -fdump-tree-all #-Werror
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc # Do not link all test cases with Wstream_Df as it launches worker threads even in seq. comp. for now.
 
 all: $(TESTS)
 
-rdag: rdag.c rdag-common.c hash.c hash.h rand.c ../../common/common.c ../../common/sync.c
+read_dag: read_dag.c rdag-common.c hash.c hash.h rand.c ../../common/common.c ../../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) -g -std=c99 -o $@ $^
 
 generators/%: generators/%.c rand.c
