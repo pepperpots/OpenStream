@@ -31,8 +31,6 @@ int main(int argc, char** argv)
 	int num_lines = -1;
 	int num_nodes_per_line = -1;
 	int weight = 1;
-	int min_cross_links = 0;
-	int max_cross_links = 0;
 	int option;
 	int dot = 0;
 
@@ -60,11 +58,6 @@ int main(int argc, char** argv)
 
 	if(num_lines == -1 || num_nodes_per_line == -1)
 		print_usage_and_die(argv);
-
-	if(min_cross_links > max_cross_links) {
-		fprintf(stderr, "Minimal number of cross links greater than maximum.\n");
-		exit(1);
-	}
 
 	if(dot)
 		printf("digraph {\n");
