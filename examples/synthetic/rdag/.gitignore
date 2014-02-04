@@ -4,6 +4,7 @@
 *.ost
 generators/line_dag
 generators/cross_dag
+generators/fork_join
 read_dag
 stream_df_rdag
 *.list

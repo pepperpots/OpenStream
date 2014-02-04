@@ -1,6 +1,6 @@
 include ../../Makefile.config
 
-GENERATOR_NAMES=line_dag cross_dag
+GENERATOR_NAMES=line_dag cross_dag fork_join
 GENERATORS=$(addprefix generators/,$(GENERATOR_NAMES))
 
 TESTS = read_dag stream_df_rdag $(GENERATORS)
