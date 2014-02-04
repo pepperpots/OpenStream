@@ -23,6 +23,8 @@
 #include "rdag-common.h"
 #include "../../common/common.h"
 
+/* FILE* tasklist; */
+
 struct stream_assign {
 	void** streams;
 	int curr_stream;
@@ -59,11 +61,16 @@ void create_task(struct node* n, struct stream_assign* sa)
 			sout[i] = n->out_arcs[i]->data;
 	}
 
-	/* printf("Creating task %p\n", n); */
+	/* fprintf(tasklist, "Creating task %p\n", n); */
+	/* fflush(tasklist); */
+
+	n->created = 1;
 
 	#pragma omp task input(sin >> in[n->num_in_arcs][in_sz]) output(sout << out[nout][out_sz])
 	{
-		/* printf("Running task %p\n", n); */
+		/* fprintf(tasklist, "Running task %p\n", n); */
+		/* fflush(tasklist); */
+
 		int val = 0;
 
 		for(int i = 0; i < n->num_in_arcs; i++)
@@ -91,7 +98,6 @@ void create_terminal_task(struct dag* g, struct stream_assign* sa)
 
 	#pragma omp task input(sin >> in[g->num_leaves][in_sz])
 	{
-		//printf("TERMINAL TASK\n");
 	}
 }
 
@@ -130,15 +136,35 @@ int main(int argc, char** argv)
 
 	dag_init(&g);
 
+	/* tasklist = fopen("tasks.list", "w+"); */
+
 	printf("Reading DAG... "); fflush(stdout);
-	dag_read_file(&g, "foo.dag");
+	dag_read_file(&g, in_file);
 	printf("done\n"); fflush(stdout);
-	//dag_dump_dot(stdout, &g);
+
+	FILE* fp = fopen("dag-before.dot", "w+");
+	dag_dump_dot(fp, &g);
+	fclose(fp);
+
+	/* printf("Checking for cycles... "); fflush(stdout); */
+	/* if(dag_detect_cycle(&g)) { */
+	/* 	printf("\n"); */
+	/* 	fprintf(stderr, "Cycle detected\n"); */
+	/* 	exit(1); */
+	/* } */
+	/* printf("done\n"); fflush(stdout); */
+
+	printf("Building creator rels... "); fflush(stdout);
 	dag_build_creator_rels(&g);
+	printf("done\n"); fflush(stdout);
+
+	fp = fopen("dag.dot", "w+");
+	dag_dump_dot(fp, &g);
+	fclose(fp);
 
 	fprintf(stderr, "%d nodes, %d arcs.\n", g.num_nodes, g.num_arcs);
 	fprintf(stderr, "%d roots found.\n", g.num_roots);
-	fprintf(stderr, "%d leafs found.\n", g.num_leaves);
+	fprintf(stderr, "%d leaves found.\n", g.num_leaves);
 
 	char streams[g.num_arcs + g.num_leaves] __attribute__((stream));
 	sa.num_streams = g.num_arcs + g.num_leaves;
@@ -154,11 +180,12 @@ int main(int argc, char** argv)
 	for(int i = 0; i < g.num_roots; i++) {
 		create_task(g.roots[i], &sa);
 
-		for(int j = 0; j < g.roots[i]->num_out_arcs; j++)
-			if(!g.roots[i]->out_arcs[j]->dst->creator) {
-				create_task(g.roots[i]->out_arcs[j]->dst, &sa);
-				g.roots[i]->out_arcs[j]->dst->creator = (void*)0x1;
-			}
+		for(int j = 0; j < g.roots[i]->num_out_arcs; j++) {
+			struct node* child = g.roots[i]->out_arcs[j]->dst;
+
+			if(!child->creator && !child->created)
+				create_task(child, &sa);
+		}
 	}
 
 	create_terminal_task(&g, &sa);
@@ -169,6 +196,7 @@ int main(int argc, char** argv)
 
 	dag_destroy(&g);
 	free(sa.streams);
+	/* fclose(tasklist); */
 
 	return 0;
 }

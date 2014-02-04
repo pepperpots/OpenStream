@@ -46,6 +46,7 @@ int gen_rnd_tree_generic(struct dag* g, struct node* root, struct node* parent, 
 	root->out_arcs = NULL;
 	root->create_nodes = NULL;
 	root->num_create_nodes = 0;
+	root->depth = -1;
 	root->creator = NULL;
 	root->mark = 0;
 
@@ -84,9 +85,181 @@ int gen_rnd_tree_generic(struct dag* g, struct node* root, struct node* parent, 
 	return 0;
 }
 
-int dag_build_creator_rels_generic(struct node* root)
+int has_root_predecessor(struct node* n)
 {
-	int ncreate = 0;
+	for(int i = 0; i < n->num_in_arcs; i++)
+		if(is_root(n->in_arcs[i]->src))
+			return 1;
+
+	return 0;
+}
+
+void dag_remove_creator_rel(struct node* creator, struct node* dst)
+{
+	for(int i = 0; i < creator->num_create_nodes; i++) {
+		if(creator->create_nodes[i] == dst) {
+			if(i != creator->num_create_nodes-1)
+				creator->create_nodes[i] = creator->create_nodes[creator->num_create_nodes-1];
+
+			creator->num_create_nodes--;
+			creator->num_create_nodes_free++;
+			break;
+		}
+	}
+}
+
+int dag_add_creator_rel(struct node* creator, struct node* dst)
+{
+	if(creator->num_create_nodes_free == 0) {
+		void* tmp = realloc(creator->create_nodes, (creator->num_create_nodes+CREATE_PREALLOC)*sizeof(struct node*));
+
+		if(!tmp)
+			return 1;
+
+		creator->create_nodes = tmp;
+		creator->num_create_nodes_free = CREATE_PREALLOC;
+	}
+
+	creator->create_nodes[creator->num_create_nodes] = dst;
+	creator->num_create_nodes++;
+	creator->num_create_nodes_free--;
+	dst->creator = creator;
+
+	return 0;
+}
+
+int dag_detect_cycle_generic(struct dag* g, struct node* root)
+{
+	if(root->mark == g->curr_mark)
+		return 1;
+
+	int old_mark = root->mark;
+	root->mark = g->curr_mark;
+
+	for(int i = 0; i < root->num_out_arcs; i++) {
+		struct node* child = root->out_arcs[i]->dst;
+		if(dag_detect_cycle_generic(g, child))
+			return 1;
+	}
+
+	root->mark = old_mark;
+
+	return 0;
+}
+
+int dag_detect_cycle(struct dag* g)
+{
+	g->curr_mark++;
+
+	if(g->num_roots == 0 && g->num_nodes > 0)
+		return 1;
+
+	for(int i = 0; i < g->num_roots; i++) {
+		if(dag_detect_cycle_generic(g, g->roots[i]))
+			return 1;
+	}
+
+	return 0;
+}
+
+int dag_is_direct_predecessor(struct node* root, struct node* n)
+{
+	for(int i = 0; i < root->num_in_arcs; i++)
+		if(root->in_arcs[i]->src == n)
+			return 1;
+
+	return 0;
+}
+
+int dag_is_predecessor(struct node* root, struct node* n)
+{
+	if(dag_is_direct_predecessor(root, n))
+		return 1;
+
+	for(int i = 0; i < root->num_in_arcs; i++)
+		if(dag_is_predecessor(root->in_arcs[i]->src, n))
+			return 1;
+
+	return 0;
+}
+
+int dag_fix_late_creation_rels(struct node* root);
+
+int dag_fix_late_creation_rel(struct node* creator, struct node* created, struct node* predecessor)
+{
+	dag_remove_creator_rel(creator, created);
+
+	if(!is_root(predecessor)) {
+		int target_parent_arc = rand_interval_int32(0, predecessor->num_in_arcs-1);
+		struct node* target_parent = predecessor->in_arcs[target_parent_arc]->src;
+
+		if(dag_add_creator_rel(target_parent, created))
+			return 1;
+
+		if(dag_fix_late_creation_rels(target_parent))
+			return 1;
+	}
+
+	return 0;
+}
+
+int dag_fix_late_creation_rels(struct node* root)
+{
+	for(int i = 0; i < root->num_create_nodes; i++) {
+		struct node* created = root->create_nodes[i];
+
+		for(int j = 0; j < created->num_in_arcs; j++) {
+			struct node* cparent = created->in_arcs[j]->src;
+
+			if(dag_is_predecessor(root, cparent))
+				if(dag_fix_late_creation_rel(root, created, cparent))
+					return 1;
+		}
+	}
+
+	return 0;
+}
+
+void dag_update_depth_generic(struct node* root, int depth)
+{
+	if(root->depth < depth || root->depth == -1)
+		root->depth = depth;
+
+	for(int i = 0; i < root->num_out_arcs; i++) {
+		struct node* child = root->out_arcs[i]->dst;
+
+		if(child->depth == -1 || child->depth < depth+1)
+			dag_update_depth_generic(child, depth+1);
+	}
+}
+
+int dag_has_parent_with_lower_depth(struct node* root, int depth)
+{
+	for(int i = 0; i < root->num_in_arcs; i++) {
+		struct node* parent = root->in_arcs[i]->src;
+
+		if(parent->depth < depth)
+			return 1;
+	}
+
+	return 0;
+}
+
+int dag_has_grandparent_with_lower_depth(struct node* root, int depth)
+{
+	for(int i = 0; i < root->num_in_arcs; i++) {
+		struct node* parent = root->in_arcs[i]->src;
+
+		if(dag_has_parent_with_lower_depth(parent, depth))
+			return 1;
+	}
+
+	return 0;
+}
+
+int dag_build_creator_rels_generic(struct dag* g, struct node* root)
+{
+	/* int ncreate = 0; */
 
 	for(int i = 0; i < root->num_out_arcs; i++) {
 		struct node* child = root->out_arcs[i]->dst;
@@ -94,43 +267,60 @@ int dag_build_creator_rels_generic(struct node* root)
 		for(int j = 0; j < child->num_out_arcs; j++) {
 			struct node* grandchild = child->out_arcs[j]->dst;
 
-			if(!grandchild->creator)
-				ncreate++;
+			/*if(!has_root_predecessor(grandchild) && (!grandchild->creator || (grandchild->creator != root && grandchild->depth > root->depth+2)))
+			  ncreate++;*/
+
+			if(!grandchild->creator && !has_root_predecessor(grandchild) && !dag_has_grandparent_with_lower_depth(grandchild, root->depth))
+				dag_add_creator_rel(root, grandchild);
 		}
 	}
 
-	if(ncreate) {
-		if(!(root->create_nodes = malloc(ncreate*sizeof(root->create_nodes[0]))))
-			return 1;
+	root->mark = g->curr_mark;
 
-		for(int i = 0; i < root->num_out_arcs; i++) {
-			struct node* child = root->out_arcs[i]->dst;
+	/* if(ncreate) { */
+	/* 	for(int i = 0; i < root->num_out_arcs; i++) { */
+	/* 		struct node* child = root->out_arcs[i]->dst; */
 
-			for(int j = 0; j < child->num_out_arcs; j++) {
-				struct node* grandchild = child->out_arcs[j]->dst;
+	/* 		for(int j = 0; j < child->num_out_arcs; j++) { */
+	/* 			struct node* grandchild = child->out_arcs[j]->dst; */
 
-				if(!grandchild->creator) {
-					root->create_nodes[root->num_create_nodes++] = grandchild;
-					grandchild->creator = root;
-				}
-			}
-		}
-	}
+				
+	/* 			if(!has_root_predecessor(grandchild) && (!grandchild->creator || (grandchild->creator != root && grandchild->depth > root->depth+2))) { */
+	/* 				if(grandchild->creator && grandchild->depth > root->depth + 2) */
+	/* 					dag_remove_creator_rel(grandchild->creator, grandchild); */
+
+	/* 				dag_add_creator_rel(root, grandchild); */
+	/* 				grandchild->depth = root->depth+2; */
+	/* 			} */
+	/* 		} */
+	/* 	} */
+	/* } */
 
 	for(int i = 0; i < root->num_out_arcs; i++) {
 		struct node* child = root->out_arcs[i]->dst;
-		if(dag_build_creator_rels_generic(child))
-			return 1;
+
+		if(child->mark != g->curr_mark)
+			if(dag_build_creator_rels_generic(g, child))
+				return 1;
 	}
+
+	/* if(dag_fix_late_creation_rels(root)) */
+	/* 	return 1; */
 
 	return 0;
 }
 
 int dag_build_creator_rels(struct dag* g)
 {
+	g->curr_mark++;
+
 	for(int i = 0; i < g->num_roots; i++)
-		if(dag_build_creator_rels_generic(g->roots[i]))
+		dag_update_depth_generic(g->roots[i], 0);
+
+	for(int i = 0; i < g->num_roots; i++) {
+		if(dag_build_creator_rels_generic(g, g->roots[i]))
 			return 1;
+	}
 
 	return 0;
 }
@@ -236,7 +426,7 @@ int dag_find_leaves(struct dag* g)
 	return dag_find_leaves_generic(g, g->root);
 }
 
-void dag_dump_dot_generic(FILE* fp, struct dag* g, struct node* root)
+void dag_dump_dot_arcs_generic(FILE* fp, struct dag* g, struct node* root)
 {
 	if(root->mark == g->curr_mark)
 		return;
@@ -245,7 +435,7 @@ void dag_dump_dot_generic(FILE* fp, struct dag* g, struct node* root)
 
 	for(int i = 0; i < root->num_out_arcs; i++) {
 		fprintf(fp, "\t\"%p\" -> \"%p\" [label = \"%d\"]\n", root, root->out_arcs[i]->dst, root->out_arcs[i]->weight);
-		dag_dump_dot_generic(fp, g, root->out_arcs[i]->dst);
+		dag_dump_dot_arcs_generic(fp, g, root->out_arcs[i]->dst);
 	}
 
 	for(int i = 0; i < root->num_create_nodes; i++) {
@@ -253,13 +443,32 @@ void dag_dump_dot_generic(FILE* fp, struct dag* g, struct node* root)
 	}
 }
 
+void dag_dump_dot_nodes_generic(FILE* fp, struct dag* g, struct node* root)
+{
+	if(root->mark == g->curr_mark)
+		return;
+
+	root->mark = g->curr_mark;
+
+	if(root->name[0] != '\0')
+		fprintf(fp, "\t\"%p\" [label = \"%s (d%d)\"]\n", root, root->name, root->depth);
+
+	for(int i = 0; i < root->num_out_arcs; i++)
+		dag_dump_dot_nodes_generic(fp, g, root->out_arcs[i]->dst);
+}
+
 void dag_dump_dot(FILE* fp, struct dag* g)
 {
-	g->curr_mark++;
 	fprintf(fp, "digraph {\n");
 
+	g->curr_mark++;
 	for(int i = 0; i < g->num_roots; i++)
-		dag_dump_dot_generic(fp, g, g->roots[i]);
+		dag_dump_dot_nodes_generic(fp, g, g->roots[i]);
+
+	g->curr_mark++;
+	for(int i = 0; i < g->num_roots; i++)
+		dag_dump_dot_arcs_generic(fp, g, g->roots[i]);
+
 	fprintf(fp, "}\n");
 }
 
@@ -355,13 +564,16 @@ struct node_str {
 int hash_table_hash_node_str(const void* pstr)
 {
 	const struct node_str* nstr = pstr;
+	int sham = 0;
 
 	int val = nstr->len << 8;
 	const char* str = nstr->str;
 
 	while(*str) {
-		val ^= *str;
+		val ^= ((*str) << sham);
 		str++;
+
+		sham = (sham + 8) % (8*sizeof(int));
 	}
 
 	return val;
@@ -418,7 +630,7 @@ struct node_str* hash_table_lookup_insert_node_str(struct hash_table* ht, char* 
 	return pnstr;
 }
 
-struct node* dag_create_node(struct dag* g)
+struct node* dag_create_node(struct dag* g, const char* name)
 {
 	struct node* n;
 
@@ -427,13 +639,23 @@ struct node* dag_create_node(struct dag* g)
 
 	n->num_in_arcs = 0;
 	n->num_out_arcs = 0;
+	n->num_in_arcs_free = 0;
+	n->num_out_arcs_free = 0;
 	n->mark = 0;
 	n->in_arcs = NULL;
 	n->out_arcs = NULL;
 	n->create_nodes = NULL;
+	n->num_create_nodes_free = 0;
 	n->num_create_nodes = 0;
+	n->depth = -1;
 	n->creator = NULL;
 	n->data = NULL;
+	n->created = 0;
+
+	if(!name)
+		n->name[0] = '\0';
+	else
+		strncpy(n->name, name, sizeof(n->name));
 
 	if(g->root == NULL)
 		g->root = n;
@@ -445,20 +667,28 @@ struct node* dag_create_node(struct dag* g)
 
 int dag_create_edge(struct dag* g, struct node* a, struct node* b, int weight)
 {
-	struct arc** out_arcs_new = realloc(a->out_arcs, (a->num_out_arcs+1)*sizeof(struct arc*));
+	if(a->num_out_arcs_free == 0) {
+		struct arc** out_arcs_new = realloc(a->out_arcs, (a->num_out_arcs+ARC_PREALLOC)*sizeof(struct arc*));
 
-	if(!out_arcs_new)
-		return 1;
+		if(!out_arcs_new)
+			return 1;
 
-	a->out_arcs = out_arcs_new;
+		a->out_arcs = out_arcs_new;
+		a->num_out_arcs_free = ARC_PREALLOC;
+	}
+
 	a->out_arcs[a->num_out_arcs] = NULL;
 
-	struct arc** in_arcs_new = realloc(b->in_arcs, (b->num_in_arcs+1)*sizeof(struct arc*));
+	if(b->num_in_arcs_free == 0) {
+		struct arc** in_arcs_new = realloc(b->in_arcs, (b->num_in_arcs+ARC_PREALLOC)*sizeof(struct arc*));
 
-	if(!in_arcs_new)
-		return 1;
+		if(!in_arcs_new)
+			return 1;
 
-	b->in_arcs = in_arcs_new;
+		b->in_arcs = in_arcs_new;
+		b->num_in_arcs_free = ARC_PREALLOC;
+	}
+
 	b->in_arcs[b->num_in_arcs] = NULL;
 
 	struct arc* arc = malloc(sizeof(struct arc));
@@ -473,6 +703,9 @@ int dag_create_edge(struct dag* g, struct node* a, struct node* b, int weight)
 
 	a->out_arcs[a->num_out_arcs++] = arc;
 	b->in_arcs[b->num_in_arcs++] = arc;
+
+	a->num_out_arcs_free--;
+	b->num_in_arcs_free--;
 
 	g->num_arcs++;
 
@@ -497,7 +730,7 @@ int dag_read_file(struct dag* g, const char* filename)
 	if(!fp)
 		goto out_err;
 
-	if(hash_table_create(&ht, 5000, hash_table_hash_node_str, hash_table_cmp_node_str))
+	if(hash_table_create(&ht, 50000, hash_table_hash_node_str, hash_table_cmp_node_str))
 		goto out_fp;
 
 	while(1) {
@@ -528,11 +761,11 @@ int dag_read_file(struct dag* g, const char* filename)
 		pnstr_right = hash_table_lookup_insert_node_str(&ht, right_token);
 
 		if(!pnstr_left->node)
-			if(!(pnstr_left->node = dag_create_node(g)))
+			if(!(pnstr_left->node = dag_create_node(g, left_token)))
 				goto out_ht;
 
 		if(!pnstr_right->node)
-			if(!(pnstr_right->node = dag_create_node(g)))
+			if(!(pnstr_right->node = dag_create_node(g, right_token)))
 				goto out_ht;
 
 		if(dag_create_edge(g, pnstr_left->node, pnstr_right->node, weight))

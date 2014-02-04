@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <getopt.h>
 #include <stdlib.h>
-#include "rand.h"
+#include "../rand.h"
 
 void print_usage_and_die(char** argv)
 {
@@ -93,18 +93,27 @@ int main(int argc, char** argv)
 		int src_node;
 		int dst_node;
 		int dst_line;
+		int rnd;
 
-		for(int lnk = 0; lnk < cross_links; lnk++) {
-			do {
-				src_node = rand_interval_int32(0, num_nodes_per_line-1);
-				dst_node = src_node + (rand_interval_int32(0, num_nodes_per_line-1) % (num_nodes_per_line - src_node));
-				dst_line = rand_interval_int32(0, num_lines-1);
-			} while(src_node == dst_node && dst_line == i);
+		if(num_nodes_per_line > 1) {
+			for(int lnk = 0; lnk < cross_links; lnk++) {
+				do {
+					src_node = rand_interval_int32(0, num_nodes_per_line-2);
+					rnd = rand_interval_int32(0, num_nodes_per_line-2);
+					dst_node = src_node + ((rnd % (num_nodes_per_line - src_node - 1)) + 1);
+					dst_line = rand_interval_int32(0, num_lines-1);
+				} while(src_node == dst_node && dst_line == i);
 
-			if(dot)
-				printf("\"%d_%d\" -> \"%d_%d\" [label = \"%d\"]\n", i, src_node, dst_line, dst_node, weight);
-			else
-				printf("%d_%d ->[%d] %d_%d\n", i, src_node, weight, dst_line, dst_node);
+				if(dst_node <= src_node) {
+					fprintf(stderr, "GENERATOR ERROR!\n");
+					exit(1);
+				}
+
+				if(dot)
+					printf("\"%d_%d\" -> \"%d_%d\" [label = \"%d\"]\n", i, src_node, dst_line, dst_node, weight);
+				else
+					printf("%d_%d ->[%d] %d_%d\n", i, src_node, weight, dst_line, dst_node);
+			}
 		}
 	}
 
