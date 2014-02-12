@@ -45,6 +45,8 @@ static inline void wstream_free_frame(wstream_df_frame_p fp)
   } else {
     wstream_free(&wstream_df_default_node->slab_cache, fp);
  }
+
+  trace_tdestroy(current_thread, fp);
 }
 
 int wstream_self(void)

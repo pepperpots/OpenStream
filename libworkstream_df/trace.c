@@ -80,6 +80,18 @@ void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* f
   cthread->num_events++;
 }
 
+void trace_tdestroy(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].type = WQEVENT_TDESTROY;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->events[cthread->num_events].tdestroy.frame = (uint64_t)frame;
+  cthread->num_events++;
+}
+
 void trace_task_exec_start(wstream_df_thread_p cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
@@ -602,7 +614,8 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	  }
 	} else if(th->events[k].type == WQEVENT_TCREATE ||
 		  th->events[k].type == WQEVENT_START_TASKEXEC ||
-		  th->events[k].type == WQEVENT_END_TASKEXEC) {
+		  th->events[k].type == WQEVENT_END_TASKEXEC ||
+		  th->events[k].type == WQEVENT_TDESTROY) {
 	  /* Tcreate event (simply dumped as an event) */
 
 	  if(do_dump) {
@@ -622,6 +635,9 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    } else if(th->events[k].type == WQEVENT_END_TASKEXEC) {
 	      dsk_sge.type = SINGLE_TYPE_TEXEC_END;
 	      dsk_sge.what = th->events[k].texec_end.frame;
+	    } else if(th->events[k].type == WQEVENT_TDESTROY) {
+	      dsk_sge.type = SINGLE_TYPE_TDESTROY;
+	      dsk_sge.what = th->events[k].tdestroy.frame;
 	    }
 
 	    write_struct_convert(fp, &dsk_sge, sizeof(dsk_sge), trace_single_event_conversion_table, 0);
