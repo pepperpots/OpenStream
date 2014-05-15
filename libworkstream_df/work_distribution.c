@@ -52,7 +52,6 @@ void reorder_pushes(wstream_df_thread_p cthread)
     cthread->own_next_cached_thread = NULL;
   }
 
-
   if(insert_pos > 0) {
     trace_state_change(cthread, WORKER_STATE_RT_REORDER);
 
@@ -104,23 +103,13 @@ void import_pushes(wstream_df_thread_p cthread)
   }
 }
 
-/* Determines whether a push of fp to another worker is considered beneficial.
- * If a push would be beneficial, the function returns 1 and saves the identifier
- * of the worker suited best for execution in target_worker. Otherwise 0 is
- * returned.
- */
-int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+int work_push_beneficial_max_writer(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
 {
   unsigned int max_worker;
   int numa_node_id;
   int max_data;
   wstream_df_numa_node_p numa_node;
 
-  /* Overhead for pushing small frames is too high */
-  if(fp->size < PUSH_MIN_FRAME_SIZE)
-    return 0;
-
-#if defined(PUSH_STRATEGY_MAX_WRITER)
   /* Determine which worker write most of the frame's input data */
   get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 
@@ -133,7 +122,18 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
     return 0;
 
-#elif defined(PUSH_STRATEGY_OWNER)
+  *target_worker = max_worker;
+
+  return 1;
+}
+
+int work_push_beneficial_owner(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+{
+  unsigned int max_worker;
+  int numa_node_id;
+  int max_data;
+  wstream_df_numa_node_p numa_node;
+
   /* Determine node id of owning NUMA node */
   numa_node_id = slab_numa_node_of(fp);
 
@@ -161,17 +161,195 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
       max_worker = cthread->worker_id;
       max_data = fp->bytes_cpu_in[cthread->cpu];
   }
+
+  *target_worker = max_worker;
+  return 1;
+}
+
+int work_push_beneficial_split_owner(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+{
+  unsigned int max_worker;
+  int numa_node_id;
+  int max_data;
+  wstream_df_numa_node_p numa_node;
+
+  /* Determine node id of owning NUMA node */
+  max_data = fp->dominant_input_data_size;
+  numa_node_id = fp->dominant_input_data_node_id;
+
+  /* Overhead for pushing small frames is too high */
+  if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
+    return 0;
+
+  if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
+    /* Choose random worker sharing the target node */
+    numa_node = numa_node_by_id(numa_node_id);
+    cthread->rands = cthread->rands * 1103515245 + 12345;
+    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+  } else {
+    /* Node unknown, use local worker by default */
+      get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
+
+      /* By default the current worker is suited best */
+      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+	max_worker = cthread->worker_id;
+	max_data = fp->bytes_cpu_in[cthread->cpu];
+      }
+
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+	return 0;
+
+      max_worker = cthread->worker_id;
+      max_data = fp->bytes_cpu_in[cthread->cpu];
+  }
+
+  *target_worker = max_worker;
+  return 1;
+}
+
+int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+{
+  unsigned int max_worker;
+  int numa_node_id;
+  int max_data;
+  size_t data[MAX_NUMA_NODES];
+  wstream_df_numa_node_p numa_node;
+
+  /* Overhead for pushing small frames is too high */
+  if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
+    return 0;
+
+  memset(data, 0, sizeof(data));
+
+  for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
+    int node_id = wstream_numa_node_of(vi->data);
+    int factor = 1;
+
+    if(vi->reuse_data_view)
+      factor = 2;
+
+    if(node_id != -1)
+      data[node_id] += vi->horizon*factor;
+  }
+
+  max_data = data[cthread->numa_node->id];
+  numa_node_id = cthread->numa_node->id;
+
+  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+    if(data[i] > max_data) {
+      max_data = data[i];
+      numa_node_id = i;
+    }
+  }
+
+  if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
+    /* Choose random worker sharing the target node */
+    numa_node = numa_node_by_id(numa_node_id);
+    cthread->rands = cthread->rands * 1103515245 + 12345;
+    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+  } else {
+	return 0;
+  }
+
+  *target_worker = max_worker;
+  return 1;
+}
+
+int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+{
+  unsigned int max_worker;
+  int numa_node_id;
+  int max_data;
+  size_t data[MAX_NUMA_NODES];
+  wstream_df_numa_node_p numa_node;
+
+  /* Overhead for pushing small frames is too high */
+  if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
+    return 0;
+
+  memset(data, 0, sizeof(data));
+
+  for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
+    int node_id = wstream_numa_node_of(vi->data);
+    int factor = 1;
+
+    if(vi->reuse_data_view)
+      factor = 2;
+
+    if(node_id != -1)
+      data[node_id] += vi->horizon*factor;
+  }
+
+  max_data = data[cthread->numa_node->id];
+  numa_node_id = cthread->numa_node->id;
+
+  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+    if(data[i] > max_data) {
+      max_data = data[i];
+      numa_node_id = i;
+    }
+  }
+
+  if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
+    /* Choose random worker sharing the target node */
+    numa_node = numa_node_by_id(numa_node_id);
+    cthread->rands = cthread->rands * 1103515245 + 12345;
+    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+  } else if(cthread->numa_node->id == numa_node_id) {
+    /* Node unknown, use local worker by default */
+      get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
+
+      /* By default the current worker is suited best */
+      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+	max_worker = cthread->worker_id;
+	max_data = fp->bytes_cpu_in[cthread->cpu];
+      }
+
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+	return 0;
+
+      max_worker = cthread->worker_id;
+      max_data = fp->bytes_cpu_in[cthread->cpu];
+  }
+
+  *target_worker = max_worker;
+  return 1;
+}
+
+/* Determines whether a push of fp to another worker is considered beneficial.
+ * If a push would be beneficial, the function returns 1 and saves the identifier
+ * of the worker suited best for execution in target_worker. Otherwise 0 is
+ * returned.
+ */
+int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+{
+  int res;
+  int lcl_target_worker;
+
+#if defined(PUSH_STRATEGY_MAX_WRITER)
+  res = work_push_beneficial_max_writer(fp, cthread, num_workers, &lcl_target_worker);
+#elif defined(PUSH_STRATEGY_OWNER)
+  res = work_push_beneficial_owner(fp, cthread, num_workers, &lcl_target_worker);
+#elif defined(PUSH_STRATEGY_SPLIT_OWNER)
+  res = work_push_beneficial_split_owner(fp, cthread, num_workers, &lcl_target_worker);
+#elif defined(PUSH_STRATEGY_SPLIT_OWNER_CHAIN)
+  res = work_push_beneficial_split_owner_chain(fp, cthread, num_workers, &lcl_target_worker);
+#elif defined(PUSH_STRATEGY_SPLIT_OWNER_CHAIN_INNER_MW)
+  res = work_push_beneficial_split_owner_chain_inner_mw(fp, cthread, num_workers, &lcl_target_worker);
 #else
-  #error "No push strategy defined"
+  #error "No push strategy defined" */
 #endif
+
+  if(!res)
+    return 0;
 
   /* Final check */
   if(/* Only migrate to a different worker */
-     max_worker != cthread->worker_id &&
+     lcl_target_worker != cthread->worker_id &&
      /* Do not migrate to workers that are too close in the memory hierarchy */
-     mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(max_worker)) >= PUSH_MIN_MEM_LEVEL)
+     mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(lcl_target_worker)) >= PUSH_MIN_MEM_LEVEL)
     {
-      *target_worker = max_worker;
+      *target_worker = lcl_target_worker;
       return 1;
     }
 
@@ -251,7 +429,7 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 	  attempt++)
 	{
 	  cthread->rands = cthread->rands * 1103515245 + 12345;
-	  sibling_num = (cthread->rands >> 16) % mem_cores_at_level(level);
+	  sibling_num = (cthread->rands >> 16) % mem_cores_at_level(level, cthread->cpu);
 	  steal_from_cpu = mem_nth_sibling_at_level(level, cthread->cpu, sibling_num);
 
 	  if(cpu_used(steal_from_cpu)) {
