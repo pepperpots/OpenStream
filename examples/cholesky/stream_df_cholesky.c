@@ -29,8 +29,8 @@
 #include "../common/sync.h"
 #include "../common/lapack.h"
 
-#define _SPEEDUPS 1
-#define _VERIFY 1
+#define _SPEEDUPS 0
+#define _VERIFY 0
 
 #include <unistd.h>
 
