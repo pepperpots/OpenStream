@@ -1,6 +1,6 @@
 include ../Makefile.config
 
-TESTS = seidel stream_seidel topsort_deps_stream_seidel starss_to_stream_seidel openmp_task_seidel openmp_loop_seidel stream_df_seidel stream_df_seidel_reuse
+TESTS = seidel stream_seidel topsort_deps_stream_seidel starss_to_stream_seidel openmp_task_seidel openmp_loop_seidel stream_df_seidel stream_df_seidel_reuse stream_seidel_from_df
 CFLAGS =  -Wall -g -std=c99 -O3  -ffast-math $(PROFILER_CFLAGS)  #-fdump-tree-all #-Werror
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc # Do not link all test cases with Wstream_Df as it launches worker threads even in seq. comp. for now.
 
@@ -10,10 +10,16 @@ endif
 
 all: $(TESTS)
 
+compare_outputs: compare_outputs.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+
 seidel: seidel.c ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_seidel: stream_seidel.c ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+
+stream_seidel_from_df: stream_seidel_from_df.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 stream_df_seidel: stream_df_seidel.c ../common/common.c ../common/sync.c
