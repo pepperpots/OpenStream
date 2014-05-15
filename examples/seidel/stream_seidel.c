@@ -185,7 +185,7 @@ main (int argc, char **argv)
 
     for (i = 0; i < N; ++i)
       for (j = 0; j < N; ++j)
-	data[N*i + j] = ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
+	data[N*i + j] = (double) ((i == 26 && j == 26) || (i == N-26 && j == N-26)) ? 500 : 0; //(i*7 +j*13) % 17;
 
     gettimeofday (start, NULL);
     openstream_start_hardware_counters();
