@@ -43,6 +43,12 @@ openmp_task_seidel: openmp_task_seidel.c ../common/common.c
 openmp_loop_seidel: openmp_loop_seidel.c ../common/common.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99
 
+openmp_task_seidel_interleaved: openmp_task_seidel_interleaved.c ../common/common.c ../../libworkstream_df/interleave.c
+	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99 -I../../install/include/ -L../../install/lib64 -lnuma
+
+openmp_loop_seidel_interleaved: openmp_loop_seidel_interleaved.c ../common/common.c ../../libworkstream_df/interleave.c
+	$(PLAIN_GCC) $^ -o $@ -fopenmp -O3 -ffast-math -std=c99 -I../../install/include/ -L../../install/lib64 -lnuma
+
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt $(MEM_CST_TESTS_X86) $(MEM_CST_TESTS_ARM)
 
