@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 void* streams;
+void* dfbarrier_stream;
 
 int dgemm_base(int l, int blocks);
 int dgemm_output_stream(int l, int blocks, int y, int stage);
@@ -393,29 +394,39 @@ void create_dtrsm_task(double* input_data, double* work_data, int x, int blocks,
 
 void new_stream_dpotrf(double* input_data, double* work_data, int block_size, int blocks)
 {
-  for (int x = 0; x < blocks; ++x)
+  int per_block = 1;
+
+  for(int xx = 0; xx < blocks; xx += per_block) {
+    #pragma omp task
     {
-      if(x > 0) {
-	  create_dsyrk_task(input_data, x, blocks, block_size, 0);
+      for (int x = xx; x < xx+per_block; ++x)
+	{
+	  if(x > 0) {
+	    create_dsyrk_task(input_data, x, blocks, block_size, 0);
 
-	  if(x > 1)
-	    create_dsyrk_task(input_data, x, blocks, block_size, 1);
-      }
+	    if(x > 1)
+	      create_dsyrk_task(input_data, x, blocks, block_size, 1);
+	  }
 
-      create_dpotrf_task(input_data, work_data, x, blocks, block_size);
+	  create_dpotrf_task(input_data, work_data, x, blocks, block_size);
 
-      if(x > 0) {
-	for (int y = x + 1; y < blocks; ++y) {
-	  create_dgemm_task(input_data, x, blocks, block_size, y, 0);
+	  if(x > 0) {
+	    for (int y = x + 1; y < blocks; ++y) {
+	      create_dgemm_task(input_data, x, blocks, block_size, y, 0);
 
-	  if(x > 1)
-	    create_dgemm_task(input_data, x, blocks, block_size, y, 1);
+	      if(x > 1)
+		create_dgemm_task(input_data, x, blocks, block_size, y, 1);
+	    }
+	  }
+
+	  for(int yy = x + 1; yy < blocks; yy += per_block)
+	    {
+	      for (int y = yy; y < blocks && y < yy + per_block; ++y)
+		create_dtrsm_task(input_data, work_data, x, blocks, block_size, y);
+	    }
 	}
-      }
-
-      for (int y = x + 1; y < blocks; ++y)
-	create_dtrsm_task(input_data, work_data, x, blocks, block_size, y);
     }
+  }
 }
 
 
@@ -506,6 +517,15 @@ int final_input_stream(int id_x, int id_y, int blocks)
   return dtrsm_output_stream(id_x, blocks, id_y);
 }
 
+void create_df_barrier_task(void)
+{
+	int token[1];
+
+	#pragma omp task output(dfbarrier_stream[0] << token[1])
+	{
+	}
+}
+
 void create_terminal_task(double* data, int id_x, int id_y, int N, int block_size)
 {
   double block_acc[block_size*block_size];
@@ -522,6 +542,9 @@ void create_terminal_task(double* data, int id_x, int id_y, int N, int block_siz
       create_dpotrf_proxy_tasks(data, id_x, id_y, N, block_size);
     else
       create_dtrsm_proxy_tasks(data, id_x, id_y, N, block_size);
+
+    if(id_x == id_y && id_x == blocks-1)
+      create_df_barrier_task();
   }
 }
 
@@ -641,6 +664,10 @@ main(int argc, char *argv[])
   streams = malloc(num_streams*sizeof(void*));
   memcpy(streams, lstreams, num_streams*sizeof(void*));
 
+  int ldfbarrier_stream[1] __attribute__((stream));
+  dfbarrier_stream = malloc(sizeof(void*));
+  memcpy(dfbarrier_stream, ldfbarrier_stream, sizeof(void*));
+
   if(_VERIFY) {
     unsigned char upper = 'U';
     int nfo;
@@ -675,6 +702,11 @@ main(int argc, char *argv[])
     gettimeofday (&start, NULL);
     openstream_start_hardware_counters();
     new_stream_dpotrf(input_data, work_data, block_size, blocks);
+
+    int token[1];
+    #pragma omp task input(dfbarrier_stream[0] >> token[1])
+    {
+    }
     #pragma omp taskwait
     openstream_pause_hardware_counters();
     gettimeofday (&end, NULL);
@@ -694,6 +726,7 @@ main(int argc, char *argv[])
     free(seq_data);
 
   free(streams);
+  free(dfbarrier_stream);
 
   return 0;
 }
