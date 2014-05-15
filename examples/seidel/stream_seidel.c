@@ -8,6 +8,7 @@
 #include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
+#define _WITH_BINARY_OUTPUT 0
 
 #include <unistd.h>
 
@@ -252,6 +253,15 @@ main (int argc, char **argv)
 	      fprintf (res_file, "\n");
 	    }
 	}
+
+      if (_WITH_BINARY_OUTPUT)
+      {
+	int dim = N-2;
+	fwrite(&dim, sizeof(dim), 1, res_file);
+
+	for (i = 1; i < N - 1; i++)
+	  fwrite(&data[N * i + 1], (N-2)*sizeof(double), 1, res_file);
+      }
     }
   }
 
