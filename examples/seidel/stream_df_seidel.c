@@ -25,6 +25,7 @@
 #include "../common/sync.h"
 
 #define _WITH_OUTPUT 0
+#define _WITH_BINARY_OUTPUT 0
 
 /* Global stream references (see main for details) */
 void* stop_ref;
@@ -400,6 +401,12 @@ void dump_matrix(FILE* fp, int N, double* matrix)
 	fprintf(fp, "\n");
 }
 
+void dump_matrix_binary(FILE* fp, int N, double* matrix)
+{
+	fwrite(&N, sizeof(N), 1, fp);
+	fwrite(matrix, N*N*sizeof(double), 1, fp);
+}
+
 /* Creates an initial task for a given block. The task reads data
  * from the initial matrix and copies it to the streams.
  */
@@ -746,6 +753,10 @@ int main(int argc, char** argv)
 	printf("[Dataflow] Seidel (size %d, tile %d, iterations %d) executed in %.5f seconds\n",
 		N, block_size, numiters, tdiff(&end, &start));
 	dump_matrix(res_file, N, matrix);
+	#endif
+
+	#if _WITH_BINARY_OUTPUT
+	dump_matrix_binary(res_file, N, matrix);
 	#endif
 
 	fclose(res_file);
