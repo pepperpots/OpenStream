@@ -46,7 +46,7 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 
 	int max_node = -1;
 	int max_size = -1;
-	for(int i = 0; i < 8; i++) {
+	for(int i = 0; i < MAX_NUMA_NODES; i++) {
 		if(max_node == -1 || max_size < nodes[i]) {
 			max_node = i;
 			max_size = nodes[i];
