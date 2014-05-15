@@ -53,9 +53,18 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 		}
 	}
 
-	if(max_node < 0) {
+	/* int size_covered = 0; */
+	/* for(int i = 0; i < MAX_NUMA_NODES; i++) */
+	/* 	size_covered += nodes[i]*SLAB_NUMA_CHUNK_SIZE; */
+
+	/* if(size > 100000) { */
+	/* 	if((100*SLAB_NUMA_CHUNK_SIZE*max_size) / size < 80) { */
+	/* 		fprintf(stderr, "Could not determine node of %p: max is %d, covered = %d, size = %d\n", address, SLAB_NUMA_CHUNK_SIZE*max_size, size_covered, size); */
+	/* 	} */
+	/* } */
+
+	if(max_node < 0)
 	  fprintf(stderr, "Could not determine node of %p\n", address);
-	}
 
 	return max_node;
 }
