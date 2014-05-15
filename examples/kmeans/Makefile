@@ -1,7 +1,7 @@
 include ../Makefile.config
 
-TESTS = kmeans openmp_loop_kmeans stream_df_kmeans
-CFLAGS =  -Wall -g -std=c99 -O3 -ffast-math #-fdump-tree-all #-Werror
+TESTS = kmeans openmp_loop_kmeans #stream_df_kmeans
+CFLAGS =  -Wall -g -std=c99 -O3 #-ffast-math -fdump-tree-all -Wno-unused #-Werror
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc
 
 all: $(TESTS)
@@ -14,6 +14,9 @@ stream_df_kmeans: stream_df_kmeans.c kmeans_common.c ../common/common.c ../commo
 
 openmp_loop_kmeans: openmp_loop_kmeans.c kmeans_common.c ../common/common.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp $(CFLAGS)
+
+openmp_loop_kmeans_interleaved: openmp_loop_kmeans_interleaved.c kmeans_common.c ../common/common.c
+	$(PLAIN_GCC) $^ -o $@ -fopenmp $(CFLAGS) -I../../install/include/ -L../../install/lib64 -lnuma
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt
