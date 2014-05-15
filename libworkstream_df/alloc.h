@@ -223,25 +223,29 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
 			   __slab_align,
 			   alloc_size));
 
-  slab_cache->slab_free_pool[idx] = (slab_p)(((char*)alloc) + __slab_metainfo_size);
-  slab_cache->slab_refills++;
-  slab_cache->slab_bytes += num_slabs * slab_size;
+pthread_spin_lock(&slab_cache->locks[idx]);
+  slab_p new_head = (slab_p)(((char*)alloc) + __slab_metainfo_size);
 
-  s = slab_cache->slab_free_pool[idx]; // avoid useless warning;
+  s = new_head; //slab_cache->slab_free_pool[idx]; // avoid useless warning;
   for (i = 0; i < num_slabs; ++i)
     {
       metainfo = slab_metainfo(s);
       slab_metainfo_init(slab_cache, metainfo);
 
       if(i == num_slabs-1) {
-	s->next = NULL;
+	s->next = slab_cache->slab_free_pool[idx];
       } else {
 	s->next = (slab_p) (((char *) s) + slab_size + __slab_metainfo_size);
 	s = s->next;
       }
     }
 
+  slab_cache->slab_refills++;
+  slab_cache->slab_bytes += num_slabs * slab_size;
+
   slab_cache->num_objects += num_slabs;
+  slab_cache->slab_free_pool[idx] = new_head;
+pthread_spin_unlock(&slab_cache->locks[idx]);
 }
 
 static inline void *
@@ -263,12 +267,16 @@ slab_alloc (slab_cache_p slab_cache, unsigned int size)
       return (((char*)res) + __slab_metainfo_size);
     }
 
+retry:
   pthread_spin_lock(&slab_cache->locks[idx]);
 
-  if (slab_cache->slab_free_pool[idx] == NULL)
-    slab_refill (slab_cache, idx);
-  else
+  if (slab_cache->slab_free_pool[idx] == NULL) {
+	  pthread_spin_unlock(&slab_cache->locks[idx]);
+	  slab_refill (slab_cache, idx);
+	  goto retry;
+  } else {
     slab_cache->slab_hits++;
+  }
 
   res = (void *) slab_cache->slab_free_pool[idx];
   slab_cache->slab_free_pool[idx] = slab_cache->slab_free_pool[idx]->next;
