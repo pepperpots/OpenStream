@@ -53,6 +53,7 @@ void init_membership(int n, int* membership)
  */
 void init_clusters(int k, int nd, float* ccenters, int n, float* vals)
 {
+	srand(7899292);
 	for(int i = 0; i < k; i++) {
 		/* Pick a random point */
 		int pt = rand() % n;
@@ -123,6 +124,8 @@ void init_random_points_random_walk_clust(int nd, int n, int k, float* vals)
 	int vals_per_clust = n / k;
 	float ccenter[nd];
 	float walk[nd];
+
+	srand(2268882);
 
 	for(int i = 0; i < n; i++) {
 		if(i % vals_per_clust == 0) {
