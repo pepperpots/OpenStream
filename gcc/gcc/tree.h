@@ -368,6 +368,9 @@ enum omp_clause_code
   /* OpenMP clause: output (variable_list).  */
   OMP_CLAUSE_OUTPUT,
 
+  /* OpenMP clause: inout_reuse (variable_list).  */
+  OMP_CLAUSE_INOUT_REUSE,
+
   /* OpenMP clause: peek (variable_list).  */
   OMP_CLAUSE_PEEK,
 
@@ -1896,9 +1899,13 @@ extern void protected_set_expr_location (tree, location_t);
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
 					      OMP_CLAUSE_INPUT,		\
 					      OMP_CLAUSE_PEEK), 5)
+#define OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE(NODE)			\
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_INPUT,		\
+					      OMP_CLAUSE_PEEK), 6)
 #define OMP_CLAUSE_FIRSTPRIVATE_INPUT(NODE)				\
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE,			\
-						OMP_CLAUSE_INPUT), 6)
+						OMP_CLAUSE_INPUT), 7)
 
 #define OMP_CLAUSE_HAS_LOCATION(NODE) \
   ((OMP_CLAUSE_CHECK (NODE))->omp_clause.locus != UNKNOWN_LOCATION)

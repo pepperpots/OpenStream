@@ -10875,6 +10875,13 @@ c_finish_omp_clauses (tree clauses)
 	  need_implicitly_determined = true;
 	  break;
 
+	case OMP_CLAUSE_INOUT_REUSE:
+	  name = "inout_reuse";
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
 	case OMP_CLAUSE_IF:
 	case OMP_CLAUSE_NUM_THREADS:
 	case OMP_CLAUSE_SCHEDULE:

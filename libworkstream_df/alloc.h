@@ -171,6 +171,13 @@ slab_numa_node_of(void* ptr)
   return metainfo->numa_node;
 }
 
+static inline size_t
+slab_size_of(void* ptr)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+  return metainfo->size;
+}
+
 static inline void
 slab_set_numa_node_of(void* ptr, int node)
 {
@@ -342,6 +349,8 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_allocator_of(P)
 #  define wstream_numa_node_of(P)		\
   slab_numa_node_of(P)
+#  define wstream_size_of(P)		\
+  slab_size_of(P)
 #  define wstream_is_fresh(P)		\
   slab_is_fresh(P)
 #  define wstream_max_initial_writer_of(P)		\
@@ -360,6 +369,7 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
 #  define wstream_init_alloc(SLAB, ID)
 #  define wstream_allocator_of(P) (-1)
 #  define wstream_numa_node_of(P) (-1)
+#  define wstream_size_of(P) (-1)
 #  define wstream_is_fresh(P) (0)
 #  define wstream_max_initial_writer_of(P) (0)
 #  define wstream_max_initial_writer_size_of(P) (0)

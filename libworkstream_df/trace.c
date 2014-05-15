@@ -15,6 +15,8 @@ static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "num_tcreate",
   "num_texec",
   "slab_refills",
+  "reuse_addr",
+  "reuse_copy"
 };
 
 #if ALLOW_WQEVENT_SAMPLING
@@ -185,27 +187,15 @@ void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned i
   cthread->num_events++;
 }
 
-void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts)
+void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts, void* src_addr)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc();
   cthread->events[cthread->num_events].data_read.src_cpu = src_cpu;
   cthread->events[cthread->num_events].data_read.size = size;
   cthread->events[cthread->num_events].data_read.prod_ts = prod_ts;
+  cthread->events[cthread->num_events].data_read.src_addr = (uint64_t)src_addr;
   cthread->events[cthread->num_events].type = WQEVENT_DATA_READ;
-  cthread->events[cthread->num_events].cpu = cthread->cpu;
-  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
-  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
-  cthread->num_events++;
-}
-
-void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr)
-{
-  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
-  cthread->events[cthread->num_events].data_write.size = size;
-  cthread->events[cthread->num_events].data_write.dst_frame_addr = dst_frame_addr;
-  cthread->events[cthread->num_events].type = WQEVENT_DATA_WRITE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
@@ -232,6 +222,8 @@ void trace_runtime_counters(struct wstream_df_thread* cthread)
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_NTCREATE, cthread->tasks_created);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_NTEXEC, cthread->tasks_executed);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_SLAB_REFILLS, cthread->slab_cache->slab_refills);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_REUSE_ADDR, cthread->reuse_addr);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_REUSE_COPY, cthread->reuse_copy);
 
   uint64_t steals = 0;
   for(int level = 0; level < MEM_NUM_LEVELS; level++)
@@ -577,7 +569,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.type = COMM_TYPE_DATA_READ;
 	    dsk_ce.src_or_dst_cpu = th->events[k].data_read.src_cpu;
 	    dsk_ce.size = th->events[k].data_read.size;
-	    dsk_ce.what = th->events[k].active_frame;
+	    dsk_ce.what = th->events[k].data_read.src_addr;
 	    dsk_ce.prod_ts = th->events[k].data_read.prod_ts-min_time;
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
@@ -692,14 +684,34 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
     }
   }
 
+#if 0
   for(i = 0; i < WORKER_STATE_MAX; i++) {
     printf("Overall time for state %s: %lld (%.6f %%)\n",
 	   state_names[i],
 	   state_durations[i],
 	   ((double)state_durations[i] / (double)total_duration)*100.0);
   }
-
+#endif
   fclose(fp);
 }
 
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING
+void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].data_write.size = size;
+  cthread->events[cthread->num_events].data_write.dst_frame_addr = dst_frame_addr;
+  cthread->events[cthread->num_events].type = WQEVENT_DATA_WRITE;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->num_events++;
+}
+#else
+void trace_data_write(void* cthread, unsigned int size, uint64_t dst_frame_addr)
+{
+}
 #endif

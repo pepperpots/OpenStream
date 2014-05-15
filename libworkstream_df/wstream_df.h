@@ -64,6 +64,7 @@ extern void wstream_df_stream_reference (void *, size_t);
 /* Data structures for T*.  */
 /***************************************************************************/
 
+struct wstream_df_view;
 typedef struct wstream_df_view
 {
   /* MUST always be 1st field.  */
@@ -78,6 +79,11 @@ typedef struct wstream_df_view
   /* re-use the dummy view's reached position to store the size of an
      array of views.  */
   size_t reached_position;
+  struct wstream_df_view* reuse_associated_view;
+  struct wstream_df_view* reuse_data_view;
+  struct wstream_df_view* reuse_consumer_view;
+  size_t refcount;
+  struct wstream_df_view* view_chain_next;
 } wstream_df_view_t, *wstream_df_view_p;
 
 /* The stream data structure.  It only relies on two linked lists of
@@ -114,6 +120,15 @@ typedef struct wstream_df_frame
   uint64_t creation_timestamp;
   uint64_t ready_timestamp;
 
+  int bytes_reuse_nodes[MAX_NUMA_NODES];
+  int dominant_input_data_node_id;
+  size_t dominant_input_data_size;
+  int dominant_prematch_data_node_id;
+  size_t dominant_prematch_data_size;
+
+  size_t refcount;
+  wstream_df_view_p input_view_chain;
+  wstream_df_view_p output_view_chain;
   /* Variable size struct */
   //char buf [];
 } wstream_df_frame_t, *wstream_df_frame_p;

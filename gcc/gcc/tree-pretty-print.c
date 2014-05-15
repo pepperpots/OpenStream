@@ -315,6 +315,9 @@ dump_omp_clause (pretty_printer *buffer, tree clause, int spc, int flags)
     case OMP_CLAUSE_OUTPUT:
       name = "output";
       goto print_remap;
+    case OMP_CLAUSE_INOUT_REUSE:
+      name = "inout_reuse";
+      goto print_remap;
     case OMP_CLAUSE_PEEK:
       name = "peek";
       goto print_remap;

@@ -30,6 +30,8 @@ enum runtime_counter_ids {
   RUNTIME_COUNTER_NTCREATE,
   RUNTIME_COUNTER_NTEXEC,
   RUNTIME_COUNTER_SLAB_REFILLS,
+  RUNTIME_COUNTER_REUSE_ADDR,
+  RUNTIME_COUNTER_REUSE_COPY,
   NUM_RUNTIME_COUNTERS
 };
 
@@ -81,6 +83,7 @@ typedef struct worker_event {
       uint32_t src_cpu;
       uint32_t size;
       uint64_t prod_ts;
+      uint64_t src_addr;
     } data_read;
 
     struct {
@@ -127,7 +130,7 @@ void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
 void trace_state_restore(struct wstream_df_thread* cthread);
 void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
 void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame);
-void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts);
+void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts, void* addr);
 void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr);
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
@@ -148,7 +151,8 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 #define trace_steal(cthread, src_worker, src_cpu, size, fp) do { } while(0)
 #define trace_push(cthread, dst_worker, dst_cpu, size, fp) do { } while(0)
 #define trace_state_restore(cthread) do { } while(0)
-#define trace_data_read(cthread, src_cpu, size) do { } while(0)
+#define trace_data_read(cthread, src_cpu, size, prod_ts, addr) do { } while(0)
+void trace_data_write(void* cthread, unsigned int size, uint64_t dst_frame_addr);
 #define trace_counter(cthread, counter_id, value) do { } while(0)
 #define trace_frame_info(cthread, frame) do { } while(0)
 

@@ -27,6 +27,16 @@
 //#define PUSH_STRATEGY_OWNER
 #define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
 
+#define DEPENDENCE_AWARE_ALLOC
+
+#define TOPOLOGY_AWARE_WORKSTEALING
+
+#define REUSE_COPY_ON_NODE_CHANGE
+
+//#define PAPI_L1
+//#define PAPI_L2
+//#define PAPI_L3_RAM
+
 #define NUM_PUSH_REORDER_SLOTS 0
 #define ALLOW_PUSH_REORDER (ALLOW_PUSHES && NUM_PUSH_REORDER_SLOTS > 0)
 
@@ -44,16 +54,46 @@
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
-#define WS_PAPI_PROFILE
-#define WS_PAPI_MULTIPLEX
+#if defined(PAPI_L1) || defined(PAPI_L2) || defined (PAPI_L3_RAM)
+  #define WS_PAPI_PROFILE
+#endif
+
+//#define WS_PAPI_MULTIPLEX
 
 #ifdef WS_PAPI_PROFILE
 
-#define WS_PAPI_NUM_EVENTS 2
-#define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_L2_DCM"}
-//#define WS_PAPI_EVENTS { "L3_CACHE_MISSES", "DRAM_ACCESSES", "CPU_IO_REQUESTS_TO_MEMORY_IO" }
-//#define WS_PAPI_UNCORE 1
-//#define WS_PAPI_UNCORE_MASK { 0x0101010101010101, 0x0101010101010101, 0x0101010101010101 }
+/* //MISPRED */
+/* #define WS_PAPI_NUM_EVENTS 1 */
+/* #define WS_PAPI_EVENTS { "PAPI_BR_MSP" } */
+/* #define WS_PAPI_UNCORE 0 */
+/* #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore" */
+
+#ifdef PAPI_L1
+  //L1
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_l1_DCA" }
+  #define WS_PAPI_UNCORE 0
+  #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore"
+#endif
+
+#ifdef PAPI_L2
+  //L2
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "PAPI_L2_DCM", "PAPI_l2_DCA" }
+  #define WS_PAPI_UNCORE 0
+  #define WS_PAPI_UNCORE_MASK { 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF }
+  #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore"
+#endif
+
+#ifdef PAPI_L3_RAM
+  // L3
+  #define WS_PAPI_NUM_EVENTS 4
+  //#define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_TOT_CYC", "PAPI_L2_DCM" }
+  #define WS_PAPI_EVENTS {  /* "PAPI_L2_DCM", "PAPI_L2_DCA", */ /* "PAPI_BR_MSP", "PAPI_STL_ICY", */  "CPU_IO_REQUESTS_TO_MEMORY_IO:LOCAL_CPU_TO_REMOTE_MEM", "CPU_IO_REQUESTS_TO_MEMORY_IO:LOCAL_CPU_TO_LOCAL_MEM", "READ_REQUEST_TO_L3_CACHE:ALL", "L3_CACHE_MISSES:ALL" }
+  #define WS_PAPI_UNCORE 1
+  #define WS_PAPI_UNCORE_MASK { /* 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF */ 0x0101010101010101, 0x0101010101010101, 0x0101010101010101 , 0x0101010101010101 }
+  #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore"
+#endif
 
 #define MEM_CACHE_MISS_POS 0 /* Use L1_DCM as cache miss indicator */
 
@@ -75,7 +115,7 @@
  * 4: 32 Cores from NUMA domain at a distance of 1 hop
  * 5: 24 Cores from NUMA domain at a distance of 2 hops
  */
-static inline int mem_cores_at_level(unsigned int level)
+static inline int mem_cores_at_level(unsigned int level, unsigned int cpu)
 {
 	int cores_at_level[] = {1, 2, 8, 8, 32, 24, 64};
 	assert(level < MEM_NUM_LEVELS);
@@ -123,6 +163,25 @@ static inline int mem_numa_num_hops(unsigned int a, unsigned int b)
 	}
 
 	return 0;
+}
+
+static inline void mem_score_nodes(int* bytes, int* scores, int num_nodes)
+{
+	/* Distance matrix as reported by numactl --hardware */
+	static int node_distances[8][8] = {
+		{10, 16, 16, 22, 16, 22, 16, 22},
+		{16, 10, 22, 16, 22, 16, 22, 16},
+		{16, 22, 10, 16, 16, 22, 16, 22},
+		{22, 16, 16, 10, 22, 16, 22, 16},
+		{16, 22, 16, 22, 10, 16, 16, 22},
+		{22, 16, 22, 16, 16, 10, 22, 16},
+		{16, 22, 16, 22, 16, 22, 10, 16},
+		{22, 16, 22, 16, 22, 16, 16, 10}
+	};
+
+	for(int i = 0; i < num_nodes; i++)
+		for(int j = 0; j < num_nodes; j++)
+			scores[i] += bytes[j]*node_distances[i][j];
 }
 
 /* Enumerates all cores of a NUMA node */
@@ -182,8 +241,8 @@ static inline int mem_level_siblings(unsigned int level, unsigned int a, unsigne
 		case 1:
 		case 2:
 		case 3:
-			return (a / mem_cores_at_level(level)) ==
-				(b / mem_cores_at_level(level));
+			return (a / mem_cores_at_level(level, a)) ==
+				(b / mem_cores_at_level(level, b));
 		case 4: return (mem_numa_num_hops(a, b) == 1);
 		case 5: return (mem_numa_num_hops(a, b) == 2);
 		case 6: return 1;
@@ -219,20 +278,20 @@ static inline int mem_transfer_costs(unsigned int a, unsigned int b)
 
 static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int base = cpu - (cpu % mem_cores_at_level(level));
+	unsigned int base = cpu - (cpu % mem_cores_at_level(level, cpu));
 	unsigned int sibling = base + sibling_num;
 
 	if(sibling == cpu)
-		return base + (((sibling_num + 1) % mem_cores_at_level(level)));
+		return base + (((sibling_num + 1) % mem_cores_at_level(level, cpu)));
 
 	return sibling;
 }
 
 static inline int mem_nth_machine_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int sibling = sibling_num % mem_cores_at_level(6);
+	unsigned int sibling = sibling_num % mem_cores_at_level(6, cpu);
 	if(sibling == cpu)
-		return (sibling_num + 1) % mem_cores_at_level(6);
+		return (sibling_num + 1) % mem_cores_at_level(6, cpu);
 
 	return sibling;
 }
@@ -261,11 +320,12 @@ static inline int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu,
 /* Returns how many steal attempts at a given level should be performed. */
 static inline int mem_num_steal_attempts_at_level(unsigned int level)
 {
+#ifdef TOPOLOGY_AWARE_WORKSTEALING
 	int steals_at_level[] = {0, 2, 8, 0, 1, 1, 1};
-
+#else
 	/* Configuration for complete random work-stealing */
-	/* int steals_at_level[] = {0, 0, 0, 0, 0, 0, 1}; */
-
+	int steals_at_level[] = {0, 0, 0, 0, 0, 0, 1};
+#endif
 	assert(level < MEM_NUM_LEVELS);
 	return steals_at_level[level];
 }
@@ -312,7 +372,8 @@ static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* by
 }
 
 #ifdef WS_PAPI_PROFILE
-#define mem_cache_misses(th) ((th)->papi_counters[MEM_CACHE_MISS_POS])
+#define mem_cache_misses(th) rdtsc()
+//((th)->papi_counters[MEM_CACHE_MISS_POS])
 #else
 #define mem_cache_misses(th) 0
 #endif

@@ -2230,15 +2230,15 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 
 		  gcc_assert (TREE_CODE (view) == VAR_DECL);
 
-		  /* A view struct currently contains 3 integers and 4
+		  /* A view struct currently contains 4 integers and 8
 		     pointers.  This ugly size evaluation should be
 		     replaced with something less fragile.  */
 		  t1 = fold_build2 (MULT_EXPR, size_type_node,
 				    TYPE_SIZE_UNIT (size_type_node),
-				    size_int (3));
+				    size_int (4));
 		  t2 = fold_build2 (MULT_EXPR, size_type_node,
 				    TYPE_SIZE_UNIT (ptr_type_node),
-				    size_int (4));
+				    size_int (8));
 		  view_struct_size = fold_build2 (PLUS_EXPR, size_type_node,
 						  t1, t2);
 		  offset = fold_build2 (MULT_EXPR, size_type_node,
@@ -6252,6 +6252,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 
 	case OMP_CLAUSE_INPUT:
 	case OMP_CLAUSE_OUTPUT:
+	case OMP_CLAUSE_INOUT_REUSE:
 	  break;
 
 	case OMP_CLAUSE_PEEK:
@@ -6495,6 +6496,7 @@ gimplify_adjust_omp_clauses (tree *list_p)
 
 	case OMP_CLAUSE_INPUT:
 	case OMP_CLAUSE_OUTPUT:
+	case OMP_CLAUSE_INOUT_REUSE:
 	case OMP_CLAUSE_REDUCTION:
 	case OMP_CLAUSE_COPYIN:
 	case OMP_CLAUSE_COPYPRIVATE:
@@ -6582,7 +6584,8 @@ gimplify_omp_task (tree *expr_p, gimple_seq *pre_p)
        clauses; clauses = OMP_CLAUSE_CHAIN (clauses))
     {
       if (OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_INPUT
-	  || OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_OUTPUT)
+	  || OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_OUTPUT
+	  || OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_INOUT_REUSE)
 	{
 	  tree stream_id = OMP_CLAUSE_STREAM_ID (clauses);
 	  tree decl = OMP_CLAUSE_VIEW_ID (clauses);

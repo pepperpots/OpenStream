@@ -246,6 +246,9 @@ init_wqueue_counters (wstream_df_thread_p th)
 	memset(th->pushes_mem, 0, sizeof(th->pushes_mem));
 #endif
 
+	th->reuse_addr = 0;
+	th->reuse_copy = 0;
+
 	init_papi(th);
 }
 
