@@ -248,6 +248,59 @@ pthread_spin_lock(&slab_cache->locks[idx]);
 pthread_spin_unlock(&slab_cache->locks[idx]);
 }
 
+static inline void
+slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, int node)
+{
+  const unsigned int slab_size = 1 << idx;
+  unsigned int i;
+  slab_p s;
+  void* alloc = NULL;
+  slab_metainfo_p metainfo;
+
+  int alloc_size = num_slabs * (slab_size + __slab_metainfo_size);
+
+
+  assert (!posix_memalign (&alloc,
+			   __slab_align,
+			   alloc_size));
+
+  unsigned long nodemask = (1 << node);
+  if(mbind((void*)((long)alloc & ~(0xFFF)), alloc_size, MPOL_BIND, &nodemask, MAX_NUMA_NODES+1, MPOL_MF_MOVE) != 0) {
+	  fprintf(stderr, "mbind error:\n");
+	  perror("mbind");
+	  exit(1);
+  }
+
+  memset(alloc, 0, alloc_size);
+
+  slab_p new_head = (slab_p)(((char*)alloc) + __slab_metainfo_size);
+
+  s = new_head;
+  for (i = 0; i < num_slabs; ++i)
+    {
+      metainfo = slab_metainfo(s);
+      slab_metainfo_init(slab_cache, metainfo);
+
+      if(i == num_slabs-1) {
+	s->next = slab_cache->slab_free_pool[idx];
+      } else {
+	s->next = (slab_p) (((char *) s) + slab_size + __slab_metainfo_size);
+	s = s->next;
+      }
+    }
+
+  slab_cache->num_objects += num_slabs;
+  slab_cache->slab_free_pool[idx] = new_head;
+}
+
+static inline void
+slab_warmup_size (slab_cache_p slab_cache, unsigned int size, unsigned int num_slabs, int node)
+{
+  unsigned int idx = get_slab_index (size);
+  slab_warmup(slab_cache, idx, num_slabs, node);
+}
+
+
 static inline void *
 slab_alloc (slab_cache_p slab_cache, unsigned int size)
 {
