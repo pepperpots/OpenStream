@@ -111,6 +111,34 @@ static inline void compare_halves(key_t* top, key_t* bottom, long num_keys)
 		cmpxchg(&top[i], &bottom[i]);
 }
 
+void quicksort_block(key_t* keys, long num_keys)
+{
+	if (num_keys < 2)
+		return;
+
+	key_t pivot = keys[num_keys / 2];
+	int left_idx = 0;
+	int right_idx = num_keys - 1;
+
+	while (left_idx <= right_idx) {
+		if (keys[left_idx] < pivot) {
+			left_idx++;
+		} else if (keys[right_idx] > pivot) {
+			right_idx--;
+		} else {
+			key_t tmp = keys[left_idx];
+			keys[left_idx] = keys[right_idx];
+			keys[right_idx] = tmp;
+
+			left_idx++;
+			right_idx--;
+		}
+	}
+
+	quicksort_block(keys, right_idx + 1);
+	quicksort_block(&keys[left_idx],  num_keys - left_idx);
+}
+
 /* Performs a sequential merge sort on the keys in keys_in and
  * writes the result to keys_out.
  */
