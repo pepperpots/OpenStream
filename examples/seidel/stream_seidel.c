@@ -178,6 +178,11 @@ main (int argc, char **argv)
 
     posix_memalign ((void**) &(data), 128, sizeof(double[N][N]));
 
+    if(wstream_df_interleave_data(data, N*N*sizeof(double))) {
+	    fprintf(stderr, "Error interleaving data\n");
+	    exit(1);
+    }
+
     for (i = 0; i < N; ++i)
       for (j = 0; j < N; ++j)
 	data[N*i + j] = ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
