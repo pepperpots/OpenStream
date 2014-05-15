@@ -21,5 +21,8 @@ clean:
 cilk_cholesky: cilk_cholesky.cilk  ../common/common.c
 	$(CILKC) -I$(CBLAS_INC_DIR) -O2 $^ -o $@ -lm -lc -llapack -lblas -lcblas -L$(LAPACK_LIB_DIR) $(LD_RPATH_FLAGS) -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200809L
 
+openmp_%_interleaved: openmp_%.c ../common/common.c ../../libworkstream_df/interleave.c
+	$(PLAIN_GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -llapack -lblas -lcblas $(LD_RPATH_FLAGS) -I../../install/include/ -L../../install/lib64 -lnuma
+
 openmp_%: openmp_%.c ../common/common.c
-	$(PLAIN_GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -llapack -lblas -lcblas $(LD_RPATH_FLAGS)
+	$(PLAIN_GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -llapack -lblas -lcblas $(LD_RPATH_FLAGS) -I../../install/include/ -L../../install/lib64 -lnuma
