@@ -168,5 +168,11 @@ static inline void mergesort_block(key_t* keys_in, key_t* keys_out, long num_key
 		memcpy(keys_out, keys_in, num_keys*sizeof(key_t));
 }
 
+void quicksort_block_oop(key_t* keys_in, key_t* keys_out, long num_keys)
+{
+	quicksort_block(keys_in, num_keys/2);
+	quicksort_block(&keys_in[num_keys/2], num_keys/2);
+	mergesort_merge(keys_in, &keys_in[num_keys/2], keys_out, num_keys/2);
+}
 
 #endif

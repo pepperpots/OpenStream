@@ -132,7 +132,7 @@ void create_init_sort_task(int task_num)
 	#pragma omp task input(streams[task_num] >> top_in[block_size]) \
 			output(streams[task_num+num_blocks] << top_out[block_size])
 	{
-		mergesort_block(top_in, top_out, block_size);
+		quicksort_block_oop(top_in, top_out, block_size);
 
 		if(num_par_stages > 0) {
 			create_atomic_compare_half_task(0, 0, task_num / 2, task_num % 2);
