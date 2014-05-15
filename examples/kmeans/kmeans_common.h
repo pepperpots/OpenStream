@@ -21,8 +21,10 @@
 #define DEFAULT_K_MAX 13
 #define DEFAULT_NUM_DIMS 3
 #define DEFAULT_NUM_POINTS 10000
-#define DEFAULT_MAX_ITER 500
+#define DEFAULT_MAX_ITER 100
 #define DEFAULT_THRESHOLD 0.001
+#define DEFAULT_BLOCK_SIZE (1 << 18)
+#define DEFAULT_FAN 8
 
 float frand(void);
 void init_membership(int n, int* membership);
