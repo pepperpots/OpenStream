@@ -87,3 +87,7 @@ examples/mergesort/stream_df_mergesort
 *.c.*t*
 *.kdbgrc*
 tmp/
+*.ost
+*.dot
+*.pdf
+*.svg
