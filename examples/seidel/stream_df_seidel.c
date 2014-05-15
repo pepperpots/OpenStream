@@ -33,12 +33,42 @@ void* sleft_ref;
 void* sright_ref;
 void* sbottom_ref;
 void* scenter_ref;
+void* sdfbarrier_ref;
 
-void gauss_seidel_df(int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y,
-		     double* left_in, double* top_in,
+void gauss_seidel_df(int block_size, double* left_in, double* top_in,
 		     double* bottom_in, double* right_in, double* center_in,
 		     double* left_out, double* top_out, double* bottom_out,
 		     double* right_out, double* center_out);
+
+void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y);
+void create_terminal_task(double* matrix, int N, int numiters, int block_size, int id_x, int id_y);
+
+void create_iter_followup_task(double* matrix, int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y)
+{
+	int N = blocks_x * block_size;
+
+	/* Recursively create a new task for this block.
+	 * Note that the task for the next iteration directly depends of
+	 * center_out. Therefore, the task to be created cannot be the one
+	 * for the next iteration. The minimal distance is two.
+	 */
+	if(it+2 < numiters)
+		create_next_iteration_task(matrix, blocks_x, blocks_y, block_size, numiters, it+2, id_x, id_y);
+
+	if(it == numiters-2)
+		create_terminal_task(matrix, N, numiters, block_size, id_x, id_y);
+}
+
+void create_init_followup_task(double* matrix, int blocks_x, int blocks_y, int block_size, int numiters, int id_x, int id_y)
+{
+	int N = blocks_x * block_size;
+
+	if(numiters > 2)
+		create_next_iteration_task(matrix, blocks_x, blocks_y, block_size, numiters, 1, id_x, id_y);
+
+	if(numiters == 2)
+		create_terminal_task(matrix, N, numiters, block_size, id_x, id_y);
+}
 
 /* Creates a new task for the next iteration.
  * Input and output dependencies are automatically determined from the
@@ -50,7 +80,7 @@ void gauss_seidel_df(int blocks_x, int blocks_y, int block_size, int numiters, i
  * it: iteration of the task to be created
  * id_x, id_y: horizontal / vertical position of the block within the matrix
  */
-void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y)
+void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y)
 {
 	/* Arrays used to access the data from the streams */
 	double top_in[block_size];
@@ -79,9 +109,9 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sright_ref [(it+1)*blocks+id] << right_out[block_size], \
 			       scenter_ref[(it+1)*blocks+id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
-					NULL, NULL, bottom_in, right_in, center_in,
+			gauss_seidel_df(block_size, NULL, NULL, bottom_in, right_in, center_in,
 					NULL, NULL, bottom_out, right_out, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == 0 && id_x < blocks_x-1) {
 		/* Block in the top row, but not in a corner */
@@ -94,9 +124,9 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sright_ref [(it+1)*blocks+id] << right_out[block_size], \
 			       scenter_ref[(it+1)*blocks+id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
-					left_in, NULL, bottom_in, right_in, center_in,
+			gauss_seidel_df(block_size, left_in, NULL, bottom_in, right_in, center_in,
 					left_out, NULL, bottom_out, right_out, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == 0 && id_x == blocks_x-1) {
 		/* Upper right corner */
@@ -107,9 +137,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sleft_ref  [(it+1)*blocks + id] << left_out[block_size],	\
 			       scenter_ref[(it+1)*blocks + id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					left_in, NULL, bottom_in, NULL, center_in,
 					left_out, NULL, bottom_out, NULL, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_x == 0 && id_y < blocks_y-1) {
 		/* Block in the leftmost column, but not in a corner */
@@ -122,9 +153,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[block_size], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					NULL, top_in, bottom_in, right_in, center_in,
 					NULL, top_out, bottom_out, right_out, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_x == 0 && id_y == blocks_y-1) {
 		/* Lower left corner */
@@ -135,9 +167,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[block_size], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					NULL, top_in, NULL, right_in,
 					center_in, NULL, top_out, NULL, right_out, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
 		/* Block in the lowest row, but not in a corner */
@@ -150,9 +183,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[block_size], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					left_in, top_in, NULL, right_in, center_in,
 					left_out, top_out, NULL, right_out, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
 		/* Lower right corner */
@@ -163,9 +197,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sleft_ref[(it+1)*blocks+id] << left_out[block_size], \
 			       scenter_ref[(it+1)*blocks+id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					left_in, top_in, NULL, NULL, center_in,
 					left_out, top_out, NULL, NULL, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
 		/* Block in the rightmost column, but not in a corner */
@@ -178,9 +213,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sleft_ref  [(it+1)*blocks + id] << left_out[block_size],	\
 			       scenter_ref[(it+1)*blocks + id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					left_in, top_in, bottom_in, NULL, center_in,
 					left_out, top_out, bottom_out, NULL, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else {
 		/* Block somewhere in the center, not touching any border*/
@@ -195,9 +231,10 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[block_size], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[block_size*block_size])
 		{
-			gauss_seidel_df(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y,
+			gauss_seidel_df(block_size,
 					left_in, top_in, bottom_in, right_in, center_in,
 					left_out, top_out, bottom_out, right_out, center_out);
+			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	}
 }
@@ -239,8 +276,7 @@ void create_next_iteration_task(int blocks_x, int blocks_y, int block_size, int 
  * blocks on the left of the matrix; top_out is NULL for blocks
  * at the top of the matrix).
  */
-void gauss_seidel_df(int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y,
-		     double* left_in, double* top_in,
+void gauss_seidel_df(int block_size, double* left_in, double* top_in,
 		     double* bottom_in, double* right_in, double* center_in,
 		     double* left_out, double* top_out, double* bottom_out,
 		     double* right_out, double* center_out)
@@ -293,14 +329,6 @@ void gauss_seidel_df(int blocks_x, int blocks_y, int block_size, int numiters, i
 			center_out[y*block_size+x] = new_val;
 		}
 	}
-
-	/* Recursively create a new task for this block.
-	 * Note that the task for the next iteration directly depends of
-	 * center_out. Therefore, the task to be created cannot be the one
-	 * for the next iteration. The minimal distance is two.
-	 */
-	if(it+2 < numiters)
-		create_next_iteration_task(blocks_x, blocks_y, block_size, numiters, it+2, id_x, id_y);
 }
 
 
@@ -414,15 +442,11 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 {
 	int blocks_x = N / block_size;
 	int blocks_y = N / block_size;
-	int blocks = blocks_x * blocks_y;
 
 	/* Arrays used to access the data from the streams at
 	 * initialization / termination */
-	double top_in[block_size];
 	double top_out[block_size];
-	double left_in[block_size];
 	double left_out[block_size];
-	double center_in[block_size*block_size];
 	double center_out[block_size*block_size];
 
 	int id = id_y*blocks_x + id_x;
@@ -433,6 +457,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     NULL, NULL, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_y == 0 && id_x < blocks_x-1) {
 		/* Upper row, but not in a corner  */
@@ -441,6 +466,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     left_out, NULL, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_y == 0 && id_x == blocks_x-1) {
 		/* Upper right corner */
@@ -449,6 +475,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     left_out, NULL, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_x == 0 && id_y < blocks_y-1) {
 		/* Left row, but not in a corner*/
@@ -457,6 +484,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     NULL, top_out, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_x == 0 && id_y == blocks_y-1) {
 		/* Lower left corner */
@@ -465,6 +493,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     NULL, top_out, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
 		/* Lower row, but not in a corner */
@@ -474,6 +503,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     left_out, top_out, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
 		/* Lower right corner */
@@ -483,6 +513,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     left_out, top_out, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
 		/* Right row, but not in a corner */
@@ -492,6 +523,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     left_out, top_out, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	} else {
 		/* Block in the center */
@@ -501,6 +533,7 @@ void create_initial_task(double* matrix, int N, int numiters, int block_size, in
 		{
 			gauss_seidel_df_init(matrix, id_x, id_y, N, block_size,
 					     left_out, top_out, NULL, NULL, center_out);
+			create_init_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, id_x, id_y);
 		}
 	}
 }
@@ -516,17 +549,16 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 	/* Arrays used to access the data from the streams at
 	 * initialization / termination */
 	double top_in[block_size];
-	double top_out[block_size];
 	double left_in[block_size];
-	double left_out[block_size];
 	double center_in[block_size*block_size];
-	double center_out[block_size*block_size];
+	int token[1];
 
 	int id = id_y*blocks_x + id_x;
 
 	/* Upper left corner */
 	if(id_y == 0 && id_x == 0) {
-		#pragma omp task input(scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		#pragma omp task input(scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       NULL, NULL, NULL, NULL, center_in);
@@ -534,7 +566,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 	} else if(id_y == 0 && id_x < blocks_x-1) {
 		/* Upper row, but not in a corner  */
 		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       left_in, NULL, NULL, NULL, center_in);
@@ -542,7 +575,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 	} else if(id_y == 0 && id_x == blocks_x-1) {
 		/* Upper right corner */
 		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       left_in, NULL, NULL, NULL, center_in);
@@ -550,7 +584,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 	} else if(id_x == 0 && id_y < blocks_y-1) {
 		/* Left row, but not in a corner*/
 		#pragma omp task input(stop_ref[numiters*blocks+id] >> top_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       NULL, top_in, NULL, NULL, center_in);
@@ -558,7 +593,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 	} else if(id_x == 0 && id_y == blocks_y-1) {
 		/* Lower left corner */
 		#pragma omp task input(stop_ref[numiters*blocks+id] >> top_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       NULL, top_in, NULL, NULL, center_in);
@@ -567,7 +603,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 		/* Lower row, but not in a corner */
 		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
 		       stop_ref[numiters*blocks+id] >> top_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       left_in, top_in, NULL, NULL, center_in);
@@ -576,7 +613,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 		/* Lower right corner */
 		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
 		       stop_ref[numiters*blocks+id] >> top_in[block_size],	\
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       left_in, top_in, NULL, NULL, center_in);
@@ -585,7 +623,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 		/* Right row, but not in a corner */
 		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
 		       stop_ref[numiters*blocks+id] >> top_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       left_in, top_in, NULL, NULL, center_in);
@@ -594,7 +633,8 @@ void create_terminal_task(double* matrix, int N, int numiters, int block_size, i
 		/* Block in the center */
 		#pragma omp task input(sleft_ref[numiters*blocks+id] >> left_in[block_size], \
 		       stop_ref[numiters*blocks+id] >> top_in[block_size], \
-		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size])
+		       scenter_ref[numiters*blocks+id] >> center_in[block_size*block_size]) \
+			output(sdfbarrier_ref[0] << token[1])
 		{
 			gauss_seidel_df_finish(matrix, id_x, id_y, N, block_size,
 					       left_in, top_in, NULL, NULL, center_in);
@@ -657,6 +697,11 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
+	if(numiters < 2) {
+		fprintf(stderr, "Minimum number of iterations is 2.\n");
+		exit(1);
+	}
+
 	double* matrix = malloc(N*N*sizeof(double));
 
 	if(wstream_df_interleave_data(matrix, N*N*sizeof(double))) {
@@ -679,6 +724,7 @@ int main(int argc, char** argv)
 	double sright[(numiters+1)*blocks] __attribute__((stream));
 	double sbottom[(numiters+1)*blocks] __attribute__((stream));
 	double scenter[(numiters+1)*blocks] __attribute__((stream));
+	int sdfbarrier[1] __attribute__((stream));
 
 	/* As tasks are created recursively, a stream reference has to be
 	 * passed to the tasks. This could be done using a stream in
@@ -693,6 +739,7 @@ int main(int argc, char** argv)
 	sright_ref = malloc((numiters+1)*blocks * sizeof (void *));
 	sbottom_ref = malloc((numiters+1)*blocks * sizeof (void *));
 	scenter_ref = malloc((numiters+1)*blocks * sizeof (void *));
+	sdfbarrier_ref = malloc(sizeof (void *));
 
 	/* Copy the local table into the global one */
 	memcpy (stop_ref, stop, (numiters+1)*blocks * sizeof (void *));
@@ -700,6 +747,7 @@ int main(int argc, char** argv)
 	memcpy (sright_ref, sright, (numiters+1)*blocks * sizeof (void *));
 	memcpy (sbottom_ref, sbottom, (numiters+1)*blocks * sizeof (void *));
 	memcpy (scenter_ref, scenter, (numiters+1)*blocks * sizeof (void *));
+	memcpy (sdfbarrier_ref, sdfbarrier, sizeof (void *));
 
 	if(res_file == NULL)
 		res_file = fopen("stream_df_seidel.out", "w");
@@ -719,35 +767,38 @@ int main(int argc, char** argv)
 	 * are less than two iterations altogether, then only one initial task
 	 * per block has to be created.
 	 */
-	int init_iter = (numiters > 1) ? 2 : numiters;
 
 	/* Create tasks that initialize the streams and those that
 	 * read the final value from the streams. The order in which
 	 * The per-block tasks are created is diagonal in order to
 	 * unblock tasks as soon as possible.
 	 */
-	for(int it = 0; it < init_iter; it++) {
-		for(int x = 0; x < blocks_x; x++) {
-			int max_outer_y = (x == blocks_x-1) ? blocks_y : 1;
-			for(int outer_y = 0; outer_y < max_outer_y; outer_y++) {
-				int xadd = (x == blocks_x-1) ? outer_y : 0;
-				for(int y = outer_y; y < blocks_y && y <= x+xadd; y++) {
-					int id_x = x-y+xadd;
-					int id_y = y;
 
-					if(it == 0)
-						create_initial_task(matrix, N, numiters, block_size, id_x, id_y);
+	int tasks_per_block = int_min(blocks_x, 4);
 
-					create_next_iteration_task(blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
-
-					if(it == init_iter-1)
-						create_terminal_task(matrix, N, numiters, block_size, id_x, id_y);
+	for(int id_x = 0; id_x < blocks_x; id_x++) {
+		for(int oid_y = 0; oid_y < blocks_x; oid_y += tasks_per_block) {
+			#pragma omp task
+			{
+				for(int id_y = oid_y; id_y < oid_y + tasks_per_block; id_y++) {
+					create_initial_task(matrix, N, numiters, block_size, id_x, id_y);
+					create_next_iteration_task(matrix, blocks_x, blocks_y, block_size, numiters, 0, id_x, id_y);
 				}
 			}
 		}
 	}
 
+	if(numiters < 2)
+		for(int id_x = 0; id_x < blocks_x; id_x++)
+			for(int id_y = 0; id_y < blocks_x; id_y++)
+				create_terminal_task(matrix, N, numiters, block_size, id_x, id_y);
+
 	/* Wait for all the tasks to finish */
+	int dfbarrier_tokens[blocks];
+	#pragma omp task input(sdfbarrier_ref[0] >> dfbarrier_tokens[blocks])
+	{
+	}
+
 	#pragma omp taskwait
 
 	openstream_pause_hardware_counters();
@@ -772,6 +823,7 @@ int main(int argc, char** argv)
 	free(sright_ref);
 	free(sbottom_ref);
 	free(scenter_ref);
+	free(sdfbarrier_ref);
 
 	return 0;
 }

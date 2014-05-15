@@ -16,4 +16,12 @@ static inline int double_equal (double a, double b)
     return (fabs (a - b) / fabs(a) < 5e-5);
 }
 
+static inline int int_min(int a, int b)
+{
+  if(a < b)
+    return a;
+
+  return b;
+}
+
 #endif
