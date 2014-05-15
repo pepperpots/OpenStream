@@ -28,6 +28,7 @@
 
 void** streams;
 void** end_streams;
+void** dfbarrier_stream;
 
 /* log2 of the number of keys to sort */
 long num_keys_log;
@@ -142,8 +143,10 @@ void create_init_sort_task(int task_num)
 void create_terminal_task(int task_num)
 {
 	key_t top_in[block_size];
+	int token[1];
 
-	#pragma omp task input(streams[num_total_streams - num_blocks + task_num] >> top_in[block_size])
+	#pragma omp task input(streams[num_total_streams - num_blocks + task_num] >> top_in[block_size]) \
+		output(dfbarrier_stream[0] << token[1])
 	{
 		memcpy(&keys[task_num*block_size], top_in, block_size*sizeof(key_t));
 	}
@@ -349,6 +352,10 @@ int main(int argc, char** argv)
 	end_streams = malloc(num_blocks*sizeof(void*));
 	memcpy(end_streams, lend_streams, num_blocks*sizeof(void*));
 
+	int ldfbarrier_stream[1] __attribute__((stream));
+	dfbarrier_stream = malloc(sizeof(void*));
+	memcpy(dfbarrier_stream, ldfbarrier_stream, sizeof(void*));
+
 	/* Initialize input array with random keys */
 	init_sequence(keys, num_keys);
 
@@ -357,10 +364,21 @@ int main(int argc, char** argv)
 	gettimeofday (&start, NULL);
 	openstream_start_hardware_counters();
 
-	for(int i = 0; i < num_blocks; i++) {
-		create_init_task(i);
-		create_init_sort_task(i);
-		create_terminal_task(i);
+	int num_at_once = 8;
+	for(int ii = 0; ii < num_blocks/num_at_once; ii++) {
+		#pragma omp task
+		{
+			for(int i = 0; i < num_at_once; i++) {
+				create_init_task(ii*num_at_once+i);
+				create_init_sort_task(ii*num_at_once+i);
+				create_terminal_task(ii*num_at_once+i);
+			}
+		}
+	}
+
+	int tokens[num_blocks];
+	#pragma omp task input(dfbarrier_stream[0] >> tokens[num_blocks])
+	{
 	}
 
 	#pragma omp taskwait
@@ -379,6 +397,7 @@ int main(int argc, char** argv)
 	free(keys);
 	free(streams);
 	free(end_streams);
+	free(dfbarrier_stream);
 
 	return 0;
 }
