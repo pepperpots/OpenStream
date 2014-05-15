@@ -706,8 +706,9 @@ int main(int argc, char** argv)
 
 	/* Init matrix: M[24,24] = M[N-24,N-24] = 500.0
 	 * (same data as in the sequential version */
-	matrix[24*N+24] = 500.0;
-	matrix[(N-24)*N+(N-24)] = 500.0;
+	for (int i = 0; i < N; ++i)
+		for (int j = 0; j < N; ++j)
+			matrix[N*i + j] = ((i == 25 && j == 25) || (i == N-25 && j == N-25)) ? 500 : 0; //(i*7 +j*13) % 17;
 
 	gettimeofday(&start, NULL);
 	openstream_start_hardware_counters();
