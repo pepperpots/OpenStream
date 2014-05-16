@@ -267,6 +267,12 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   int max_data;
   size_t data[MAX_NUMA_NODES];
   wstream_df_numa_node_p numa_node;
+  unsigned int rand_idx;
+
+#if defined(PUSH_EQUAL_RANDOM)
+    size_t others[MAX_NUMA_NODES];
+    int num_others = 0;
+#endif
 
   /* Overhead for pushing small frames is too high */
   if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
@@ -288,12 +294,36 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   max_data = data[cthread->numa_node->id];
   numa_node_id = cthread->numa_node->id;
 
+#if defined(PUSH_EQUAL_SEQ)
   for(int i = 0; i < MAX_NUMA_NODES; i++) {
-    if(data[i] > max_data) {
+    if((int)data[i] > max_data) {
       max_data = data[i];
       numa_node_id = i;
     }
   }
+#elif defined(PUSH_EQUAL_RANDOM)
+  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+    if((int)data[i] > max_data)
+      others[num_others++] = i;
+
+    if((int)data[i] > max_data) {
+      max_data = data[i];
+      numa_node_id = i;
+      num_others = 0;
+    }
+  }
+
+  if(numa_node_id != cthread->numa_node->id && num_others)
+    {
+      others[num_others++] = numa_node_id;
+      rand_idx = prng_nextn(&cthread->rands, num_others);
+      numa_node_id = others[rand_idx];
+    }
+#else
+  #ifdef ALLOW_PUSHES
+    #error "No strategy defined for nodes with the same push score!"
+  #endif
+#endif
 
   if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
@@ -302,7 +332,7 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
     max_worker = numa_node->workers[rand_idx]->worker_id;
   } else if(cthread->numa_node->id == numa_node_id) {
     /* Node unknown, use local worker by default */
-      get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
+      get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data, numa_node_id);
 
       /* By default the current worker is suited best */
       if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {

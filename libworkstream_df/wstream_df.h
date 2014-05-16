@@ -232,4 +232,7 @@ int cpu_used(int cpu);
 void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 		    unsigned int* max_worker, int* max_data);
 
+void get_max_worker_same_node(int* bytes_cpu, unsigned int num_workers,
+			      unsigned int* pmax_worker, int* pmax_data,
+			      int numa_node_id);
 #endif
