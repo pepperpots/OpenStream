@@ -36,12 +36,16 @@ void
 update_papi(struct wstream_df_thread* th);
 
 void
+update_papi_timestamp(struct wstream_df_thread* th, int64_t timestamp);
+
+void
 init_papi(struct wstream_df_thread* th);
 #else
 #define WSTREAM_DF_THREAD_PAPI_FIELDS
 #define setup_papi() do { } while(0)
 #define init_papi(th) do { } while(0)
 #define update_papi(th) do { } while(0)
+#define update_papi_timestamp(th, ts) do { } while(0)
 #endif
 
 #if WQUEUE_PROFILE 

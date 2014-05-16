@@ -36,7 +36,7 @@ enum runtime_counter_ids {
 };
 
 typedef struct worker_event {
-  uint64_t time;
+  int64_t time;
   uint32_t type;
   uint32_t cpu;
   uint64_t active_task;
@@ -133,6 +133,7 @@ void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsi
 void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts, void* addr);
 void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr);
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
+void trace_counter_timestamp(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value, int64_t timestamp);
 void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
@@ -154,6 +155,7 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 #define trace_data_read(cthread, src_cpu, size, prod_ts, addr) do { } while(0)
 void trace_data_write(void* cthread, unsigned int size, uint64_t dst_frame_addr);
 #define trace_counter(cthread, counter_id, value) do { } while(0)
+#define trace_counter_timestamp(cthread, counter_id, value, timestamp) do { } while(0)
 #define trace_frame_info(cthread, frame) do { } while(0)
 
 #define dump_events_ostv(num_workers, wstream_df_worker_threads) do { } while(0)

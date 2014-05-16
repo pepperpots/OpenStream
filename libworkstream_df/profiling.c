@@ -189,7 +189,7 @@ init_papi (wstream_df_thread_p th)
 }
 
 void
-update_papi(struct wstream_df_thread* th)
+update_papi_timestamp(struct wstream_df_thread* th, int64_t timestamp)
 {
 	if(!th->papi_count)
 		return;
@@ -202,9 +202,15 @@ update_papi(struct wstream_df_thread* th)
 
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_PAPI_COUNTERS)
 		for(int i = 0; i < th->papi_num_events; i++)
-			trace_counter(th, th->papi_event_mapping[i]+PAPI_COUNTER_BASE, th->papi_counters[i]);
+			trace_counter_timestamp(th, th->papi_event_mapping[i]+PAPI_COUNTER_BASE, th->papi_counters[i], timestamp+i);
 #endif
 	}
+}
+
+void
+update_papi(struct wstream_df_thread* th)
+{
+	update_papi_timestamp(th, rdtsc());
 }
 #endif
 

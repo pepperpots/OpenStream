@@ -41,7 +41,7 @@ void trace_init(struct wstream_df_thread* cthread)
 void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = WQEVENT_FRAME_INFO;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -55,7 +55,7 @@ void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame
 void trace_event(wstream_df_thread_p cthread, unsigned int type)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = type;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -72,7 +72,7 @@ void trace_update_tcreate_fp(struct wstream_df_thread* cthread, struct wstream_d
 void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = WQEVENT_TCREATE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -85,7 +85,7 @@ void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* f
 void trace_tdestroy(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = WQEVENT_TDESTROY;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -97,7 +97,7 @@ void trace_tdestroy(struct wstream_df_thread* cthread, struct wstream_df_frame* 
 void trace_task_exec_start(wstream_df_thread_p cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].texec.type = frame->steal_type;
   cthread->events[cthread->num_events].texec.creation_timestamp = frame->creation_timestamp;
   cthread->events[cthread->num_events].texec.ready_timestamp = frame->ready_timestamp;
@@ -112,7 +112,7 @@ void trace_task_exec_start(wstream_df_thread_p cthread, struct wstream_df_frame*
 void trace_task_exec_end(wstream_df_thread_p cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = WQEVENT_END_TASKEXEC;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -124,7 +124,7 @@ void trace_task_exec_end(wstream_df_thread_p cthread, struct wstream_df_frame* f
 void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].state_change.state = state;
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
@@ -141,7 +141,7 @@ void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
 void trace_state_restore(wstream_df_thread_p cthread)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = WQEVENT_STATECHANGE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
@@ -160,7 +160,7 @@ void trace_state_restore(wstream_df_thread_p cthread)
 void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].steal.src_worker = src_worker;
   cthread->events[cthread->num_events].steal.src_cpu = src_cpu;
   cthread->events[cthread->num_events].steal.size = size;
@@ -175,7 +175,7 @@ void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned 
 void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].push.dst_worker = dst_worker;
   cthread->events[cthread->num_events].push.dst_cpu = dst_cpu;
   cthread->events[cthread->num_events].push.size = size;
@@ -190,7 +190,7 @@ void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned i
 void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts, void* src_addr)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].data_read.src_cpu = src_cpu;
   cthread->events[cthread->num_events].data_read.size = size;
   cthread->events[cthread->num_events].data_read.prod_ts = prod_ts;
@@ -202,10 +202,10 @@ void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, un
   cthread->num_events++;
 }
 
-void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value)
+void trace_counter_timestamp(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value, int64_t timestamp)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = timestamp - cthread->tsc_offset;
   cthread->events[cthread->num_events].counter.counter_id = counter_id;
   cthread->events[cthread->num_events].counter.value = value;
   cthread->events[cthread->num_events].type = WQEVENT_COUNTER;
@@ -213,6 +213,11 @@ void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->num_events++;
+}
+
+void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value)
+{
+  trace_counter_timestamp(cthread, counter_id, value, rdtsc());
 }
 
 #if ALLOW_WQEVENT_SAMPLING && defined(TRACE_QUEUE_STATS) && WQUEUE_PROFILE
@@ -701,7 +706,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  cthread->events[cthread->num_events].time = rdtsc();
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].data_write.size = size;
   cthread->events[cthread->num_events].data_write.dst_frame_addr = dst_frame_addr;
   cthread->events[cthread->num_events].type = WQEVENT_DATA_WRITE;

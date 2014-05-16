@@ -13,6 +13,7 @@
 #include "profiling.h"
 #include "arch.h"
 #include "work_distribution.h"
+#include "tsc.h"
 
 /***************************************************************************/
 /***************************************************************************/
@@ -201,14 +202,16 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 #if ALLOW_WQEVENT_SAMPLING
   int curr_idx = cthread->num_events-1;
 #endif
-  wstream_alloc(cthread->slab_cache, &frame_pointer, 64, size);
+  wstream_alloc(cthread, cthread->slab_cache, &frame_pointer, 64, size);
+
+  //  printf("F+ Allocating %p\n", frame_pointer);
 
   frame_pointer->synchronization_counter = sc;
   frame_pointer->size = size;
   frame_pointer->last_owner = cthread->worker_id;
   frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
-  frame_pointer->creation_timestamp = rdtsc();
+  frame_pointer->creation_timestamp = rdtsc() - cthread->tsc_offset;
   frame_pointer->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
   frame_pointer->dominant_input_data_node_id = -1;
   frame_pointer->dominant_input_data_size = 0;
@@ -313,7 +316,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
   if(is_write) {
     inc_wqueue_counter(&fp->bytes_cpu_in[cthread->cpu], n);
-    set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->cpu], rdtsc());
+    set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->cpu], rdtsc() - cthread->tsc_offset);
 
     if(fp->cache_misses[cthread->cpu] == 0)
       fp->cache_misses[cthread->cpu] = mem_cache_misses(cthread);
@@ -331,7 +334,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
     {
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
-      fp->ready_timestamp = rdtsc();
+      fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
 
       if(wstream_is_fresh(fp)) {
 	get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
@@ -928,6 +931,12 @@ worker_thread (void)
   cthread->rands = 77777 + cthread->worker_id * 19;
   cthread->last_steal_from = -1;
 
+  /* Worker 0 has already been initialized */
+  if(!cthread->tsc_offset_init) {
+    cthread->tsc_offset = get_tsc_offset(&global_tsc_ref, cthread->cpu);
+    cthread->tsc_offset_init = 1;
+  }
+
   /* Enable barrier passing if needed.  */
   if (cthread->swap_barrier != NULL)
     {
@@ -1247,6 +1256,7 @@ void pre_main()
   for(int i = 0; i < MAX_NUMA_NODES; i++)
     numa_node_init(numa_node_by_id(i), i);
 
+  tsc_reference_offset_init(&global_tsc_ref);
   openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
 
   if (cpu_affinities == NULL)
@@ -1274,6 +1284,8 @@ void pre_main()
     {
       cdeque_init (&wstream_df_worker_threads[i].work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
       wstream_df_worker_threads[i].worker_id = i;
+      wstream_df_worker_threads[i].tsc_offset = 0;
+      wstream_df_worker_threads[i].tsc_offset_init = 0;
       wstream_df_worker_threads[i].own_next_cached_thread = NULL;
       wstream_df_worker_threads[i].swap_barrier = NULL;
       wstream_df_worker_threads[i].current_work_fn = NULL;
@@ -1704,7 +1716,7 @@ void openstream_start_hardware_counters_single(wstream_df_thread_p th)
 #endif
 }
 
-void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
+void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th, int64_t timestamp)
 {
 #ifdef WS_PAPI_PROFILE
 	int err;
@@ -1712,7 +1724,7 @@ void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
 	if(th->papi_num_events > 0) {
 		long long dump[th->papi_num_events];
 
-		update_papi(th);
+		update_papi_timestamp(th, timestamp);
 		th->papi_count = 0;
 
 		/* Stop counting */
@@ -1727,11 +1739,16 @@ void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
 void openstream_start_hardware_counters(void)
 {
 	for(int i = 0; i < num_workers; i++)
-		openstream_start_hardware_counters_single(&wstream_df_worker_threads[i]);
+	  openstream_start_hardware_counters_single(wstream_df_worker_threads[i]);
 }
 
 void openstream_pause_hardware_counters(void)
 {
-	for(int i = 0; i < num_workers; i++)
-		openstream_pause_hardware_counters_single(&wstream_df_worker_threads[i]);
+	int64_t local_ts = rdtsc();
+
+	for(int i = 0; i < num_workers; i++) {
+	  wstream_df_thread_p target_thread = wstream_df_worker_threads[i];
+	  openstream_pause_hardware_counters_single_timestamp(wstream_df_worker_threads[i],
+							      local_ts - cthread->tsc_offset + target_thread->tsc_offset);
+	}
 }

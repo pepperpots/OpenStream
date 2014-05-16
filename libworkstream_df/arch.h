@@ -109,14 +109,14 @@ weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 }
 
 #ifdef __i386
-static inline  uint64_t rdtsc() {
-  uint64_t x;
+static inline  int64_t rdtsc() {
+  int64_t x;
   __asm__ volatile ("rdtsc" : "=A" (x));
   return x;
 }
 #elif defined __amd64
-static inline uint64_t rdtsc() {
-  uint64_t a, d;
+static inline int64_t rdtsc() {
+  int64_t a, d;
   __asm__ volatile ("rdtsc" : "=a" (a), "=d" (d));
   return (d<<32) | a;
 }

@@ -10,9 +10,9 @@ INST_DIR = $(THIS_DIR)/../install
 GCC = $(INST_DIR)/bin/gcc
 
 WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS) -std=c11
-WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS) -lnuma
+WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS) -lnuma -lrt
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
-WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h
+WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h tsc.h
 
 TEST_DESTDIR=		tests
 
@@ -54,7 +54,7 @@ endif
 ../install/bin/gcc:
 	cd .. ; $(MAKE)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h interleave.c $(WSTREAM_DEPS) $(GCCDEP)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c $(WSTREAM_DEPS) $(GCCDEP)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \

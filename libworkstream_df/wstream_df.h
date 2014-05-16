@@ -117,8 +117,8 @@ typedef struct wstream_df_frame
   int bytes_cpu_in[MAX_CPUS];
   long long bytes_cpu_ts[MAX_CPUS];
   long long cache_misses[MAX_CPUS];
-  uint64_t creation_timestamp;
-  uint64_t ready_timestamp;
+  int64_t creation_timestamp;
+  int64_t ready_timestamp;
 
   int bytes_reuse_nodes[MAX_NUMA_NODES];
   int dominant_input_data_node_id;
@@ -188,6 +188,8 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned int rands;
   unsigned int cpu;
   struct wstream_df_numa_node* numa_node;
+  int64_t tsc_offset;
+  int tsc_offset_init;
 
   int last_steal_from;
 
