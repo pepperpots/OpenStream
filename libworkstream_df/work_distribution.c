@@ -351,6 +351,105 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   return 1;
 }
 
+int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, unsigned int* target_worker)
+{
+  unsigned int max_worker;
+  int numa_node_id;
+  int max_data;
+  size_t data[MAX_NUMA_NODES];
+  size_t scores[MAX_NUMA_NODES];
+  size_t min_score;
+  wstream_df_numa_node_p numa_node;
+  int factor;
+  unsigned int rand_idx;
+
+#if defined(PUSH_EQUAL_RANDOM)
+    size_t others[MAX_NUMA_NODES];
+    int num_others = 0;
+#endif
+
+  /* Overhead for pushing small frames is too high */
+  if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
+    return 0;
+
+  memset(data, 0, sizeof(data));
+  memset(scores, 0, sizeof(data));
+
+  for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
+    int node_id = wstream_numa_node_of(vi->data);
+
+    if(vi->reuse_data_view)
+      factor = 2;
+
+    if(node_id != -1)
+      data[node_id] += vi->horizon * factor;
+  }
+
+  for(int target_node = 0; target_node < MAX_NUMA_NODES; target_node++)
+    for(int source_node = 0; source_node < MAX_NUMA_NODES; source_node++)
+      scores[target_node] += data[source_node] * mem_transfer_costs(target_node, source_node);
+
+  min_score = scores[cthread->numa_node->id];
+  numa_node_id = cthread->numa_node->id;
+
+#if defined(PUSH_EQUAL_SEQ)
+  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+    if(scores[i] < min_score) {
+      min_score = scores[i];
+      numa_node_id = i;
+    }
+  }
+#elif defined(PUSH_EQUAL_RANDOM)
+  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+    if(scores[i] == min_score)
+      others[num_others++] = i;
+
+    if(scores[i] < min_score) {
+      min_score = scores[i];
+      numa_node_id = i;
+      num_others = 0;
+    }
+  }
+
+  if(numa_node_id != cthread->numa_node->id && num_others)
+    {
+      others[num_others++] = numa_node_id;
+
+      rand_idx = prng_nextn(&cthread->rands, num_others);
+      numa_node_id = others[rand_idx];
+    }
+#else
+  #ifdef ALLOW_PUSHES
+    #error "No strategy defined for nodes with the same push score!"
+  #endif
+#endif
+
+
+  if(numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
+    /* Choose random worker sharing the target node */
+    numa_node = numa_node_by_id(numa_node_id);
+    rand_idx = prng_nextn(&cthread->rands, numa_node->num_workers);
+    max_worker = numa_node->workers[rand_idx]->worker_id;
+  } else if(cthread->numa_node->id == numa_node_id) {
+      get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data, numa_node_id);
+
+      /* By default the current worker is suited best */
+      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+	max_worker = cthread->worker_id;
+	max_data = fp->bytes_cpu_in[cthread->cpu];
+      }
+
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+	return 0;
+
+      max_worker = cthread->worker_id;
+      max_data = fp->bytes_cpu_in[cthread->cpu];
+  }
+
+  *target_worker = max_worker;
+  return 1;
+}
+
 /* Determines whether a push of fp to another worker is considered beneficial.
  * If a push would be beneficial, the function returns 1 and saves the identifier
  * of the worker suited best for execution in target_worker. Otherwise 0 is
@@ -371,6 +470,8 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   res = work_push_beneficial_split_owner_chain(fp, cthread, num_workers, &lcl_target_worker);
 #elif defined(PUSH_STRATEGY_SPLIT_OWNER_CHAIN_INNER_MW)
   res = work_push_beneficial_split_owner_chain_inner_mw(fp, cthread, num_workers, &lcl_target_worker);
+#elif defined(PUSH_STRATEGY_SPLIT_SCORE_NODES)
+  res = work_push_beneficial_split_score_nodes(fp, cthread, num_workers, &lcl_target_worker);
 #else
   #error "No push strategy defined" */
 #endif
