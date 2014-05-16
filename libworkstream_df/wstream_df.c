@@ -1750,6 +1750,10 @@ void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th,
 
 void openstream_start_hardware_counters(void)
 {
+	wstream_df_thread_p cthread = current_thread;
+
+	trace_measure_start(cthread);
+
 	for(int i = 0; i < num_workers; i++)
 	  openstream_start_hardware_counters_single(wstream_df_worker_threads[i]);
 }
@@ -1757,10 +1761,13 @@ void openstream_start_hardware_counters(void)
 void openstream_pause_hardware_counters(void)
 {
 	int64_t local_ts = rdtsc();
+	wstream_df_thread_p cthread = current_thread;
 
 	for(int i = 0; i < num_workers; i++) {
 	  wstream_df_thread_p target_thread = wstream_df_worker_threads[i];
 	  openstream_pause_hardware_counters_single_timestamp(wstream_df_worker_threads[i],
 							      local_ts - cthread->tsc_offset + target_thread->tsc_offset);
 	}
+
+	trace_measure_end(cthread);
 }

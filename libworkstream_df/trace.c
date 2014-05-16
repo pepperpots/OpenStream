@@ -82,6 +82,25 @@ void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* f
   cthread->num_events++;
 }
 
+void trace_measure(struct wstream_df_thread* cthread, int type)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+
+  cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
+  cthread->events[cthread->num_events].type = type;
+  cthread->num_events++;
+}
+
+void trace_measure_start(struct wstream_df_thread* cthread)
+{
+  trace_measure(cthread, WQEVENT_MEASURE_START);
+}
+
+void trace_measure_end(struct wstream_df_thread* cthread)
+{
+  trace_measure(cthread, WQEVENT_MEASURE_END);
+}
+
 void trace_tdestroy(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
@@ -418,6 +437,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
   struct trace_counter_event dsk_cre;
   struct trace_frame_info dsk_fi;
   struct trace_cpu_info dsk_ci;
+  struct trace_global_single_event dsk_gse;
 
   int do_dump;
 
@@ -665,6 +685,18 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_fi.size = th->events[k].frame_info.size;
 
 	    write_struct_convert(fp, &dsk_fi, sizeof(dsk_fi), trace_frame_info_conversion_table, 0);
+	  }
+	} else if(th->events[k].type == WQEVENT_MEASURE_START ||
+		  th->events[k].type == WQEVENT_MEASURE_END)
+	  {
+	  if(do_dump) {
+	    dsk_gse.type = EVENT_TYPE_GLOBAL_SINGLE_EVENT;
+	    dsk_gse.time = th->events[k].time-min_time;
+	    dsk_gse.single_type = (th->events[k].type == WQEVENT_MEASURE_START) ?
+	      GLOBAL_SINGLE_TYPE_MEASURE_START :
+	      GLOBAL_SINGLE_TYPE_MEASURE_END;
+
+	    write_struct_convert(fp, &dsk_gse, sizeof(dsk_gse), trace_global_single_event_conversion_table, 0);
 	  }
 	}
       }

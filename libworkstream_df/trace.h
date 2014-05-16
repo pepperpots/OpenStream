@@ -19,6 +19,8 @@
 #define WQEVENT_COUNTER 9
 #define WQEVENT_FRAME_INFO 10
 #define WQEVENT_TDESTROY 11
+#define WQEVENT_MEASURE_START 12
+#define WQEVENT_MEASURE_END 13
 
 #define PAPI_COUNTER_BASE 1000
 #define RUNTIME_COUNTER_BASE 2000
@@ -135,6 +137,8 @@ void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint
 void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 void trace_counter_timestamp(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value, int64_t timestamp);
 void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
+void trace_measure_start(struct wstream_df_thread* cthread);
+void trace_measure_end(struct wstream_df_thread* cthread);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 #else
@@ -157,6 +161,8 @@ void trace_data_write(void* cthread, unsigned int size, uint64_t dst_frame_addr)
 #define trace_counter(cthread, counter_id, value) do { } while(0)
 #define trace_counter_timestamp(cthread, counter_id, value, timestamp) do { } while(0)
 #define trace_frame_info(cthread, frame) do { } while(0)
+#define trace_measure_start(cthread) do { } while(0)
+#define trace_measure_end(cthread) do { } while(0)
 
 #define dump_events_ostv(num_workers, wstream_df_worker_threads) do { } while(0)
 #endif
