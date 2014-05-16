@@ -75,7 +75,7 @@ void
 wqueue_counters_enter_runtime(struct wstream_df_thread* th);
 
 void
-dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
+dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread** wstream_df_worker_threads);
 
 void
 dump_global_wqueue_counters ();

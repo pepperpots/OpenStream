@@ -301,28 +301,39 @@ int get_min_index(int* curr_idx, int num_workers, wstream_df_thread_p wstream_df
   return min_idx;
 }
 
-int64_t get_min_time(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+int64_t get_min_time(int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
   int i;
   int64_t min = -1;
+  int initialized = 0;
 
-  for(i = 0; i < num_workers; i++)
-    if(wstream_df_worker_threads[i].num_events > 0)
-      if(min == -1 || wstream_df_worker_threads[i].events[0].time < (uint64_t)min)
-	min = wstream_df_worker_threads[i].events[0].time;
+  for(i = 0; i < num_workers; i++) {
+    if(wstream_df_worker_threads[i]->num_events > 0) {
+      if(!initialized || wstream_df_worker_threads[i]->events[0].time < min) {
+	initialized = 1;
+	min = wstream_df_worker_threads[i]->events[0].time;
+      }
+    }
+  }
+
 
   return min;
 }
 
-int64_t get_max_time(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+int64_t get_max_time(int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
   int i;
   int64_t max = -1;
+  int initialized = 0;
 
-  for(i = 0; i < num_workers; i++)
-    if(wstream_df_worker_threads[i].num_events > 0)
-      if(max == -1 || wstream_df_worker_threads[i].events[wstream_df_worker_threads[i].num_events-1].time > (uint64_t)max)
-	max = wstream_df_worker_threads[i].events[wstream_df_worker_threads[i].num_events-1].time;
+  for(i = 0; i < num_workers; i++) {
+    if(wstream_df_worker_threads[i]->num_events > 0) {
+      if(initialized == 0 || wstream_df_worker_threads[i]->events[wstream_df_worker_threads[i]->num_events-1].time > max) {
+	initialized = 1;
+	max = wstream_df_worker_threads[i]->events[wstream_df_worker_threads[i]->num_events-1].time;
+      }
+    }
+  }
 
   return max;
 }
@@ -416,7 +427,7 @@ int conditional_fprintf(int do_dump, FILE* fp, const char *format, ...)
 }
 
 /* Dumps worker events to a file in paraver format. */
-void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
   unsigned int i, k;
   wstream_df_thread_p th;
@@ -493,7 +504,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 
   /* Dump events and states */
   for (i = 0; i < (unsigned int)num_workers; ++i) {
-    th = &wstream_df_worker_threads[i];
+    th = wstream_df_worker_threads[i];
     last_state_idx = -1;
     do_dump = 1;
 

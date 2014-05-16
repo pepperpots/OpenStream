@@ -26,7 +26,7 @@
 static __thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
-static wstream_df_thread_p wstream_df_worker_threads;
+static wstream_df_thread_p* wstream_df_worker_threads;
 wstream_df_numa_node_p wstream_df_default_node;
 static int num_workers;
 static int* wstream_df_worker_cpus;
@@ -292,7 +292,7 @@ void get_max_worker_same_node(int* bytes_cpu, unsigned int num_workers,
       cpu = worker_id_to_cpu(worker_id);
 
       if(bytes_cpu[cpu] > max_data) {
-	wstream_df_thread_p worker = &wstream_df_worker_threads[worker_id];
+	wstream_df_thread_p worker = wstream_df_worker_threads[worker_id];
 
 	if(worker->numa_node->id == numa_node_id) {
 	  max_data = bytes_cpu[cpu];
@@ -1176,7 +1176,7 @@ openstream_parse_affinity (unsigned short **cpus_out, size_t *num_cpus_out)
 
 int worker_id_to_cpu(unsigned int worker_id)
 {
-  return wstream_df_worker_threads[worker_id].cpu;
+  return wstream_df_worker_threads[worker_id]->cpu;
 }
 
 int cpu_to_worker_id(int cpu)
@@ -1189,10 +1189,23 @@ int cpu_used(int cpu)
   return (cpu_to_worker_id(cpu) != -1);
 }
 
-wstream_df_numa_node_p numa_node_by_id(unsigned int id)
+wstream_df_thread_p allocate_worker_struct(int for_cpu)
 {
-  assert(id < MAX_NUMA_NODES);
-  return &wstream_df_numa_nodes[id];
+	int node = mem_numa_node(for_cpu);
+	unsigned long node_mask = 1 << node;
+	void* ptr;
+	size_t size = ROUND_UP(sizeof(wstream_df_thread_t), PAGE_SIZE);
+
+	if(posix_memalign(&ptr, PAGE_SIZE, size))
+		wstream_df_fatal("Memory allocation failed!");
+
+	if(mbind(ptr, size, MPOL_BIND, &node_mask, MAX_NUMA_NODES+1, MPOL_MF_MOVE)) {
+		fprintf(stderr, "mbind error:\n");
+		perror("mbind");
+		exit(1);
+	}
+
+	return ptr;
 }
 
 static void
@@ -1218,13 +1231,6 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker->push_fifo);
-#endif
-
-#ifdef TRACE_RT_INIT_STATE
-  if(wstream_df_worker->worker_id != 0)
-    trace_init(wstream_df_worker);
-#else
-  trace_init(wstream_df_worker);
 #endif
 
 #ifdef _PRINT_STATS
@@ -1281,6 +1287,7 @@ void pre_main()
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
   int numa_node;
+  int worker0_cpu, cpu;
 
   init_transfer_matrix();
 
@@ -1295,7 +1302,7 @@ void pre_main()
 #endif
 
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
-		      num_workers * sizeof (wstream_df_thread_t)))
+		      num_workers * sizeof (wstream_df_thread_t*)))
     wstream_df_fatal ("Out of memory ...");
 
   if (posix_memalign ((void **)&wstream_df_worker_cpus, 64,
@@ -1307,19 +1314,21 @@ void pre_main()
 
   /* Add a guard frame for the control program (in case threads catch
      up with the control program).  */
-  current_thread = &wstream_df_worker_threads[0];
-  current_barrier = NULL;
-
-  for(int i = 0; i < MAX_NUMA_NODES; i++)
-    numa_node_init(numa_node_by_id(i), i);
 
   tsc_reference_offset_init(&global_tsc_ref);
   openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
 
   if (cpu_affinities == NULL)
-    current_thread->cpu = 0;
+    worker0_cpu = 0;
   else
-    current_thread->cpu = cpu_affinities[0];
+    worker0_cpu = cpu_affinities[0];
+
+  wstream_df_worker_threads[0] = allocate_worker_struct(worker0_cpu);
+  current_thread = wstream_df_worker_threads[0];
+  current_thread->cpu = worker0_cpu;
+  current_barrier = NULL;
+
+  numa_nodes_init();
 
   wstream_df_worker_cpus[current_thread->cpu] = 0;
 
@@ -1329,8 +1338,10 @@ void pre_main()
   numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
   wstream_df_default_node = numa_node_by_id(numa_node);
 
+  trace_init(current_thread);
+
 #if ALLOW_PUSHES
-  fifo_init(&wstream_df_worker_threads[0].push_fifo);
+  fifo_init(&wstream_df_worker_threads[0]->push_fifo);
 #endif
 
 #ifdef _PRINT_STATS
@@ -1339,38 +1350,24 @@ void pre_main()
 
   for (i = 0; i < num_workers; ++i)
     {
-      cdeque_init (&wstream_df_worker_threads[i].work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
-      wstream_df_worker_threads[i].worker_id = i;
-      wstream_df_worker_threads[i].tsc_offset = 0;
-      wstream_df_worker_threads[i].tsc_offset_init = 0;
-      wstream_df_worker_threads[i].own_next_cached_thread = NULL;
-      wstream_df_worker_threads[i].swap_barrier = NULL;
-      wstream_df_worker_threads[i].current_work_fn = NULL;
-      wstream_df_worker_threads[i].current_frame = NULL;
-      wstream_df_worker_threads[i].yield = 0;
+      if (cpu_affinities == NULL)
+	cpu = i % ncores;
+      else
+	cpu = cpu_affinities[i % num_cpu_affinities];
+
+      if(i != 0)
+	wstream_df_worker_threads[i] = allocate_worker_struct(cpu);
+
+      cdeque_init (&wstream_df_worker_threads[i]->work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
+      wstream_df_worker_threads[i]->worker_id = i;
+      wstream_df_worker_threads[i]->tsc_offset = 0;
+      wstream_df_worker_threads[i]->tsc_offset_init = 0;
+      wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
+      wstream_df_worker_threads[i]->swap_barrier = NULL;
+      wstream_df_worker_threads[i]->current_work_fn = NULL;
+      wstream_df_worker_threads[i]->current_frame = NULL;
+      wstream_df_worker_threads[i]->yield = 0;
     }
-
-#ifdef TRACE_RT_INIT_STATE
-  trace_init(&wstream_df_worker_threads[0]);
-  trace_state_change(current_thread, WORKER_STATE_RT_INIT);
-#endif
-
-  setup_wqueue_counters();
-
-  for (i = 1; i < num_workers; ++i)
-    start_worker (&wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
-		  wstream_df_worker_thread_fn);
-
-  free (cpu_affinities);
-  init_wqueue_counters(&wstream_df_worker_threads[0]);
-
-  wstream_df_worker_threads[0].current_work_fn = (void*)main;
-  wstream_df_worker_threads[0].current_frame = NULL;
-
-#if ALLOW_WQEVENT_SAMPLING
-  if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
-    fprintf(stderr, "Cannot install signal handler for SIGUSR1\n");
-#endif
 
   cpu_set_t cs;
   CPU_ZERO (&cs);
@@ -1380,6 +1377,29 @@ void pre_main()
   if (errno < 0)
     wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
 
+  current_thread->tsc_offset = get_tsc_offset(&global_tsc_ref, current_thread->cpu);
+  current_thread->tsc_offset_init = 1;
+
+  setup_wqueue_counters();
+
+  for (i = 1; i < num_workers; ++i)
+    start_worker (wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
+		  wstream_df_worker_thread_fn);
+
+  free (cpu_affinities);
+  init_wqueue_counters(wstream_df_worker_threads[0]);
+
+  wstream_df_worker_threads[0]->current_work_fn = (void*)main;
+  wstream_df_worker_threads[0]->current_frame = NULL;
+
+#if ALLOW_WQEVENT_SAMPLING
+  if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
+    fprintf(stderr, "Cannot install signal handler for SIGUSR1\n");
+#endif
+
+  #ifdef TRACE_RT_INIT_STATE
+    trace_state_change(current_thread, WORKER_STATE_RT_INIT);
+  #endif
 }
 
 __attribute__((destructor))
@@ -1390,7 +1410,7 @@ void post_main()
   wstream_df_taskwait ();
 
   for (int i = 0; i < num_workers; ++i)
-    wstream_df_worker_threads[i].yield = 1;
+    wstream_df_worker_threads[i]->yield = 1;
 
   dump_events_ostv(num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(num_workers, wstream_df_worker_threads);
@@ -1569,7 +1589,6 @@ wstream_df_prematch_n_dependences (size_t n, void *v, void *s, bool is_read_view
       view->burst = dummy_view->burst;
       view->horizon = dummy_view->horizon;
       view->owner = dummy_view->owner;
-
       wstream_df_prematch_dependences ((void *) view, (void *) stream, is_read_view_p);
     }
 }

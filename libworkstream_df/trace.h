@@ -138,7 +138,7 @@ void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame
 void trace_measure_start(struct wstream_df_thread* cthread);
 void trace_measure_end(struct wstream_df_thread* cthread);
 
-void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
+void dump_events_ostv(int num_workers, struct wstream_df_thread** wstream_df_worker_threads);
 #else
 
 #define trace_init(cthread) do { } while(0)

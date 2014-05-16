@@ -369,7 +369,7 @@ void dump_numa_counters_single(wstream_df_numa_node_p numa_node)
 		numa_node->slab_cache.slab_toobig_freed_bytes);
 }
 
-void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream_df_worker_threads)
+void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
 	unsigned int i, level;
 	unsigned long long bytes_mem[MEM_NUM_LEVELS];
@@ -387,7 +387,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 		dump_wqueue_counters_single(&wstream_df_worker_threads[i]);
 
 		for(level = 0; level < MEM_NUM_LEVELS; level++)
-			bytes_mem[level] += wstream_df_worker_threads[i].bytes_mem[level];
+			bytes_mem[level] += wstream_df_worker_threads[i]->bytes_mem[level];
 	}
 
 	for (i = 0; i < MAX_NUMA_NODES; ++i) {
@@ -409,7 +409,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p wstream
 
 	for (i = 0; i < num_workers; ++i) {
 		for(evt = 0; evt < WS_PAPI_NUM_EVENTS; evt++) {
-			papi_counters_accum[evt] += wstream_df_worker_threads[i].papi_counters[evt];
+			papi_counters_accum[evt] += wstream_df_worker_threads[i]->papi_counters[evt];
 		}
 	}
 

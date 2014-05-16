@@ -11,8 +11,8 @@ void reorder_pushes(wstream_df_thread_p cthread);
 #if ALLOW_PUSHES
 void import_pushes(wstream_df_thread_p cthread);
 int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker);
-int work_try_push(wstream_df_frame_p fp, int target_worker, wstream_df_thread_p cthread, wstream_df_thread_p wstream_df_worker_threads);
+int work_try_push(wstream_df_frame_p fp, int target_worker, wstream_df_thread_p cthread, wstream_df_thread_p* wstream_df_worker_threads);
 #endif
 
-wstream_df_frame_p obtain_work(wstream_df_thread_p cthread, wstream_df_thread_p wstream_df_worker_threads);
+wstream_df_frame_p obtain_work(wstream_df_thread_p cthread, wstream_df_thread_p* wstream_df_worker_threads);
 #endif

@@ -500,7 +500,7 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
 int work_try_push(wstream_df_frame_p fp,
 		  int target_worker,
 		  wstream_df_thread_p cthread,
-		  wstream_df_thread_p wstream_df_worker_threads)
+		  wstream_df_thread_p* wstream_df_worker_threads)
 {
   int level;
   int curr_owner;
@@ -515,7 +515,7 @@ int work_try_push(wstream_df_frame_p fp,
    */
   fp_size = fp->size;
 
-  if(fifo_pushback(&wstream_df_worker_threads[target_worker].push_fifo, fp)) {
+  if(fifo_pushback(&wstream_df_worker_threads[target_worker]->push_fifo, fp)) {
     /* Push was successful, update traces and statistics */
     level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(target_worker));
     inc_wqueue_counter(&cthread->pushes_mem[level], 1);
@@ -533,17 +533,18 @@ int work_try_push(wstream_df_frame_p fp,
 
 #endif /* ALLOW_PUSHES */
 
-static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thread_p wstream_df_worker_threads)
+static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thread_p* wstream_df_worker_threads)
 {
   int level, attempt, sibling_num;
   unsigned int steal_from = 0;
   unsigned int steal_from_cpu = 0;
   wstream_df_frame_p fp = NULL;
+  unsigned int ncores;
 
 #if CACHE_LAST_STEAL_VICTIM
   /* Try to steal from the last victim worker's deque */
   if(cthread->last_steal_from != -1) {
-    fp = cdeque_steal (&wstream_df_worker_threads[cthread->last_steal_from].work_deque);
+    fp = cdeque_steal (&wstream_df_worker_threads[cthread->last_steal_from]->work_deque);
 
     if(fp == NULL) {
       inc_wqueue_counter(&cthread->steals_fails, 1);
@@ -570,7 +571,7 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 
 	  if(cpu_used(steal_from_cpu)) {
 	    steal_from = cpu_to_worker_id(steal_from_cpu);
-	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from].work_deque);
+	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from]->work_deque);
 
 	    if(fp == NULL) {
 	      inc_wqueue_counter(&cthread->steals_fails, 1);
@@ -628,7 +629,7 @@ static wstream_df_frame_p work_take(wstream_df_thread_p cthread)
 }
 
 wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
-			       wstream_df_thread_p wstream_df_worker_threads)
+			       wstream_df_thread_p* wstream_df_worker_threads)
 {
   unsigned int cpu;
   int level;
