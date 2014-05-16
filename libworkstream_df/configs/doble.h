@@ -116,6 +116,17 @@
 #ifndef IN_GCC
 #include <string.h>
 
+static inline unsigned int mem_numa_node(unsigned int cpu)
+{
+	return cpu / 8;
+}
+
+static inline unsigned int sibling_wrap(unsigned int cpu, unsigned int sibling, unsigned int num_siblings)
+{
+	return (cpu - (cpu % num_siblings)) +
+		((cpu + (sibling + 1)) % num_siblings);
+}
+
 /* 5 levels are defined:
  * 0: 1st level cache, private
  * 1: 2nd level cache, shared by 2 cores
@@ -161,8 +172,8 @@ static inline int mem_numa_num_hops(unsigned int a, unsigned int b)
 		{22, 16, 22, 16, 22, 16, 16, 10}
 	};
 
-	int node_a = a / 8;
-	int node_b = b / 8;
+	int node_a = mem_numa_node(a);
+	int node_b = mem_numa_node(b);
 	int distance = node_distances[node_a][node_b];
 
 	switch(distance) {
@@ -207,7 +218,7 @@ static inline void mem_score_nodes(int* bytes, int* scores, int num_nodes)
 /* Returns the n-th sibling of a core at a NUMA hop distance of 1. */
 static inline int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	int numa_node = cpu / 8;
+	int numa_node = mem_numa_node(cpu);
 
 	static int onehop_siblings[8][32] = {
 		{ NUMA_NODE_CORES(1), NUMA_NODE_CORES(2), NUMA_NODE_CORES(4), NUMA_NODE_CORES(6) },
@@ -226,7 +237,7 @@ static inline int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int s
 /* Returns the n-th sibling of a core at a NUMA hop distance of 2. */
 static inline int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	int numa_node = cpu / 8;
+	int numa_node = mem_numa_node(cpu);
 
 	static int twohops_siblings[8][24] = {
 		{ NUMA_NODE_CORES(3), NUMA_NODE_CORES(5), NUMA_NODE_CORES(7)},
@@ -278,7 +289,7 @@ static inline int mem_lowest_common_level(unsigned int a, unsigned int b)
 static inline int mem_transfer_costs(unsigned int a, unsigned int b)
 {
 	static int level_transfer_costs[MEM_NUM_LEVELS] = {
-		0, 3, 10, 10, 100, 200, 200
+		1, 3, 10, 10, 100, 200, 400
 	};
 
 	int common_level = mem_lowest_common_level(a, b);
@@ -287,20 +298,19 @@ static inline int mem_transfer_costs(unsigned int a, unsigned int b)
 
 static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int base = cpu - (cpu % mem_cores_at_level(level, cpu));
-	unsigned int sibling = base + sibling_num;
+	unsigned int sibling = sibling_wrap(cpu, sibling_num, mem_cores_at_level(level, cpu));
 
-	if(sibling == cpu)
-		return base + (((sibling_num + 1) % mem_cores_at_level(level, cpu)));
+	assert(cpu < MAX_CPUS);
+	assert(level < MEM_NUM_LEVELS);
 
 	return sibling;
 }
 
 static inline int mem_nth_machine_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int sibling = sibling_num % mem_cores_at_level(6, cpu);
-	if(sibling == cpu)
-		return (sibling_num + 1) % mem_cores_at_level(6, cpu);
+	unsigned int sibling = sibling_wrap(cpu, sibling_num, mem_cores_at_level(6, cpu));
+
+	assert(cpu < MAX_CPUS);
 
 	return sibling;
 }
@@ -339,46 +349,41 @@ static inline int mem_num_steal_attempts_at_level(unsigned int level)
 	return steals_at_level[level];
 }
 
-static inline unsigned int mem_numa_node(unsigned int cpu)
-{
-	return cpu / 8;
-}
+/* static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* bytes_cpu, long long* cache_misses, long long* cache_misses_now, int allocator, unsigned long long* costs) */
+/* { */
+/* 	int i, j; */
+/* 	unsigned long long cost; */
+/* 	unsigned long long cost_allocator; */
+/* 	unsigned long long bytes; */
+/* 	unsigned long long bytes_at_allocator = 0; */
+/* 	unsigned long long cache_miss_diff; */
 
-static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* bytes_cpu, long long* cache_misses, long long* cache_misses_now, int allocator, unsigned long long* costs)
-{
-	int i, j;
-	unsigned long long cost;
-	unsigned long long cost_allocator;
-	unsigned long long bytes;
-	unsigned long long bytes_at_allocator = 0;
-	unsigned long long cache_miss_diff;
+/* 	memset(costs, 0, sizeof(*costs)*MAX_CPUS); */
 
-	memset(costs, 0, sizeof(*costs)*MAX_CPUS);
+/* 	for(i = 0; i < MAX_CPUS; i++) { */
+/* 		for(j = 0; j < MAX_CPUS; j++) { */
+/* 			bytes = bytes_cpu[i]; */
 
-	for(i = 0; i < MAX_CPUS; i++) {
-		for(j = 0; j < MAX_CPUS; j++) {
-			bytes = bytes_cpu[i];
+/* 			if(i == metadata_owner) */
+/* 				bytes += 1024; */
 
-			if(i == metadata_owner)
-				bytes += 1024;
+/* 			if(bytes) { */
+/* 				cost = mem_transfer_costs(i, j); */
+/* 				cost_allocator = mem_transfer_costs(j, allocator); */
 
-			if(bytes) {
-				cost = mem_transfer_costs(i, j);
-				cost_allocator = mem_transfer_costs(j, allocator);
+/* 				cache_miss_diff = cache_misses_now[i] - cache_misses[i]; */
 
-				cache_miss_diff = cache_misses_now[i] - cache_misses[i];
+/* 				if(cache_miss_diff*30 < bytes/MEM_CACHE_LINE_SIZE) */
+/* 					bytes_at_allocator = cache_miss_diff*MEM_CACHE_LINE_SIZE/30; */
+/* 				else */
+/* 					bytes_at_allocator = 0; */
 
-				if(cache_miss_diff*30 < bytes/MEM_CACHE_LINE_SIZE)
-					bytes_at_allocator = cache_miss_diff*MEM_CACHE_LINE_SIZE/30;
-				else
-					bytes_at_allocator = 0;
-
-				costs[j] += cost * (bytes-bytes_at_allocator);
-				costs[j] += cost_allocator * bytes_at_allocator;
-			}
-		}
-	}
-}
+/* 				costs[j] += cost * (bytes-bytes_at_allocator); */
+/* 				costs[j] += cost_allocator * bytes_at_allocator; */
+/* 			} */
+/* 		} */
+/* 	} */
+/* } */
 
 #ifdef WS_PAPI_PROFILE
 #define mem_cache_misses(th) rdtsc()
