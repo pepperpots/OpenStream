@@ -91,7 +91,7 @@ typedef struct worker_event {
 
     struct {
       uint32_t size;
-      uint64_t dst_frame_addr;
+      uint64_t dst_addr;
     } data_write;
 
     struct {
@@ -153,7 +153,7 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_work
 #define trace_push(cthread, dst_worker, dst_cpu, size, fp) do { } while(0)
 #define trace_state_restore(cthread) do { } while(0)
 #define trace_data_read(cthread, src_cpu, size, prod_ts, addr) do { } while(0)
-void trace_data_write(void* cthread, unsigned int size, uint64_t dst_frame_addr);
+#define trace_data_write(cthread, size, dst_addr)  do { } while(0)
 #define trace_counter(cthread, counter_id, value) do { } while(0)
 #define trace_counter_timestamp(cthread, counter_id, value, timestamp) do { } while(0)
 #define trace_frame_info(cthread, frame) do { } while(0)

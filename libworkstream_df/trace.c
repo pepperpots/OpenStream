@@ -609,7 +609,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 	    dsk_ce.header.active_frame = th->events[k].active_frame;
 	    dsk_ce.type = COMM_TYPE_DATA_WRITE;
 	    dsk_ce.size = th->events[k].data_write.size;
-	    dsk_ce.what = th->events[k].data_write.dst_frame_addr;
+	    dsk_ce.what = th->events[k].data_write.dst_addr;
 
 	    write_struct_convert(fp, &dsk_ce, sizeof(dsk_ce), trace_comm_event_conversion_table, 0);
 	  }
@@ -735,12 +735,12 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p wstream_df_worker_thr
 #endif
 
 #if ALLOW_WQEVENT_SAMPLING
-void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr)
+void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_addr)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
   cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].data_write.size = size;
-  cthread->events[cthread->num_events].data_write.dst_frame_addr = dst_frame_addr;
+  cthread->events[cthread->num_events].data_write.dst_addr = dst_addr;
   cthread->events[cthread->num_events].type = WQEVENT_DATA_WRITE;
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
