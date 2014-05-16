@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include "config.h"
+#include "glib_extras.h"
 
 #define SLAB_INITIAL_MEM       (1 << 30)
 #define SLAB_GLOBAL_REFILL_MEM (1 << 30)
@@ -32,6 +33,30 @@ static inline size_t round_page_size(size_t size)
 static inline size_t size_max2(size_t a, size_t b)
 {
   return (a > b) ? a : b;
+}
+
+static inline int slab_force_advise_pages(void* addr, size_t size, int advice)
+{
+    if(madvise(align_page_boundary(addr),
+	       round_page_size(size),
+	       advice))
+    {
+	    fprintf(stderr, "Could not disable use of huge pages\n");
+	    perror("madvise");
+	    return 1;
+    }
+
+    return 0;
+}
+
+static inline int slab_force_small_pages(void* addr, size_t size)
+{
+  return slab_force_advise_pages(addr, size, MADV_NOHUGEPAGE);
+}
+
+static inline int slab_force_huge_pages(void* addr, size_t size)
+{
+  return slab_force_advise_pages(addr, size, MADV_HUGEPAGE);
 }
 
 static inline int slab_get_numa_node(void* address, unsigned int size)
@@ -254,6 +279,12 @@ static inline int slab_alloc_memalign(slab_cache_p slab_cache, void** ptr, size_
 	return 1;
       }
 
+#ifdef FORCE_HUGE_PAGES
+    slab_force_huge_pages(slab_cache->free_mem_ptr, global_alloc_size);
+#elif defined(FORCE_SMALL_PAGES)
+    slab_force_small_pages(slab_cache->free_mem_ptr, global_alloc_size);
+#endif
+
     slab_cache->free_mem_bytes = global_alloc_size;
   }
 
@@ -474,6 +505,11 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   if(posix_memalign(&slab_cache->free_mem_ptr, __slab_align, slab_cache->free_mem_bytes) != 0)
     wstream_df_fatal("Could not reserve initial memory for slab allocator\n");
 
+#ifdef FORCE_HUGE_PAGES
+  slab_force_huge_pages(slab_cache->free_mem_ptr, slab_cache->free_mem_bytes);
+#elif defined(FORCE_SMALL_PAGES)
+  slab_force_small_pages(slab_cache->free_mem_ptr, slab_cache->free_mem_bytes);
+#endif
 
   for (i = 0; i < __slab_max_size + 1; ++i)
     pthread_spin_init(&slab_cache->locks[i], PTHREAD_PROCESS_PRIVATE);

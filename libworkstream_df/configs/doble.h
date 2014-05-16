@@ -20,6 +20,9 @@
 #define MATRIX_PROFILE "wqueue_matrix.out"
 
 #define PUSH_MIN_MEM_LEVEL 3
+//#define FORCE_SMALL_PAGES
+//#define FORCE_HUGE_PAGES
+
 #define PUSH_MIN_FRAME_SIZE (64*1024)
 #define PUSH_MIN_REL_FRAME_SIZE 1.3
 #define NUM_PUSH_SLOTS 32
