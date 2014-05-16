@@ -119,20 +119,10 @@ typedef struct worker_event {
 struct wstream_df_thread;
 struct wstream_df_frame;
 
+#include "trace_inline.c.h"
+
+
 void trace_init(struct wstream_df_thread* cthread);
-void trace_event(struct wstream_df_thread* cthread, unsigned int type);
-void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
-void trace_tdestroy(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
-void trace_update_tcreate_fp(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
-void trace_task_exec_start(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
-void trace_task_exec_end(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
-void trace_state_change(struct wstream_df_thread* cthread, unsigned int state);
-void trace_state_restore(struct wstream_df_thread* cthread);
-void trace_steal(struct wstream_df_thread* cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame);
-void trace_push(struct wstream_df_thread* cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame);
-void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts, void* addr);
-void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_frame_addr);
-void trace_counter(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value);
 void trace_counter_timestamp(struct wstream_df_thread* cthread, uint64_t counter_id, int64_t value, int64_t timestamp);
 void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame);
 void trace_measure_start(struct wstream_df_thread* cthread);
