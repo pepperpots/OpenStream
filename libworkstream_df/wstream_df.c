@@ -951,6 +951,13 @@ worker_thread (void)
 trace_state_change(cthread, WORKER_STATE_SEEKING);
   while (true)
     {
+      if(cthread->yield)
+	while(true) {
+	  struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000 };
+	  nanosleep(&ts, NULL);
+	}
+
+
 #if ALLOW_PUSHES
 #if !ALLOW_PUSH_REORDER
       import_pushes(cthread);
@@ -1290,6 +1297,7 @@ void pre_main()
       wstream_df_worker_threads[i].swap_barrier = NULL;
       wstream_df_worker_threads[i].current_work_fn = NULL;
       wstream_df_worker_threads[i].current_frame = NULL;
+      wstream_df_worker_threads[i].yield = 0;
     }
 
 #ifdef TRACE_RT_INIT_STATE
@@ -1330,6 +1338,9 @@ void post_main()
   /* Current barrier is the last one, so it allows terminating the
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
+
+  for (int i = 0; i < num_workers; ++i)
+    wstream_df_worker_threads[i].yield = 1;
 
   dump_events_ostv(num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(num_workers, wstream_df_worker_threads);

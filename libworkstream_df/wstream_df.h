@@ -190,6 +190,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   struct wstream_df_numa_node* numa_node;
   int64_t tsc_offset;
   int tsc_offset_init;
+  int yield;
 
   int last_steal_from;
 
