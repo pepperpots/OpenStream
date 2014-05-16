@@ -46,7 +46,11 @@
 
 //#define PAPI_L1
 //#define PAPI_L2
-//#define PAPI_L3_RAM
+//#define PAPI_L3
+//#define PAPI_TLB
+//#define PAPI_NUMA
+//#define PAPI_L1_INS
+//#define PAPI_STALL
 
 #define NUM_PUSH_REORDER_SLOTS 0
 #define ALLOW_PUSH_REORDER (ALLOW_PUSHES && NUM_PUSH_REORDER_SLOTS > 0)
@@ -65,7 +69,7 @@
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
-#if defined(PAPI_L1) || defined(PAPI_L2) || defined (PAPI_L3_RAM)
+#if defined(PAPI_L1) || defined(PAPI_L2) || defined (PAPI_L3) || defined(PAPI_TLB) || defined(PAPI_NUMA) || defined(PAPI_L1_INS) || defined(PAPI_STALL)
   #define WS_PAPI_PROFILE
 #endif
 
@@ -81,10 +85,8 @@
 
 #ifdef PAPI_L1
   //L1
-  #define WS_PAPI_NUM_EVENTS 2
-  #define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_l1_DCA" }
-  #define WS_PAPI_UNCORE 0
-  #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore"
+  #define WS_PAPI_NUM_EVENTS 1
+  #define WS_PAPI_EVENTS { "PAPI_L1_DCM" }
 #endif
 
 #ifdef PAPI_L2
@@ -92,19 +94,41 @@
   #define WS_PAPI_NUM_EVENTS 2
   #define WS_PAPI_EVENTS { "PAPI_L2_DCM", "PAPI_l2_DCA" }
   #define WS_PAPI_UNCORE 0
-  #define WS_PAPI_UNCORE_MASK { 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF }
-  #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore"
 #endif
 
-#ifdef PAPI_L3_RAM
-  // L3
-  #define WS_PAPI_NUM_EVENTS 4
-  //#define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_TOT_CYC", "PAPI_L2_DCM" }
-  #define WS_PAPI_EVENTS {  /* "PAPI_L2_DCM", "PAPI_L2_DCA", */ /* "PAPI_BR_MSP", "PAPI_STL_ICY", */  "CPU_IO_REQUESTS_TO_MEMORY_IO:LOCAL_CPU_TO_REMOTE_MEM", "CPU_IO_REQUESTS_TO_MEMORY_IO:LOCAL_CPU_TO_LOCAL_MEM", "READ_REQUEST_TO_L3_CACHE:ALL", "L3_CACHE_MISSES:ALL" }
-  #define WS_PAPI_UNCORE 1
-  #define WS_PAPI_UNCORE_MASK { /* 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF */ 0x0101010101010101, 0x0101010101010101, 0x0101010101010101 , 0x0101010101010101 }
-  #define WS_PAPI_UNCORE_COMPONENT "perf_event_uncore"
+#ifdef PAPI_L3
+  //L3
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "PAPI_L3_TCM", "PAPI_L3_TCA" }
+  #define WS_PAPI_UNCORE 0
 #endif
+
+#ifdef PAPI_TLB
+  //L3
+  #define WS_PAPI_NUM_EVENTS 1
+  #define WS_PAPI_EVENTS { "PAPI_TLB_DM" }
+  #define WS_PAPI_UNCORE 0
+#endif
+
+#ifdef PAPI_NUMA
+  //L3
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "MEM_LOAD_UOPS_LLC_MISS_RETIRED:REMOTE_DRAM", "MEM_LOAD_UOPS_LLC_MISS_RETIRED:LOCAL_DRAM" }
+  #define WS_PAPI_UNCORE 0
+#endif
+
+#ifdef PAPI_L1_INS
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "PAPI_L1_ICM", "PAPI_TOT_INS"}
+  #define WS_PAPI_UNCORE 0
+#endif
+
+#ifdef PAPI_STALL
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "PAPI_STL_ICY", "PAPI_TOT_INS"}
+  #define WS_PAPI_UNCORE 0
+#endif
+
 
 #define MEM_CACHE_MISS_POS 0 /* Use L1_DCM as cache miss indicator */
 
