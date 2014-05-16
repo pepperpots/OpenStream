@@ -7,11 +7,9 @@
 #include <pthread.h>
 
 #include "fibers.h"
-#include "alloc.h"
 #include "cdeque.h"
 #include "config.h"
 #include "list.h"
-#include "trace.h"
 #include "profiling.h"
 
 #if ALLOW_PUSHES
@@ -169,6 +167,24 @@ typedef struct wstream_df_frame_cost {
   #define WSTREAM_DF_THREAD_PUSH_FIELDS
 #endif
 
+struct slab_cache;
+#if !NO_SLAB_ALLOCATOR
+  #define WSTREAM_DF_THREAD_SLAB_FIELDS \
+   struct slab_cache* slab_cache
+#else
+  #define WSTREAM_DF_THREAD_SLAB_FIELDS
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING
+  struct worker_event;
+  #define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS \
+    struct worker_event events[MAX_WQEVENT_SAMPLES]; \
+    unsigned int num_events; \
+    unsigned int previous_state_idx;
+#else
+  #define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS
+#endif
+
 /* T* worker threads have each their own private work queue, which
    contains the frames that are ready to be executed.  For now the
    control program will be distributing work round-robin, later we
@@ -207,46 +223,11 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   void *current_stack; // BUG in swap/get context: stack is not set
 } wstream_df_thread_t, *wstream_df_thread_p;
 
-typedef struct __attribute__ ((aligned (64))) wstream_df_numa_node
-{
-  slab_cache_t slab_cache;
-  wstream_df_thread_p leader;
-  wstream_df_thread_p workers[MAX_CPUS];
-  unsigned int num_workers;
-  int id;
-  unsigned long long frame_bytes_allocated;
-} wstream_df_numa_node_t, *wstream_df_numa_node_p;
-
-static inline void numa_node_init(wstream_df_numa_node_p node, int node_id)
-{
-  wstream_init_alloc(&node->slab_cache, node_id);
-  node->leader = NULL;
-  node->num_workers = 0;
-  node->id = node_id;
-  node->frame_bytes_allocated = 0;
-}
-
-static inline void numa_node_add_thread(wstream_df_numa_node_p node, wstream_df_thread_p thread)
-{
-#if !NO_SLAB_ALLOCATOR
-  thread->slab_cache = &node->slab_cache;
-#endif
-
-  thread->numa_node = node;
-
-  if(!node->leader || node->leader->worker_id > thread->worker_id)
-    node->leader = thread;
-
-  node->workers[node->num_workers] = thread;
-  node->num_workers++;
-}
-
 int wstream_self(void);
 
 int worker_id_to_cpu(unsigned int worker_id);
 int cpu_to_worker_id(int cpu);
 int cpu_used(int cpu);
-wstream_df_numa_node_p numa_node_by_id(unsigned int id);
 
 void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 		    unsigned int* max_worker, int* max_data);

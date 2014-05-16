@@ -6,6 +6,7 @@
 #include "config.h"
 #include "trace_file.h"
 #include "convert.h"
+#include "wstream_df.h"
 
 #define WQEVENT_STATECHANGE 0
 #define WQEVENT_SINGLEEVENT 1
@@ -113,10 +114,7 @@ typedef struct worker_event {
 
 #if ALLOW_WQEVENT_SAMPLING
 
-#define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS \
-  worker_state_change_t events[MAX_WQEVENT_SAMPLES]; \
-  unsigned int num_events; \
-  unsigned int previous_state_idx;
+//[MAX_WQEVENT_SAMPLES];
 
 struct wstream_df_thread;
 struct wstream_df_frame;
@@ -142,8 +140,6 @@ void trace_measure_end(struct wstream_df_thread* cthread);
 
 void dump_events_ostv(int num_workers, struct wstream_df_thread* wstream_df_worker_threads);
 #else
-
-#define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS
 
 #define trace_init(cthread) do { } while(0)
 #define trace_tcreate(cthread, frame) do { } while(0)

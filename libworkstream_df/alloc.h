@@ -8,8 +8,13 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #include "config.h"
+#include "trace.h"
+#include "error.h"
 #include "glib_extras.h"
+
+struct wstream_df_thread;
 
 #define SLAB_INITIAL_MEM       (1 << 30)
 #define SLAB_GLOBAL_REFILL_MEM (1 << 30)
@@ -120,13 +125,6 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 #define __slab_min_size 6 // 64 -- smallest slab
 #define __slab_max_size 21 // 2MiB -- biggest slab
 #define __slab_alloc_size 21 // 2MiB -- amount of memory that should be allocated in one go
-
-#if !NO_SLAB_ALLOCATOR
-  #define WSTREAM_DF_THREAD_SLAB_FIELDS \
-   slab_cache_p slab_cache
-#else
-  #define WSTREAM_DF_THREAD_SLAB_FIELDS
-#endif
 
 typedef struct slab
 {
@@ -305,7 +303,7 @@ static inline int slab_alloc_memalign(slab_cache_p slab_cache, void** ptr, size_
 }
 
 static inline void
-slab_refill (slab_cache_p slab_cache, unsigned int idx)
+slab_refill (struct wstream_df_thread* cthread, slab_cache_p slab_cache, unsigned int idx)
 {
   unsigned int num_slabs = 1 << (__slab_alloc_size - idx);
   const unsigned int slab_size = 1 << idx;
@@ -317,11 +315,18 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
 
   int alloc_size = num_slabs * (slab_size + __slab_metainfo_size);
 
+  if(cthread)
+	  trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
 
   assert (!slab_alloc_memalign (slab_cache,
 				&alloc,
 				__slab_align,
 				alloc_size));
+  if(cthread)
+	  trace_state_restore(cthread);
+
+  if(cthread)
+	  trace_state_change(cthread, WORKER_STATE_RT_INIT);
 
 pthread_spin_lock(&slab_cache->locks[idx]);
   slab_p new_head = (slab_p)(((char*)alloc) + __slab_metainfo_size);
@@ -337,6 +342,9 @@ pthread_spin_lock(&slab_cache->locks[idx]);
   new_head->next = slab_cache->slab_free_pool[idx];
   slab_cache->slab_free_pool[idx] = new_head;
 pthread_spin_unlock(&slab_cache->locks[idx]);
+
+  if(cthread)
+	  trace_state_restore(cthread);
 }
 
 static inline void
@@ -393,7 +401,7 @@ slab_warmup_size (slab_cache_p slab_cache, unsigned int size, unsigned int num_s
 
 
 static inline void *
-slab_alloc (slab_cache_p slab_cache, unsigned int size)
+slab_alloc (struct wstream_df_thread* cthread, slab_cache_p slab_cache, unsigned int size)
 {
   unsigned int idx = get_slab_index (size);
   const unsigned int slab_size = 1 << idx;
@@ -419,7 +427,7 @@ retry:
 
   if (slab_cache->slab_free_pool[idx] == NULL) {
     pthread_spin_unlock(&slab_cache->locks[idx]);
-    slab_refill (slab_cache, idx);
+    slab_refill (cthread, slab_cache, idx);
     goto retry;
   } else {
     slab_cache->slab_hits++;
@@ -521,8 +529,8 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
 #undef __slab_alloc_size
 
 #if !NO_SLAB_ALLOCATOR
-#  define wstream_alloc(SLAB, PP,A,S)			\
-  *(PP) = slab_alloc ((SLAB), (S))
+#  define wstream_alloc(CTHREAD, SLAB, PP,A,S)	\
+	*(PP) = slab_alloc ((CTHREAD), (SLAB), (S))
 #  define wstream_free(SLAB, P)			\
   slab_free ((SLAB), (P))
 #  define wstream_init_alloc(SLAB, ID)		\
@@ -544,7 +552,7 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
 #  define wstream_update_numa_node_of(P) \
   slab_update_numa_node_of(P)
 #else
-#  define wstream_alloc(SLAB, PP,A,S)			\
+#  define wstream_alloc(CTHREAD, SLAB, PP,A,S)			\
   assert (!posix_memalign ((void **) (PP), (A), (S)))
 #  define wstream_free(SLAB, P)			\
   free ((P))

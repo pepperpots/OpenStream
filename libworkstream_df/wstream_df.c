@@ -14,6 +14,9 @@
 #include "arch.h"
 #include "work_distribution.h"
 #include "tsc.h"
+#include "numa.h"
+#include "alloc.h"
+
 #include "prng.h"
 
 /***************************************************************************/
@@ -24,7 +27,6 @@ static __thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
 static wstream_df_thread_p wstream_df_worker_threads;
-static wstream_df_numa_node_t wstream_df_numa_nodes[MAX_NUMA_NODES];
 wstream_df_numa_node_p wstream_df_default_node;
 static int num_workers;
 static int* wstream_df_worker_cpus;
@@ -67,7 +69,7 @@ wstream_df_create_barrier ()
 {
   barrier_p barrier;
 
-  wstream_alloc (current_thread->slab_cache, &barrier, 64, sizeof (barrier_t));
+  wstream_alloc (current_thread, current_thread->slab_cache, &barrier, 64, sizeof (barrier_t));
   memset (barrier, 0, sizeof (barrier_t));
 
   /* Add one guard elemment, it will be matched by one increment of
@@ -151,7 +153,7 @@ wstream_df_taskwait ()
 	 this scheduler will be, so leave NULL then set when a barrier
 	 passes to the barrier's continuation).  */
 
-      wstream_alloc(cthread->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
+      wstream_alloc(cthread, cthread->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
       ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
       ws_prepcontext (&cbar->continuation_context, NULL, WSTREAM_STACK_SIZE, NULL);
 
@@ -560,7 +562,7 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 	wstream_df_frame_p fp = view->owner;
 
 	trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
-	wstream_alloc(slab_cache, &view->data, 64, size);
+	wstream_alloc(cthread, slab_cache, &view->data, 64, size);
 
 	if(!wstream_is_fresh(view->data)) {
 		int node_id = wstream_numa_node_of(view->data);
@@ -1200,7 +1202,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
     wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
 
   void *stack;
-  wstream_alloc(wstream_df_worker_threads[0].slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
+  wstream_alloc(NULL, wstream_df_worker_threads[0]->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
   errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
   wstream_df_worker->current_stack = stack;
 
@@ -1371,7 +1373,7 @@ init_stream (void *s, size_t element_size)
 void
 wstream_df_stream_ctor (void **s, size_t element_size)
 {
-  wstream_alloc(current_thread->slab_cache, s, 64, sizeof (wstream_df_stream_t));
+  wstream_alloc(current_thread, current_thread->slab_cache, s, 64, sizeof (wstream_df_stream_t));
   init_stream (*s, element_size);
 }
 
@@ -1382,7 +1384,7 @@ wstream_df_stream_array_ctor (void **s, size_t num_streams, size_t element_size)
 
   for (i = 0; i < num_streams; ++i)
     {
-      wstream_alloc(current_thread->slab_cache, &s[i], 64, sizeof (wstream_df_stream_t));
+      wstream_alloc(current_thread, current_thread->slab_cache, &s[i], 64, sizeof (wstream_df_stream_t));
       init_stream (s[i], element_size);
     }
 }
@@ -1634,7 +1636,7 @@ __builtin_ia32_tick (void *s, size_t burst)
       /* Allocate a fake view, with a fake data block, that allows to
 	 keep the same dependence resolution algorithm.  */
       size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size + sizeof (wstream_df_frame_t);
-      wstream_alloc(current_thread->slab_cache, &cons_frame, 64, size);
+      wstream_alloc(current_thread, current_thread->slab_cache, &cons_frame, 64, size);
       memset (cons_frame, 0, size);
 
       /* Avoid one atomic operation by setting the "next" field (which

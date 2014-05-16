@@ -1,5 +1,6 @@
 #include "work_distribution.h"
 #include "arch.h"
+#include "numa.h"
 #include "prng.h"
 
 #if ALLOW_PUSH_REORDER

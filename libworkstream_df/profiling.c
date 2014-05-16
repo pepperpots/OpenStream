@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "wstream_df.h"
+#include "numa.h"
 #include <pthread.h>
 
 #ifdef MATRIX_PROFILE
