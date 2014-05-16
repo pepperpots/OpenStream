@@ -517,13 +517,46 @@ void* get_curr_fp(void)
   return cthread->current_frame;
 }
 
-void determine_dominant_node(wstream_df_frame_p fp, int *id, size_t* size, int this_node_id)
+void determine_dominant_node_equal_random(wstream_df_frame_p fp, int *id, size_t* size, int this_node_id)
+{
+	int dominant_node = this_node_id;
+	int others[MAX_NUMA_NODES];
+	int num_others = 0;
+	int rand_idx;
+	size_t dominant_size = fp->bytes_prematch_nodes[this_node_id];
+	wstream_df_thread_p cthread = current_thread;
+
+	for(int i = 0; i < MAX_NUMA_NODES; i++) {
+		if((size_t)fp->bytes_prematch_nodes[i] == dominant_size) {
+			others[num_others++] = i;
+		}
+
+		if((size_t)fp->bytes_prematch_nodes[i] > dominant_size) {
+			dominant_node = i;
+			dominant_size = fp->bytes_prematch_nodes[i];
+			num_others = 0;
+		}
+	}
+
+	if(dominant_node != this_node_id && num_others) {
+		others[num_others++] = dominant_node;
+
+		rand_idx = prng_nextn(&cthread->rands, num_others);
+		*id = others[rand_idx];
+	} else {
+		*id = dominant_node;
+	}
+
+	*size = dominant_size;
+}
+
+void determine_dominant_node_equal_seq(wstream_df_frame_p fp, int *id, size_t* size, int this_node_id)
 {
 	int dominant_node = this_node_id;
 	size_t dominant_size = fp->bytes_prematch_nodes[this_node_id];
 
 	for(int i = 0; i < MAX_NUMA_NODES; i++) {
-		if(fp->bytes_prematch_nodes[i] > dominant_size) {
+		if((size_t)fp->bytes_prematch_nodes[i] > dominant_size) {
 			dominant_node = i;
 			dominant_size = fp->bytes_prematch_nodes[i];
 		}
@@ -538,9 +571,23 @@ void __built_in_wstream_df_determine_dominant_prematch_numa_node(void* f)
 	wstream_df_frame_p fp = f;
 	wstream_df_thread_p cthread = current_thread;
 
-	determine_dominant_node(fp, &fp->dominant_prematch_data_node_id,
-				&fp->dominant_prematch_data_size, cthread->numa_node->id);
+	#if defined(DEPENDENCE_AWARE_ALLOC_EQUAL_RANDOM)
+		determine_dominant_node_equal_random(fp, &fp->dominant_prematch_data_node_id,
+					&fp->dominant_prematch_data_size,
+					cthread->numa_node->id);
+	#elif defined(DEPENDENCE_AWARE_ALLOC_EQUAL_SEQ)
+		determine_dominant_node_equal_seq(fp, &fp->dominant_prematch_data_node_id,
+					&fp->dominant_prematch_data_size,
+					cthread->numa_node->id);
+	#else
+		determine_dominant_node_equal_seq(fp, &fp->dominant_prematch_data_node_id,
+					&fp->dominant_prematch_data_size,
+					cthread->numa_node->id);
 
+                #ifdef DEPENDENCE_AWARE_ALLOC
+		  #warning "No dependence aware allocation strategy defined! Using DEPENDENCE_AWARE_ALLOC_EQUAL_SEQ."
+		#endif
+	#endif
 
 	memset(fp->bytes_prematch_nodes, 0, sizeof(fp->bytes_prematch_nodes));
 }
@@ -550,7 +597,7 @@ void __built_in_wstream_df_determine_dominant_input_numa_node(void* f)
 	wstream_df_frame_p fp = f;
 	wstream_df_thread_p cthread = current_thread;
 
-	determine_dominant_node(fp, &fp->dominant_input_data_node_id,
+	determine_dominant_node_equal_seq(fp, &fp->dominant_input_data_node_id,
 				&fp->dominant_input_data_size, cthread->numa_node->id);
 
 	memset(fp->bytes_prematch_nodes, 0, sizeof(fp->bytes_prematch_nodes));
