@@ -7,6 +7,9 @@
 #include "trace.h"
 #include "wstream_df.h"
 #include "arch.h"
+#include "numa.h"
+
+int wstream_df_alloc_on_node(void* p, size_t size, int node);
 
 static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "wq_length",
@@ -34,8 +37,18 @@ static const char* state_names[] = {
 
 void trace_init(struct wstream_df_thread* cthread)
 {
+	size_t size = MAX_WQEVENT_SAMPLES*sizeof(cthread->events[0]);
+
 	cthread->num_events = 0;
 	cthread->previous_state_idx = 0;
+	cthread->events = malloc(size);
+
+	if(!cthread->events) {
+		exit(1);
+	}
+
+	wstream_df_alloc_on_node(cthread->events, size, cthread->numa_node->id);
+	//slab_force_advise_pages(cthread->events, size, MADV_HUGEPAGE);
 }
 
 void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)

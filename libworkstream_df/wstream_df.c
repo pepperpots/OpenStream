@@ -1074,6 +1074,9 @@ wstream_df_worker_thread_fn (void *data)
   current_thread = ((wstream_df_thread_p) data);
   wstream_df_thread_p cthread = ((wstream_df_thread_p) data);
 
+  if(cthread->worker_id != 0)
+    trace_init(cthread);
+
   init_wqueue_counters (cthread);
 
   worker_thread ();

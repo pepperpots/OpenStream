@@ -178,7 +178,7 @@ struct slab_cache;
 #if ALLOW_WQEVENT_SAMPLING
   struct worker_event;
   #define WSTREAM_DF_THREAD_EVENT_SAMPLING_FIELDS \
-    struct worker_event events[MAX_WQEVENT_SAMPLES]; \
+    struct worker_event* events; \
     unsigned int num_events; \
     unsigned int previous_state_idx;
 #else
