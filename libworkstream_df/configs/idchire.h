@@ -118,6 +118,17 @@
 #ifndef IN_GCC
 #include <string.h>
 
+static inline unsigned int mem_numa_node(unsigned int cpu)
+{
+	return cpu / 8;
+}
+
+static inline unsigned int sibling_wrap(unsigned int cpu, unsigned int sibling, unsigned int num_siblings)
+{
+	return (cpu - (cpu % num_siblings)) +
+		((cpu + (sibling + 1)) % num_siblings);
+}
+
 /* 8 levels are defined:
  * 0: 1st level cache, private
  * 1: 2nd level cache, private
@@ -193,8 +204,12 @@ static inline int mem_numa_num_hops(unsigned int a, unsigned int b)
 	assert(a < MAX_CPUS);
 	assert(a < MAX_CPUS);
 
-	int node_a = a / 8;
-	int node_b = b / 8;
+	int node_a = mem_numa_node(a);
+	int node_b = mem_numa_node(b);
+
+	assert(node_a < MAX_NUMA_NODES);
+	assert(node_b < MAX_NUMA_NODES);
+
 	int distance = node_distances[node_a][node_b];
 
 	switch(distance) {
@@ -258,19 +273,23 @@ static inline void mem_score_nodes(int* bytes, int* scores, int num_nodes)
 /* Returns the n-th sibling of a core at a NUMA hop distance of 1. */
 static inline int mem_numa_get_1hop_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	int numa_node = cpu / 8;
-	assert(cpu < MAX_CPUS);
+	int numa_node = mem_numa_node(cpu);
+	int base = (numa_node % 2) ? (numa_node-1) * 8 : (numa_node+1) * 8;
+	int ret = base + sibling_wrap(cpu % 8, sibling_num, 8);
 
-	if(numa_node % 2 == 0)
-	  return (8*(numa_node+1))+sibling_num;
-	else
-	  return (8*(numa_node-1))+sibling_num;
+	assert(cpu < MAX_CPUS);
+	assert(numa_node < MAX_NUMA_NODES);
+	assert(ret >= 0);
+	assert(ret < MAX_CPUS);
+
+	return ret;
 }
 
 /* Returns the n-th sibling of a core at a NUMA hop distance of 2. */
 static inline int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	int numa_node = cpu / 8;
+	int numa_node = mem_numa_node(cpu);
+	int ret;
 
 	static int twohops_siblings_node_0_15[16][96] = {
 		{ NUMA_NODE_CORES( 2), NUMA_NODE_CORES( 3), NUMA_NODE_CORES( 4), NUMA_NODE_CORES( 5), NUMA_NODE_CORES( 6), NUMA_NODE_CORES( 7), NUMA_NODE_CORES( 8), NUMA_NODE_CORES( 9), NUMA_NODE_CORES(12), NUMA_NODE_CORES(13), NUMA_NODE_CORES(16), NUMA_NODE_CORES(17)},
@@ -303,17 +322,26 @@ static inline int mem_numa_get_2hops_nth_sibling(unsigned int cpu, unsigned int 
 	};
 
 	assert(cpu < MAX_CPUS);
+	assert(numa_node < MAX_NUMA_NODES);
 
-	if(numa_node <= 15)
-		return twohops_siblings_node_0_15[numa_node][sibling_num];
-	else
-		return twohops_siblings_node_16_23[numa_node-16][sibling_num];
+	if(numa_node <= 15) {
+		assert(sibling_num < 96);
+		ret = twohops_siblings_node_0_15[numa_node][sibling_num];
+	} else {
+		assert(sibling_num < 80);
+		ret = twohops_siblings_node_16_23[numa_node-16][sibling_num];
+	}
+
+	assert(ret >= 0);
+	assert(ret < MAX_CPUS);
+
+	return ret;
 }
 
 /* Returns the n-th sibling of a core at a NUMA hop distance of 3. */
 static inline int mem_numa_get_3hops_nth_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	int numa_node = cpu / 8;
+	int numa_node = mem_numa_node(cpu);
 
 	static int threehops_siblings_node_0_15[16][80] = {
 		{ NUMA_NODE_CORES(10), NUMA_NODE_CORES(11), NUMA_NODE_CORES(14), NUMA_NODE_CORES(15), NUMA_NODE_CORES(18), NUMA_NODE_CORES(19), NUMA_NODE_CORES(20), NUMA_NODE_CORES(21), NUMA_NODE_CORES(22), NUMA_NODE_CORES(23)},
@@ -409,26 +437,19 @@ static inline int mem_transfer_costs(unsigned int a, unsigned int b)
 
 static inline int mem_nth_cache_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int base = cpu - (cpu % mem_cores_at_level(level, cpu));
-	unsigned int sibling = base + sibling_num;
+	unsigned int sibling = sibling_wrap(cpu, sibling_num, mem_cores_at_level(level, cpu));
 
 	assert(cpu < MAX_CPUS);
 	assert(level < MEM_NUM_LEVELS);
-
-	if(sibling == cpu)
-		return base + (((sibling_num + 1) % mem_cores_at_level(level, cpu)));
 
 	return sibling;
 }
 
 static inline int mem_nth_machine_sibling(unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int sibling = sibling_num % mem_cores_at_level(7, cpu);
+	unsigned int sibling = sibling_wrap(cpu, sibling_num, mem_cores_at_level(7, cpu));
 
 	assert(cpu < MAX_CPUS);
-
-	if(sibling == cpu)
-		return (sibling_num + 1) % mem_cores_at_level(7, cpu);
 
 	return sibling;
 }
