@@ -165,8 +165,8 @@ static inline unsigned int sibling_wrap(unsigned int cpu, unsigned int sibling, 
  */
 static inline int mem_cores_at_level(unsigned int level, unsigned int cpu)
 {
-	static int cores_at_level_node_0_15[] = {1, 1, 8, 8, 8, 96, 80, 192};
-	static int cores_at_level_node_16_23[] = {1, 1, 8, 8, 8, 80, 96, 192};
+	static int cores_at_level_node_0_15[MEM_NUM_LEVELS] = {1, 1, 8, 8, 8, 96, 80, 192};
+	static int cores_at_level_node_16_23[MEM_NUM_LEVELS] = {1, 1, 8, 8, 8, 80, 96, 192};
 	int numa_node = cpu / 8;
 
 	assert(level < MEM_NUM_LEVELS);
@@ -181,7 +181,7 @@ static inline int mem_cores_at_level(unsigned int level, unsigned int cpu)
 /* Returns the name of a level in the memory hierarchy */
 static inline const char* mem_level_name(unsigned int level)
 {
-	const char* level_names[] = {"same_l1",
+	const char* level_names[MEM_NUM_LEVELS] = {"same_l1",
 				"same_l2",
 				"same_l3",
 				"same_numa",
