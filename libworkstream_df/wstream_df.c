@@ -14,6 +14,7 @@
 #include "arch.h"
 #include "work_distribution.h"
 #include "tsc.h"
+#include "prng.h"
 
 /***************************************************************************/
 /***************************************************************************/
@@ -928,7 +929,7 @@ worker_thread (void)
 
   current_barrier = NULL;
 
-  cthread->rands = 77777 + cthread->worker_id * 19;
+  prng_init(&cthread->rands, cthread->worker_id);
   cthread->last_steal_from = -1;
 
   /* Worker 0 has already been initialized */

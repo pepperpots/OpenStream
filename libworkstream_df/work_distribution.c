@@ -1,5 +1,6 @@
 #include "work_distribution.h"
 #include "arch.h"
+#include "prng.h"
 
 #if ALLOW_PUSH_REORDER
 /*
@@ -133,6 +134,7 @@ int work_push_beneficial_owner(wstream_df_frame_p fp, wstream_df_thread_p cthrea
   int numa_node_id;
   int max_data;
   wstream_df_numa_node_p numa_node;
+  unsigned int rand_idx;
 
   /* Determine node id of owning NUMA node */
   numa_node_id = slab_numa_node_of(fp);
@@ -140,8 +142,8 @@ int work_push_beneficial_owner(wstream_df_frame_p fp, wstream_df_thread_p cthrea
   if(numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
     numa_node = numa_node_by_id(numa_node_id);
-    cthread->rands = cthread->rands * 1103515245 + 12345;
-    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+    rand_idx = prng_nextn(&cthread->rands, numa_node->num_workers);
+    max_worker = numa_node->workers[rand_idx]->worker_id;
 
     /* Set amount of data to frame size */
     max_data = fp->size;
@@ -172,6 +174,7 @@ int work_push_beneficial_split_owner(wstream_df_frame_p fp, wstream_df_thread_p 
   int numa_node_id;
   int max_data;
   wstream_df_numa_node_p numa_node;
+  unsigned int rand_idx;
 
   /* Determine node id of owning NUMA node */
   max_data = fp->dominant_input_data_size;
@@ -184,8 +187,8 @@ int work_push_beneficial_split_owner(wstream_df_frame_p fp, wstream_df_thread_p 
   if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
     numa_node = numa_node_by_id(numa_node_id);
-    cthread->rands = cthread->rands * 1103515245 + 12345;
-    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+    rand_idx = prng_nextn(&cthread->rands, numa_node->num_workers);
+    max_worker = numa_node->workers[rand_idx]->worker_id;
   } else {
     /* Node unknown, use local worker by default */
       get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
@@ -214,6 +217,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   int max_data;
   size_t data[MAX_NUMA_NODES];
   wstream_df_numa_node_p numa_node;
+  unsigned int rand_idx;
 
   /* Overhead for pushing small frames is too high */
   if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
@@ -245,8 +249,8 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
     numa_node = numa_node_by_id(numa_node_id);
-    cthread->rands = cthread->rands * 1103515245 + 12345;
-    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+    rand_idx = prng_nextn(&cthread->rands, numa_node->num_workers);;
+    max_worker = numa_node->workers[rand_idx]->worker_id;
   } else {
 	return 0;
   }
@@ -293,8 +297,8 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
     numa_node = numa_node_by_id(numa_node_id);
-    cthread->rands = cthread->rands * 1103515245 + 12345;
-    max_worker = numa_node->workers[cthread->rands % numa_node->num_workers]->worker_id;
+    rand_idx = prng_nextn(&cthread->rands, numa_node->num_workers);
+    max_worker = numa_node->workers[rand_idx]->worker_id;
   } else if(cthread->numa_node->id == numa_node_id) {
     /* Node unknown, use local worker by default */
       get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
@@ -428,8 +432,8 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 	  attempt < mem_num_steal_attempts_at_level(level) && fp == NULL;
 	  attempt++)
 	{
-	  cthread->rands = cthread->rands * 1103515245 + 12345;
-	  sibling_num = (cthread->rands >> 16) % mem_cores_at_level(level, cthread->cpu);
+	  ncores = mem_cores_at_level(level, cthread->cpu);
+	  sibling_num = prng_nextn(&cthread->rands, ncores);
 	  steal_from_cpu = mem_nth_sibling_at_level(level, cthread->cpu, sibling_num);
 
 	  if(cpu_used(steal_from_cpu)) {
