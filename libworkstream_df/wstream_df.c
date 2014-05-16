@@ -802,11 +802,15 @@ void __built_in_wstream_df_reuse_update_data(void* v)
 
 	  memcpy(in_view->data, in_view->reuse_data_view->data, in_view->horizon);
 
-	  trace_data_write(cthread, in_view->horizon, in_view->data);
-	  if(!wstream_is_fresh(in_view->reuse_data_view->data)) {
-	    int node_id = wstream_numa_node_of(in_view->reuse_data_view->data);
-	    if(node_id >= 0)
-	      trace_data_read(cthread, node_id*8, in_view->horizon, 0, in_view->reuse_data_view->data);
+	  int node_id = wstream_numa_node_of(in_view->reuse_data_view->data);
+
+	  if(node_id != -1) {
+	    wstream_df_thread_p leader = leader_of_numa_node_id(node_id);
+
+	      if(!leader)
+		trace_data_read(cthread, 0, in_view->horizon, 0, in_view->reuse_data_view->data);
+	      else
+	        trace_data_read(cthread, leader->cpu, in_view->horizon, 0, in_view->reuse_data_view->data);
 	  }
 
 
@@ -1750,13 +1754,15 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
   wstream_df_view_p view = v;
 
   if(is_write)
-    trace_data_write(cthread, view->burst, view->data);
+    trace_data_write(cthread, view->burst, (uint64_t)view->data);
   else {
-    if(!wstream_is_fresh(view->data)) {
       int node_id = wstream_numa_node_of(view->data);
-      if(node_id >= 0)
-	trace_data_read(cthread, node_id*8, wstream_size_of(view->data), 0, view->data);
-    }
+      wstream_df_thread_p leader = leader_of_numa_node_id(node_id);
+
+      if(!leader)
+	trace_data_read(cthread, 0, wstream_size_of(view->data), 0, view->data);
+      else
+	trace_data_read(cthread, leader->cpu, wstream_size_of(view->data), 0, view->data);
   }
 }
 
