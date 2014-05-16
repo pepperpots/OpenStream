@@ -10,8 +10,29 @@
 #include <sys/mman.h>
 #include "config.h"
 
+#define SLAB_INITIAL_MEM       (1 << 30)
+#define SLAB_GLOBAL_REFILL_MEM (1 << 30)
+
 #define SLAB_NUMA_CHUNK_SIZE 65536
 #define SLAB_NUMA_MAX_ADDR_AT_ONCE 1000
+
+#define PAGE_SIZE 4096
+#define ROUND_UP(N, S) ((((N) + (S) - 1) / (S)) * (S))
+
+static inline void* align_page_boundary(void* addr)
+{
+	return (void*)(((long)addr) & ~(PAGE_SIZE-1));
+}
+
+static inline size_t round_page_size(size_t size)
+{
+	return ROUND_UP(size, PAGE_SIZE);
+}
+
+static inline size_t size_max2(size_t a, size_t b)
+{
+  return (a > b) ? a : b;
+}
 
 static inline int slab_get_numa_node(void* address, unsigned int size)
 {
@@ -85,7 +106,7 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 typedef struct slab
 {
   struct slab * next;
-
+  int num_sub_objects;
 } slab_t, *slab_p;
 
 typedef struct slab_metainfo {
@@ -96,8 +117,7 @@ typedef struct slab_metainfo {
 	int numa_node;
 } slab_metainfo_t, *slab_metainfo_p;
 
-#define ROUND_UP(x,y) (((x)+(y)-1)/(y))
-#define __slab_metainfo_size (ROUND_UP(sizeof(slab_metainfo_t), __slab_align)*__slab_align)
+#define __slab_metainfo_size (ROUND_UP(sizeof(slab_metainfo_t), __slab_align))
 
 typedef struct slab_cache {
   slab_p slab_free_pool[__slab_max_size + 1];
@@ -114,6 +134,9 @@ typedef struct slab_cache {
   unsigned long long slab_toobig_freed_bytes;
   unsigned int allocator_id;
   unsigned int num_objects;
+  void* free_mem_ptr;
+  size_t free_mem_bytes;
+  pthread_spinlock_t free_mem_lock;
 } slab_cache_t, *slab_cache_p;
 
 static inline unsigned int
@@ -212,13 +235,49 @@ slab_metainfo_init(slab_cache_p slab_cache, slab_metainfo_p metainfo)
       metainfo->numa_node = -1;
 }
 
+static inline int slab_alloc_memalign(slab_cache_p slab_cache, void** ptr, size_t alignment, size_t size)
+{
+  size_t align_rest = size % alignment;
+  size_t alloc_size = (align_rest) ? size + alignment - align_rest : size;
+
+  pthread_spin_lock(&slab_cache->free_mem_lock);
+
+  if(slab_cache->free_mem_bytes < alloc_size) {
+    if(slab_cache->free_mem_bytes)
+      printf("wasted %zu bytes\n", slab_cache->free_mem_bytes);
+
+    size_t global_alloc_size = size_max2(alloc_size, SLAB_GLOBAL_REFILL_MEM);
+
+    if(posix_memalign(&slab_cache->free_mem_ptr, alignment, global_alloc_size))
+      {
+	pthread_spin_unlock(&slab_cache->free_mem_lock);
+	return 1;
+      }
+
+    slab_cache->free_mem_bytes = global_alloc_size;
+  }
+
+  if(((long)slab_cache->free_mem_bytes) % alignment)
+    {
+      pthread_spin_unlock(&slab_cache->free_mem_lock);
+      return 1;
+    }
+
+  *ptr = slab_cache->free_mem_ptr;
+
+  slab_cache->free_mem_bytes -= alloc_size;
+  slab_cache->free_mem_ptr = ((char*)slab_cache->free_mem_ptr)+alloc_size;
+
+  pthread_spin_unlock(&slab_cache->free_mem_lock);
+
+  return 0;
+}
+
 static inline void
 slab_refill (slab_cache_p slab_cache, unsigned int idx)
 {
   unsigned int num_slabs = 1 << (__slab_alloc_size - idx);
   const unsigned int slab_size = 1 << idx;
-  unsigned int i;
-  slab_p s;
   void* alloc = NULL;
   slab_metainfo_p metainfo;
 
@@ -228,31 +287,23 @@ slab_refill (slab_cache_p slab_cache, unsigned int idx)
   int alloc_size = num_slabs * (slab_size + __slab_metainfo_size);
 
 
-  assert (!posix_memalign (&alloc,
-			   __slab_align,
-			   alloc_size));
+  assert (!slab_alloc_memalign (slab_cache,
+				&alloc,
+				__slab_align,
+				alloc_size));
 
 pthread_spin_lock(&slab_cache->locks[idx]);
   slab_p new_head = (slab_p)(((char*)alloc) + __slab_metainfo_size);
+  metainfo = slab_metainfo(new_head);
+  slab_metainfo_init(slab_cache, metainfo);
 
-  s = new_head; //slab_cache->slab_free_pool[idx]; // avoid useless warning;
-  for (i = 0; i < num_slabs; ++i)
-    {
-      metainfo = slab_metainfo(s);
-      slab_metainfo_init(slab_cache, metainfo);
-
-      if(i == num_slabs-1) {
-	s->next = slab_cache->slab_free_pool[idx];
-      } else {
-	s->next = (slab_p) (((char *) s) + slab_size + __slab_metainfo_size);
-	s = s->next;
-      }
-    }
+  new_head->num_sub_objects = num_slabs;
 
   slab_cache->slab_refills++;
   slab_cache->slab_bytes += num_slabs * slab_size;
 
   slab_cache->num_objects += num_slabs;
+  new_head->next = slab_cache->slab_free_pool[idx];
   slab_cache->slab_free_pool[idx] = new_head;
 pthread_spin_unlock(&slab_cache->locks[idx]);
 }
@@ -314,7 +365,10 @@ static inline void *
 slab_alloc (slab_cache_p slab_cache, unsigned int size)
 {
   unsigned int idx = get_slab_index (size);
-  void *res;
+  const unsigned int slab_size = 1 << idx;
+  void* res;
+  slab_p head;
+  slab_p new_head;
   slab_metainfo_p metainfo;
 
   slab_cache->slab_allocations++;
@@ -333,23 +387,38 @@ retry:
   pthread_spin_lock(&slab_cache->locks[idx]);
 
   if (slab_cache->slab_free_pool[idx] == NULL) {
-	  pthread_spin_unlock(&slab_cache->locks[idx]);
-	  slab_refill (slab_cache, idx);
-	  goto retry;
+    pthread_spin_unlock(&slab_cache->locks[idx]);
+    slab_refill (slab_cache, idx);
+    goto retry;
   } else {
     slab_cache->slab_hits++;
   }
 
-  res = (void *) slab_cache->slab_free_pool[idx];
-  slab_cache->slab_free_pool[idx] = slab_cache->slab_free_pool[idx]->next;
+  head = slab_cache->slab_free_pool[idx];
+
+  if(head->num_sub_objects > 1)
+    {
+      new_head = (slab_p) (((char *) head) + slab_size + __slab_metainfo_size);
+      metainfo = slab_metainfo(new_head);
+      slab_metainfo_init(slab_cache, metainfo);
+      new_head->next = head->next;
+      new_head->num_sub_objects = head->num_sub_objects-1;
+    }
+  else
+    {
+      new_head = head->next;
+    }
+
+  slab_cache->slab_free_pool[idx] = new_head;
 
   pthread_spin_unlock(&slab_cache->locks[idx]);
 
-  metainfo = slab_metainfo(res);
+  metainfo = slab_metainfo(head);
   metainfo->size = size;
   slab_cache->num_objects--;
+  res = head;
 
-  return res;
+  return (void*)res;
 }
 
 static inline void
@@ -369,6 +438,7 @@ slab_free (slab_cache_p slab_cache, void *e)
     {
       pthread_spin_lock(&slab_cache->locks[idx]);
       elem->next = slab_cache->slab_free_pool[idx];
+      elem->num_sub_objects = 1;
       slab_cache->slab_free_pool[idx] = elem;
       pthread_spin_unlock(&slab_cache->locks[idx]);
 
@@ -397,11 +467,17 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
   slab_cache->slab_toobig_frees = 0;
   slab_cache->slab_toobig_freed_bytes = 0;
   slab_cache->num_objects = 0;
+  slab_cache->free_mem_bytes = SLAB_INITIAL_MEM;
+
+  pthread_spin_init(&slab_cache->free_mem_lock, PTHREAD_PROCESS_PRIVATE);
+
+  if(posix_memalign(&slab_cache->free_mem_ptr, __slab_align, slab_cache->free_mem_bytes) != 0)
+    wstream_df_fatal("Could not reserve initial memory for slab allocator\n");
+
 
   for (i = 0; i < __slab_max_size + 1; ++i)
     pthread_spin_init(&slab_cache->locks[i], PTHREAD_PROCESS_PRIVATE);
 }
-
 
 #undef __slab_align
 #undef __slab_min_size
