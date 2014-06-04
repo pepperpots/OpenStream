@@ -354,6 +354,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 	      dsk_se.header.active_frame = th->events[last_state_idx].active_frame;
 	      dsk_se.state = state;
 	      dsk_se.end_time = th->events[k].time-min_time;
+
 	      write_struct_convert(fp, &dsk_se, sizeof(dsk_se), trace_state_event_conversion_table, 0);
 	    }
 
