@@ -371,43 +371,14 @@ void dump_numa_counters_single(wstream_df_numa_node_p numa_node)
 
 void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
-	unsigned int i, level;
-	unsigned long long bytes_mem[MEM_NUM_LEVELS];
-	unsigned long long bytes_total = 0;
-
 #ifdef WS_PAPI_PROFILE
 	const char* events[] = WS_PAPI_EVENTS;
 	long long papi_counters_accum[WS_PAPI_NUM_EVENTS];
 	int evt;
-#endif
 
-	memset(bytes_mem, 0, sizeof(bytes_mem));
-
-	for (i = 0; i < num_workers; ++i) {
-		dump_wqueue_counters_single(&wstream_df_worker_threads[i]);
-
-		for(level = 0; level < MEM_NUM_LEVELS; level++)
-			bytes_mem[level] += wstream_df_worker_threads[i]->bytes_mem[level];
-	}
-
-	for (i = 0; i < MAX_NUMA_NODES; ++i) {
-		dump_numa_counters_single(numa_node_by_id(i));
-	}
-
-	for(level = 0; level < MEM_NUM_LEVELS; level++)
-		bytes_total += bytes_mem[level];
-
-	for(level = 0; level < MEM_NUM_LEVELS; level++) {
-		printf ("Overall bytes_%s = %lld (%f %%)\n",
-			mem_level_name(level),
-			bytes_mem[level],
-			100.0*(double)bytes_mem[level]/(double)bytes_total);
-	}
-
-#ifdef WS_PAPI_PROFILE
 	memset(papi_counters_accum, 0, sizeof(papi_counters_accum));
 
-	for (i = 0; i < num_workers; ++i) {
+	for (int i = 0; i < num_workers; ++i) {
 		for(evt = 0; evt < WS_PAPI_NUM_EVENTS; evt++) {
 			papi_counters_accum[evt] += wstream_df_worker_threads[i]->papi_counters[evt];
 		}
