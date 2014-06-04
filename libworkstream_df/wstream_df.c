@@ -460,10 +460,8 @@ wstream_df_prematch_dependences (void *v, void *s, bool is_read_view_p)
   wstream_df_stream_p stream = (wstream_df_stream_p) s;
   wstream_df_view_p view = (wstream_df_view_p) v;
   wstream_df_list_p prod_queue = &stream->producer_queue;
-  wstream_df_list_p cons_queue = &stream->consumer_queue;
-  wstream_df_thread_p cthread = current_thread;
 
-  int reached_position = 0; //view->reached_position;
+  unsigned int reached_position = 0; //view->reached_position;
   wstream_df_frame_p this_fp = (wstream_df_frame_p) view->owner;
 
   pthread_mutex_lock (&stream->stream_lock);
@@ -480,20 +478,13 @@ wstream_df_prematch_dependences (void *v, void *s, bool is_read_view_p)
 	      {
 		      wstream_df_frame_p prod_fp = prod_view->owner;
 		      int numa_node = prod_fp->dominant_input_data_node_id;
-		      int factor = 1;
 
 		      if(prod_view->reuse_associated_view)
-			{
 			  if(prod_view->reuse_associated_view->reuse_data_view)
-			    {
 			      numa_node = wstream_numa_node_of(prod_view->reuse_associated_view->reuse_data_view->data);
-			      factor = 2;
-			    }
-			}
 
-		      if(numa_node >= 0 && numa_node < MAX_NUMA_NODES) {
-			      this_fp->bytes_prematch_nodes[numa_node] += prod_view->burst*factor;
-		      }
+		      if(numa_node >= 0 && numa_node < MAX_NUMA_NODES)
+			      this_fp->bytes_prematch_nodes[numa_node] += prod_view->burst;
 
 		      reached_position += prod_view->burst;
 	      }
