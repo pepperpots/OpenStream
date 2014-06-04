@@ -1024,7 +1024,6 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	  trace_task_exec_start(cthread, fp);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 
-
 	  update_papi(cthread);
 	  trace_runtime_counters(cthread);
 	  fp->work_fn (fp);
