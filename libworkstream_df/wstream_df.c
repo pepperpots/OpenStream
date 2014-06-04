@@ -361,10 +361,17 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
 #if ALLOW_PUSHES
       int target_worker;
-
       int beneficial = work_push_beneficial(fp, cthread, num_workers, &target_worker);
-
       /* Check whether the frame should be pushed somewhere else */
+
+#ifdef PUSH_ONLY_IF_NOT_STOLEN_AND_CACHE_EMPTY
+      int curr_stolen = (cthread->current_frame &&
+			 ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL);
+
+      if(curr_stolen && !cthread->own_next_cached_thread)
+	beneficial = 0;
+#endif
+
       if(beneficial)
 	{
 	  if(work_try_push(fp, target_worker, cthread, wstream_df_worker_threads))

@@ -44,6 +44,8 @@
 
 #define REUSE_COPY_ON_NODE_CHANGE
 
+//#define PUSH_ONLY_IF_NOT_STOLEN_AND_CACHE_EMPTY
+
 //#define PAPI_L1
 //#define PAPI_L2
 //#define PAPI_L3_RAM
