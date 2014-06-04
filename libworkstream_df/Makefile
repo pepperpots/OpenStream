@@ -9,7 +9,7 @@ INST_DIR = $(THIS_DIR)/../install
 # GCC with C11 support
 GCC = $(INST_DIR)/bin/gcc
 
-WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS) -std=c11
+WSTREAM_CFLAGS=		-g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CFLAGS) -std=c11 -Wno-unused-parameter
 WSTREAM_LDFLAGS=	-lpthread $(LDFLAGS) -lnuma -lrt
 WSTREAM_DEPS=		wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+=		cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h tsc.h
