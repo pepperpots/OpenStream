@@ -108,9 +108,7 @@ void import_pushes(wstream_df_thread_p cthread)
 int work_push_beneficial_max_writer(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
 {
   unsigned int max_worker;
-  int numa_node_id;
   int max_data;
-  wstream_df_numa_node_p numa_node;
 
   /* Determine which worker write most of the frame's input data */
   get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
@@ -231,7 +229,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
     int factor = 1;
 
     if(vi->reuse_data_view)
-      factor = 2;
+      factor = 1;
 
     if(node_id != -1)
       data[node_id] += vi->horizon*factor;
@@ -241,7 +239,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   numa_node_id = cthread->numa_node->id;
 
   for(int i = 0; i < MAX_NUMA_NODES; i++) {
-    if(data[i] > max_data) {
+    if((int)data[i] > max_data) {
       max_data = data[i];
       numa_node_id = i;
     }
@@ -260,7 +258,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   return 1;
 }
 
-int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, unsigned int* target_worker)
 {
   unsigned int max_worker;
   int numa_node_id;
@@ -458,7 +456,7 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
 int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
 {
   int res;
-  int lcl_target_worker;
+  unsigned int lcl_target_worker;
 
 #if defined(PUSH_STRATEGY_MAX_WRITER)
   res = work_push_beneficial_max_writer(fp, cthread, num_workers, &lcl_target_worker);
@@ -472,6 +470,8 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   res = work_push_beneficial_split_owner_chain_inner_mw(fp, cthread, num_workers, &lcl_target_worker);
 #elif defined(PUSH_STRATEGY_SPLIT_SCORE_NODES)
   res = work_push_beneficial_split_score_nodes(fp, cthread, num_workers, &lcl_target_worker);
+/* #elif defined(PUSH_STRATEGY_REUSE_OWNER) */
+/*   res = work_push_beneficial_reuse_owner(fp, cthread, num_workers, &lcl_target_worker); */
 #else
   #error "No push strategy defined" */
 #endif
@@ -633,7 +633,6 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
 {
   unsigned int cpu;
   int level;
-  int allocator, allocator_cpu;
   wstream_df_frame_p fp = NULL;
 
   /* Try to obtain frame from the local cache */
