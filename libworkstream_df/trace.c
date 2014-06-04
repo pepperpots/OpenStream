@@ -23,17 +23,6 @@ static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
 };
 
 #if ALLOW_WQEVENT_SAMPLING
-static const char* state_names[] = {
-  "seeking",
-  "taskexec",
-  "tcreate",
-  "resdep",
-  "tdec",
-  "broadcast",
-  "init",
-  "estimate_costs",
-  "reorder"
-};
 
 void trace_init(struct wstream_df_thread* cthread)
 {
@@ -559,14 +548,6 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
     }
   }
 
-#if 0
-  for(i = 0; i < WORKER_STATE_MAX; i++) {
-    printf("Overall time for state %s: %lld (%.6f %%)\n",
-	   state_names[i],
-	   state_durations[i],
-	   ((double)state_durations[i] / (double)total_duration)*100.0);
-  }
-#endif
   fclose(fp);
 }
 
