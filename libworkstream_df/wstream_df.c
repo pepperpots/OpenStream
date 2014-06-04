@@ -305,6 +305,17 @@ void get_max_worker_same_node(int* bytes_cpu, unsigned int num_workers,
   *pmax_data = max_data;
 }
 
+void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p fp)
+{
+  for(struct wstream_df_view* v = fp->input_view_chain; v; v = v->view_chain_next) {
+    if(v->data && wstream_is_fresh(v->data) && wstream_size_of(v->data) > 10000) {
+      wstream_update_numa_node_of(v->data);
+      trace_frame_info(cthread, v->data);
+      slab_set_max_initial_writer_of(v->data, 0, 0);
+    }
+  }
+}
+
 /* Decrease the synchronization counter by N.  */
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
@@ -335,6 +346,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
   /* Schedule the thread if its synchronization counter reaches 0.  */
   if (sc == 0)
     {
+      update_numa_nodes_of_views(cthread, fp);
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
@@ -611,7 +623,6 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 
 	if(!wstream_is_fresh(view->data)) {
 		int node_id = wstream_numa_node_of(view->data);
-		trace_frame_info(cthread, view->data);
 
 		if(node_id >= 0)
 			fp->bytes_prematch_nodes[node_id] += size;
@@ -654,21 +665,10 @@ void __built_in_wstream_df_free_view_data(void* v)
 	wstream_df_thread_p cthread = current_thread;
 
 	size_t size = wstream_size_of(view->data);
-
-	if(size >= 10000) {
-		if(wstream_is_fresh(view->data)) {
-			wstream_set_max_initial_writer_of(view->data, 0, 0);
-			wstream_update_numa_node_of(view->data);
-		}
-	}
-
 	int node_id;
 
 	if(size < 10000 || (node_id = wstream_numa_node_of(view->data)) < 0) {
 		wstream_free(cthread->slab_cache, view->data);
-
-		if(size >= 10000)
-			printf("Node %d: Freeing %d bytes locally\n", cthread->numa_node->id, size);
 	} else {
 		wstream_df_numa_node_p node = numa_node_by_id(node_id);
 		wstream_free(&node->slab_cache, view->data);
@@ -718,7 +718,7 @@ void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n)
 
 void __built_in_wstream_df_dec_view_ref_vec(void* data, size_t num, size_t n)
 {
-  for (int i = 0; i < num; ++i)
+  for (size_t i = 0; i < num; ++i)
     {
       wstream_df_view_p dummy_view = (wstream_df_view_p) data;
       wstream_df_view_p view = &((wstream_df_view_p) dummy_view->next)[i];
@@ -752,53 +752,47 @@ void __built_in_wstream_df_reuse_update_data(void* v)
   wstream_df_view_p assoc_out_view = v;
   wstream_df_view_p in_view = assoc_out_view->reuse_consumer_view;
   wstream_df_thread_p cthread = current_thread;
-
-  int curr_stolen = (cthread->current_frame &&
-		     ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL);
+  wstream_df_frame_p in_frame;
 
   if(in_view)
     {
-        if(in_view->horizon >= 10000) {
-	  if(wstream_is_fresh(in_view->reuse_data_view->data)) {
-	    wstream_set_max_initial_writer_of(in_view->reuse_data_view->data, 0, 0);
-	    wstream_update_numa_node_of(in_view->reuse_data_view->data);
-	  }
-	}
+      in_frame = in_view->owner;
 
-	int in_node = wstream_numa_node_of(in_view->data);
-	int reuse_node = wstream_numa_node_of(in_view->reuse_data_view->data);
-	int exec_node = cthread->numa_node->id;
+      int in_node = in_frame->dominant_prematch_data_node_id;
+      int exec_node = cthread->numa_node->id;
+      int force_reuse;
 
-#ifdef DEPENDENCE_AWARE_ALLOC
-	if(reuse_node != exec_node && exec_node != in_node && in_view->horizon > 100000)
-	{
-		__built_in_wstream_df_free_view_data(in_view);
-		__built_in_wstream_df_alloc_view_data_slab(in_view, in_view->horizon, cthread->slab_cache);
-		in_node = exec_node;
-	}
-#endif
-
-	int force_reuse;
-
-#ifdef COPY_ON_NODE_CHANGE
-	force_reuse = 0;
+#ifdef REUSE_COPY_ON_NODE_CHANGE
+      force_reuse = 0;
 #else
-	force_reuse = 1;
+      force_reuse = 1;
 #endif
 
-	if(force_reuse || (in_node == reuse_node && in_view->horizon > 100000))
+#ifdef REUSE_DONTCOPY_ON_STEAL
+        int curr_stolen = (cthread->current_frame &&
+			   ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL);
+
+	if(curr_stolen)
+	  force_reuse = 1;
+#endif
+
+	if(wstream_is_fresh(in_view->reuse_data_view->data)) {
+		wstream_set_max_initial_writer_of(in_view->reuse_data_view->data, 0, 0);
+		wstream_update_numa_node_of(in_view->reuse_data_view->data);
+	}
+	int reuse_node = wstream_numa_node_of(in_view->reuse_data_view->data);
+
+      if(force_reuse || (reuse_node == in_node))
 	{
+	do_reuse:
 	  __built_in_wstream_df_free_view_data(in_view);
 
 	  in_view->data = in_view->reuse_data_view->data;
 	  cthread->reuse_addr += in_view->horizon;
 	}
-	else
+      else
 	{
 	  cthread->reuse_copy += in_view->horizon;
-	  trace_state_change(current_thread, WORKER_STATE_RT_INIT);
-
-	  memcpy(in_view->data, in_view->reuse_data_view->data, in_view->horizon);
 
 	  int node_id = wstream_numa_node_of(in_view->reuse_data_view->data);
 
@@ -811,6 +805,9 @@ void __built_in_wstream_df_reuse_update_data(void* v)
 	        trace_data_read(cthread, leader->cpu, in_view->horizon, 0, in_view->reuse_data_view->data);
 	  }
 
+	  trace_state_change(current_thread, WORKER_STATE_RT_INIT);
+	  memcpy(in_view->data, in_view->reuse_data_view->data, in_view->horizon);
+	  trace_data_write(cthread, in_view->horizon, (uint64_t)in_view->data);
 
 	  __built_in_wstream_df_dec_view_ref(in_view->reuse_data_view, 1);
 	  __built_in_wstream_df_dec_frame_ref(in_view->reuse_data_view->owner, 1);
@@ -825,8 +822,6 @@ void __built_in_wstream_df_reuse_update_data(void* v)
 void
 match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wstream_df_view_p in_view)
 {
-  wstream_df_view_p assoc_view = out_view->reuse_associated_view;
-
   if(in_view->reached_position != 0 || out_view->burst != in_view->horizon)
     {
       fprintf(stderr,
@@ -1768,7 +1763,7 @@ void __built_in_wstream_df_trace_view_access_vec(size_t num, void* v, int is_wri
 {
   wstream_df_view_p view = v;
 
-  for (int i = 0; i < num; ++i)
+  for (size_t i = 0; i < num; ++i)
     {
       wstream_df_view_p pview = &((wstream_df_view_p) view->next)[i];
       __built_in_wstream_df_trace_view_access(pview, is_write);
