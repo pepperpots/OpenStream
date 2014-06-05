@@ -363,42 +363,6 @@ static inline int mem_num_steal_attempts_at_level(unsigned int level)
 	return steals_at_level[level];
 }
 
-/* static inline void mem_estimate_frame_transfer_costs(int metadata_owner, int* bytes_cpu, long long* cache_misses, long long* cache_misses_now, int allocator, unsigned long long* costs) */
-/* { */
-/* 	int i, j; */
-/* 	unsigned long long cost; */
-/* 	unsigned long long cost_allocator; */
-/* 	unsigned long long bytes; */
-/* 	unsigned long long bytes_at_allocator = 0; */
-/* 	unsigned long long cache_miss_diff; */
-
-/* 	memset(costs, 0, sizeof(*costs)*MAX_CPUS); */
-
-/* 	for(i = 0; i < MAX_CPUS; i++) { */
-/* 		for(j = 0; j < MAX_CPUS; j++) { */
-/* 			bytes = bytes_cpu[i]; */
-
-/* 			if(i == metadata_owner) */
-/* 				bytes += 1024; */
-
-/* 			if(bytes) { */
-/* 				cost = mem_transfer_costs(i, j); */
-/* 				cost_allocator = mem_transfer_costs(j, allocator); */
-
-/* 				cache_miss_diff = cache_misses_now[i] - cache_misses[i]; */
-
-/* 				if(cache_miss_diff*30 < bytes/MEM_CACHE_LINE_SIZE) */
-/* 					bytes_at_allocator = cache_miss_diff*MEM_CACHE_LINE_SIZE/30; */
-/* 				else */
-/* 					bytes_at_allocator = 0; */
-
-/* 				costs[j] += cost * (bytes-bytes_at_allocator); */
-/* 				costs[j] += cost_allocator * bytes_at_allocator; */
-/* 			} */
-/* 		} */
-/* 	} */
-/* } */
-
 #ifdef WS_PAPI_PROFILE
 #define mem_cache_misses(th) rdtsc()
 //((th)->papi_counters[MEM_CACHE_MISS_POS])
