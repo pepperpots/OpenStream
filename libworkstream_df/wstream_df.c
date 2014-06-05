@@ -16,14 +16,14 @@
 #include "tsc.h"
 #include "numa.h"
 #include "alloc.h"
-
+#include "reuse.h"
 #include "prng.h"
 
 /***************************************************************************/
 /***************************************************************************/
 /* The current frame pointer, thread data, barrier and saved barrier
    for lastprivate implementation, are stored here in TLS.  */
-static __thread wstream_df_thread_p current_thread = NULL;
+__thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
 static wstream_df_thread_p* wstream_df_worker_threads;
@@ -373,8 +373,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
 #if ALLOW_PUSHES
       int target_worker;
-      int beneficial = work_push_beneficial(fp, cthread, num_workers, &target_worker);
       /* Check whether the frame should be pushed somewhere else */
+      int beneficial = work_push_beneficial(fp, cthread, num_workers, &target_worker);
 
 #ifdef PUSH_ONLY_IF_NOT_STOLEN_AND_CACHE_EMPTY
       int curr_stolen = (cthread->current_frame &&
@@ -445,6 +445,7 @@ __builtin_ia32_tend (void *fp)
 
   if(wstream_allocator_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
+
   if(wstream_max_initial_writer_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_max_initial_writer, 1);
 
@@ -472,8 +473,7 @@ wstream_df_prematch_dependences (void *v, void *s, bool is_read_view_p)
   wstream_df_stream_p stream = (wstream_df_stream_p) s;
   wstream_df_view_p view = (wstream_df_view_p) v;
   wstream_df_list_p prod_queue = &stream->producer_queue;
-
-  unsigned int reached_position = 0; //view->reached_position;
+  unsigned int reached_position = 0;
   wstream_df_frame_p this_fp = (wstream_df_frame_p) view->owner;
 
   pthread_mutex_lock (&stream->stream_lock);
@@ -491,12 +491,12 @@ wstream_df_prematch_dependences (void *v, void *s, bool is_read_view_p)
 		      wstream_df_frame_p prod_fp = prod_view->owner;
 		      int numa_node = prod_fp->dominant_input_data_node_id;
 
-		      if(prod_view->reuse_associated_view)
-			  if(prod_view->reuse_associated_view->reuse_data_view)
-			      numa_node = wstream_numa_node_of(prod_view->reuse_associated_view->reuse_data_view->data);
-
-		      if(numa_node >= 0 && numa_node < MAX_NUMA_NODES)
-			      this_fp->bytes_prematch_nodes[numa_node] += prod_view->burst;
+		      /* Ignore reuse views as we don't know yet
+			 whether data will be reused or not */
+		      if(!is_reuse_view(prod_view)) {
+			if(numa_node >= 0 && numa_node < MAX_NUMA_NODES)
+			  this_fp->bytes_prematch_nodes[numa_node] += prod_view->burst;
+		      }
 
 		      reached_position += prod_view->burst;
 	      }
@@ -609,8 +609,6 @@ void __built_in_wstream_df_determine_dominant_input_numa_node(void* f)
 
 	determine_dominant_node_equal_seq(fp, &fp->dominant_input_data_node_id,
 				&fp->dominant_input_data_size, cthread->numa_node->id);
-
-	memset(fp->bytes_prematch_nodes, 0, sizeof(fp->bytes_prematch_nodes));
 }
 
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache)
@@ -618,18 +616,15 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 	wstream_df_thread_p cthread = current_thread;
 	wstream_df_frame_p fp = view->owner;
 
-	trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
 	wstream_alloc(cthread, slab_cache, &view->data, 64, size);
 
+	/* Update data statistics of the frame */
 	if(!wstream_is_fresh(view->data)) {
 		int node_id = wstream_numa_node_of(view->data);
 
 		if(node_id >= 0)
 			fp->bytes_prematch_nodes[node_id] += size;
 	}
-
-	view->refcount = 1;
-	trace_state_restore(cthread);
 }
 
 void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
@@ -637,6 +632,12 @@ void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
 	wstream_df_view_p view = v;
 	slab_cache_p slab_cache = NULL;
 	wstream_df_thread_p cthread = current_thread;
+
+	/* Defer allocation for reuse views with reuse predecessors */
+	if(is_reuse_view(view)) {
+	  view->data = NULL;
+	  return;
+	}
 
 #ifdef DEPENDENCE_AWARE_ALLOC
 	wstream_df_frame_p fp = view->owner;
@@ -664,6 +665,12 @@ void __built_in_wstream_df_free_view_data(void* v)
 	wstream_df_view_p view = v;
 	wstream_df_thread_p cthread = current_thread;
 
+	assert(view->refcount == 0);
+
+	/* view->data might be NULL due to reuse events */
+	if(!view->data)
+	  return;
+
 	size_t size = wstream_size_of(view->data);
 	int node_id;
 
@@ -688,26 +695,15 @@ void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n)
   __sync_add_and_fetch (&(fp->refcount), n);
 }
 
-void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n)
+/* In_view is the input view of the terminating task */
+void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
 {
-  wstream_df_view_p target_view;
-  wstream_df_frame_p fp = NULL;
+  int sc;
 
-  if(view->reuse_data_view) {
-    target_view = view->reuse_data_view;
-    fp = target_view->owner;
-  } else {
-    target_view = view;
-  }
-
-
-  int sc = __sync_sub_and_fetch (&(target_view->refcount), n);
+  sc = __sync_sub_and_fetch (&in_view->refcount, n);
 
   if(sc == 0)
-    __built_in_wstream_df_free_view_data(target_view);
-
-  if(fp)
-    __built_in_wstream_df_dec_frame_ref(fp, 1);
+    __built_in_wstream_df_free_view_data(in_view);
 }
 
 void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n)
@@ -727,121 +723,13 @@ void __built_in_wstream_df_dec_view_ref_vec(void* data, size_t num, size_t n)
     }
 }
 
-void __built_in_wstream_df_reuse_prepare_data(void* v)
-{
-  wstream_df_view_p out_view = v;
-  wstream_df_view_p assoc_in_view = out_view->reuse_associated_view;
-  wstream_df_view_p consumer_view = out_view->reuse_consumer_view;
 
-  if(assoc_in_view->reuse_data_view)
-    consumer_view->reuse_data_view = assoc_in_view->reuse_data_view;
-  else
-    consumer_view->reuse_data_view = assoc_in_view;
-
-  int numa_node_id = wstream_numa_node_of(consumer_view->reuse_data_view->data);
-
-  if(numa_node_id != -1)
-    ((wstream_df_frame_p)consumer_view->owner)->bytes_reuse_nodes[numa_node_id] += consumer_view->horizon;
-
-  __built_in_wstream_df_inc_frame_ref(consumer_view->reuse_data_view->owner, 1);
-  __built_in_wstream_df_inc_view_ref(consumer_view->reuse_data_view, 1);
-}
-
-void __built_in_wstream_df_reuse_update_data(void* v)
-{
-  wstream_df_view_p assoc_out_view = v;
-  wstream_df_view_p in_view = assoc_out_view->reuse_consumer_view;
-  wstream_df_thread_p cthread = current_thread;
-  wstream_df_frame_p in_frame;
-
-  if(in_view)
-    {
-      in_frame = in_view->owner;
-
-      int in_node = in_frame->dominant_prematch_data_node_id;
-      int exec_node = cthread->numa_node->id;
-      int force_reuse;
-
-#ifdef REUSE_COPY_ON_NODE_CHANGE
-      force_reuse = 0;
-#else
-      force_reuse = 1;
-#endif
-
-#ifdef REUSE_DONTCOPY_ON_STEAL
-        int curr_stolen = (cthread->current_frame &&
-			   ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL);
-
-	if(curr_stolen)
-	  force_reuse = 1;
-#endif
-
-	if(wstream_is_fresh(in_view->reuse_data_view->data)) {
-		wstream_set_max_initial_writer_of(in_view->reuse_data_view->data, 0, 0);
-		wstream_update_numa_node_of(in_view->reuse_data_view->data);
-	}
-	int reuse_node = wstream_numa_node_of(in_view->reuse_data_view->data);
-
-      if(force_reuse || (reuse_node == in_node))
-	{
-	do_reuse:
-	  __built_in_wstream_df_free_view_data(in_view);
-
-	  in_view->data = in_view->reuse_data_view->data;
-	  cthread->reuse_addr += in_view->horizon;
-	}
-      else
-	{
-	  cthread->reuse_copy += in_view->horizon;
-
-	  int node_id = wstream_numa_node_of(in_view->reuse_data_view->data);
-
-	  if(node_id != -1) {
-	    wstream_df_thread_p leader = leader_of_numa_node_id(node_id);
-
-	      if(!leader)
-		trace_data_read(cthread, 0, in_view->horizon, 0, in_view->reuse_data_view->data);
-	      else
-	        trace_data_read(cthread, leader->cpu, in_view->horizon, 0, in_view->reuse_data_view->data);
-	  }
-
-	  trace_state_change(current_thread, WORKER_STATE_RT_INIT);
-	  memcpy(in_view->data, in_view->reuse_data_view->data, in_view->horizon);
-	  trace_data_write(cthread, in_view->horizon, (uint64_t)in_view->data);
-
-	  __built_in_wstream_df_dec_view_ref(in_view->reuse_data_view, 1);
-	  __built_in_wstream_df_dec_frame_ref(in_view->reuse_data_view->owner, 1);
-	  in_view->reuse_data_view = NULL;
-
-	  trace_state_restore(current_thread);
-	}
-    }
-}
-
-
-void
-match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wstream_df_view_p in_view)
-{
-  if(in_view->reached_position != 0 || out_view->burst != in_view->horizon)
-    {
-      fprintf(stderr,
-	      "Reading from an inout_reuse clause requires the burst of "
-	      "the reuse output clause to be equal to the reading clause's "
-	      "horizon.\n");
-      exit(1);
-    }
-
-  out_view->reuse_consumer_view = in_view;
-  in_view->reuse_data_view = out_view->reuse_associated_view;
-}
 
 
 void
 add_view_to_chain(wstream_df_view_p* start, wstream_df_view_p view)
 {
-  if(*start)
-    view->view_chain_next = *start;
-
+  view->view_chain_next = *start;
   *start = view;
 }
 
@@ -901,8 +789,15 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	    {
 	      wstream_df_frame_p prod_fp = prod_view->owner;
 
-	      if(prod_view->reuse_associated_view)
-		match_reuse_output_clause_with_input_clause(prod_view, view);
+	      if(is_reuse_view(view)) {
+		if(is_reuse_view(prod_view))
+		  match_reuse_output_clause_with_reuse_input_clause(prod_view, view);
+		else
+		  match_reuse_input_clause_with_output_clause(prod_view, view);
+	      } else {
+		if(is_reuse_view(prod_view))
+		  match_reuse_output_clause_with_input_clause(prod_view, view);
+	      }
 
 	      prod_view->data = ((char *)view->data) + view->reached_position;
 	      /* Data owner is the consumer.  */
@@ -940,8 +835,15 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	{
 	  wstream_df_frame_p prod_fp = view->owner;
 
-	  if(view->reuse_associated_view)
-	    match_reuse_output_clause_with_input_clause(view, cons_view);
+	  if(is_reuse_view(cons_view)) {
+	    if(is_reuse_view(view))
+	      match_reuse_output_clause_with_reuse_input_clause(view, cons_view);
+	    else
+	      match_reuse_input_clause_with_output_clause(view, cons_view);
+	  } else {
+	    if(is_reuse_view(view))
+	      match_reuse_output_clause_with_input_clause(view, cons_view);
+	  }
 
 	  view->data = ((char *)cons_view->data) + cons_view->reached_position;
 	  view->owner = cons_view->owner;
@@ -1243,9 +1145,9 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   CPU_ZERO (&cs);
   CPU_SET (wstream_df_worker->cpu, &cs);
 
-  if(cpu_used(wstream_df_worker->cpu))
-	  printf("Worker %d cannot be placed on cpu %d: already used by another worker!\n", wstream_df_worker->worker_id, wstream_df_worker->cpu);
-
+  if(cpu_used(wstream_df_worker->cpu)) {
+	  printf("WORKER %d fails for cpu %d!\n", wstream_df_worker->worker_id, wstream_df_worker->cpu);
+  }
   assert(!cpu_used(wstream_df_worker->cpu));
   wstream_df_worker_cpus[wstream_df_worker->cpu] = wstream_df_worker->worker_id;
 
@@ -1745,9 +1647,12 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
   wstream_df_thread_p cthread = current_thread;
   wstream_df_view_p view = v;
 
-  if(is_write)
-    trace_data_write(cthread, view->burst, (uint64_t)view->data);
-  else {
+  if(is_write) {
+    if(is_reuse_view(view))
+      trace_data_write(cthread, view->burst, (uint64_t)view->reuse_associated_view->data);
+    else
+      trace_data_write(cthread, view->burst, (uint64_t)view->data);
+  } else {
       int node_id = wstream_numa_node_of(view->data);
       wstream_df_thread_p leader = leader_of_numa_node_id(node_id);
 
@@ -1815,6 +1720,11 @@ void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th,
 		}
 	}
 #endif
+}
+
+void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
+{
+  openstream_pause_hardware_counters_single_timestamp(th, rdtsc());
 }
 
 void openstream_start_hardware_counters(void)

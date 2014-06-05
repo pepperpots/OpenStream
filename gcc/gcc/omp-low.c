@@ -202,6 +202,9 @@ typedef struct wstream_df_view
   tree wstream_df_view_field_reuse_consumer_view;
   tree wstream_df_view_field_refcount;
   tree wstream_df_view_field_view_chain_next;
+  tree wstream_df_view_field_copy_count;
+  tree wstream_df_view_field_reuse_count;
+  tree wstream_df_view_field_ignore_count;
 
   bool is_array_view;
   tree base_offset;
@@ -2550,8 +2553,7 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 			  view_ref = build_receiver_ref (view, false, ctx);
 			  ref = build_addr(view_ref, current_function_decl);
 			  x = build_call_expr (reuse_prepare_data_fn, 1, ref);
-			  gimplify_stmt (&x, &tseq);
-			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
+			  gimplify_stmt (&x, ilist);
 			}
 
 		      if (v->is_array_view == false)
@@ -3238,15 +3240,30 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_view_chain_next, NULL);
 	      gimplify_assign (ref, null_pointer_node, &datafield_list);
 
-	      /* Set refcount to 0 */
+	      /* Set refcount to 1 */
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_refcount),
 			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_refcount, NULL);
-	      gimplify_assign (ref, integer_zero_node, &datafield_list);
+	      gimplify_assign (ref, integer_one_node, &datafield_list);
 
 	      /* Set reuse_source_view to NULL */
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_data_view),
 			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_reuse_data_view, NULL);
 	      gimplify_assign (ref, null_pointer_node, &datafield_list);
+
+	      /* Set ignore_count to 0 */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_ignore_count),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_ignore_count, NULL);
+	      gimplify_assign (ref, integer_zero_node, &datafield_list);
+
+	      /* Set reuse_count to 0 */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_count),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_reuse_count, NULL);
+	      gimplify_assign (ref, integer_zero_node, &datafield_list);
+
+	      /* Set copy_count to 0 */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_copy_count),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_copy_count, NULL);
+	      gimplify_assign (ref, integer_zero_node, &datafield_list);
 
 	      /* Set reuse_consumer_view to NULL */
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_consumer_view),
@@ -7968,6 +7985,24 @@ build_wstream_df_view_type (omp_context *ctx, tree data_type)
   TYPE_NAME (view_t) = name;
 
   /* Add fields.  */
+  name = create_tmp_var_name ("ignore_count");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_ignore_count = field;
+
+  name = create_tmp_var_name ("reuse_count");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_reuse_count = field;
+
+  name = create_tmp_var_name ("copy_count");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_copy_count = field;
+
   name = create_tmp_var_name ("view_chain_next");
   type = ptr_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);

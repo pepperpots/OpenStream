@@ -2,6 +2,7 @@
 #include "arch.h"
 #include "numa.h"
 #include "prng.h"
+#include "reuse.h"
 
 #if ALLOW_PUSH_REORDER
 /*
@@ -179,10 +180,6 @@ int work_push_beneficial_split_owner(wstream_df_frame_p fp, wstream_df_thread_p 
   max_data = fp->dominant_input_data_size;
   numa_node_id = fp->dominant_input_data_node_id;
 
-  /* Overhead for pushing small frames is too high */
-  if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
-    return 0;
-
   if(max_data > PUSH_MIN_REL_FRAME_SIZE && numa_node_id != -1 && cthread->numa_node->id != numa_node_id) {
     /* Choose random worker sharing the target node */
     numa_node = numa_node_by_id(numa_node_id);
@@ -266,6 +263,7 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   size_t data[MAX_NUMA_NODES];
   wstream_df_numa_node_p numa_node;
   unsigned int rand_idx;
+  int node_id;
 
 #if defined(PUSH_EQUAL_RANDOM)
     size_t others[MAX_NUMA_NODES];
@@ -279,7 +277,12 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   memset(data, 0, sizeof(data));
 
   for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
-    int node_id = wstream_numa_node_of(vi->data);
+    /* By default assume that data is going to be reused */
+    if(is_reuse_view(vi) && !reuse_view_has_own_data(vi))
+      node_id = wstream_numa_node_of(vi->reuse_data_view->data);
+    else
+      node_id = wstream_numa_node_of(vi->data);
+
     int factor = 1;
 
     if(vi->reuse_data_view)
@@ -360,21 +363,23 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   wstream_df_numa_node_p numa_node;
   int factor;
   unsigned int rand_idx;
+  int node_id;
 
 #if defined(PUSH_EQUAL_RANDOM)
     size_t others[MAX_NUMA_NODES];
     int num_others = 0;
 #endif
 
-  /* Overhead for pushing small frames is too high */
-  if(fp->dominant_input_data_size < PUSH_MIN_FRAME_SIZE)
-    return 0;
-
   memset(data, 0, sizeof(data));
   memset(scores, 0, sizeof(data));
 
   for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
-    int node_id = wstream_numa_node_of(vi->data);
+
+    /* By default assume that data is going to be reused */
+    if(is_reuse_view(vi) && !reuse_view_has_own_data(vi))
+      node_id = wstream_numa_node_of(vi->reuse_data_view->data);
+    else
+      node_id = wstream_numa_node_of(vi->data);
 
     if(vi->reuse_data_view)
       factor = 2;
@@ -431,17 +436,8 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   } else if(cthread->numa_node->id == numa_node_id) {
       get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data, numa_node_id);
 
-      /* By default the current worker is suited best */
-      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
-	max_worker = cthread->worker_id;
-	max_data = fp->bytes_cpu_in[cthread->cpu];
-      }
-
-      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[worker_id_to_cpu(max_worker)])
 	return 0;
-
-      max_worker = cthread->worker_id;
-      max_data = fp->bytes_cpu_in[cthread->cpu];
   }
 
   *target_worker = max_worker;

@@ -82,6 +82,9 @@ typedef struct wstream_df_view
   struct wstream_df_view* reuse_consumer_view;
   size_t refcount;
   struct wstream_df_view* view_chain_next;
+  int copy_count;
+  int reuse_count;
+  int ignore_count;
 } wstream_df_view_t, *wstream_df_view_p;
 
 /* The stream data structure.  It only relies on two linked lists of
@@ -235,4 +238,10 @@ void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 void get_max_worker_same_node(int* bytes_cpu, unsigned int num_workers,
 			      unsigned int* pmax_worker, int* pmax_data,
 			      int numa_node_id);
+
+void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n);
+void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
+void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n);
+void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n);
+
 #endif
