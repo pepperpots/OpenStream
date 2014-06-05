@@ -88,14 +88,14 @@
 
 #ifdef PAPI_L1
   //L1
-  #define WS_PAPI_NUM_EVENTS 1
-  #define WS_PAPI_EVENTS { "PAPI_L1_DCM" }
+  #define WS_PAPI_NUM_EVENTS 2
+  #define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_LD_INS" }
 #endif
 
 #ifdef PAPI_L2
   //L2
   #define WS_PAPI_NUM_EVENTS 2
-  #define WS_PAPI_EVENTS { "PAPI_L2_DCM", "PAPI_l2_DCA" }
+  #define WS_PAPI_EVENTS { "PAPI_L2_DCM", "PAPI_L2_DCA" }
   #define WS_PAPI_UNCORE 0
 #endif
 
