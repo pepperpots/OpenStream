@@ -128,7 +128,7 @@ void __built_in_wstream_df_reuse_prepare_data(void* v)
 
     memcpy(in_view->data, reuse_data_view->data, in_view->horizon);
 
-    trace_data_write(cthread, in_view->horizon, in_view->data);
+    trace_data_write(cthread, in_view->horizon, (uint64_t)in_view->data);
     trace_state_restore(cthread);
 
     in_view->reuse_data_view = NULL;
