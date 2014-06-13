@@ -347,8 +347,8 @@ void gauss_seidel_df_init(double* matrix, int id_x, int id_y, int N,
 			  double* bottom_out, double* right_out,
 			  double* center_out)
 {
-	for(int x = 0; x < block_size; x++) {
-		for(int y = 0; y < block_size; y++) {
+	for(int y = 0; y < block_size; y++) {
+		for(int x = 0; x < block_size; x++) {
 			int global_x = id_x*block_size+x;
 			int global_y = id_y*block_size+y;
 
@@ -384,8 +384,8 @@ void gauss_seidel_df_finish(double* matrix, int id_x, int id_y, int N,
 			    double* bottom_in, double* right_in,
 			    double* center_in)
 {
-	for(int x = 0; x < block_size; x++) {
-		for(int y = 0; y < block_size; y++) {
+	for(int y = 0; y < block_size; y++) {
+		for(int x = 0; x < block_size; x++) {
 			double curr = center_in[y*block_size+x];
 
 			int global_x = id_x*block_size+x;
