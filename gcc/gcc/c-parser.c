@@ -9137,6 +9137,9 @@ c_parser_omp_stream_clause_reuse (c_parser *parser,
       OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (omp_clause) = omp_clause_dup;
       OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (omp_clause_dup) = omp_clause;
 
+      if (OMP_CLAUSE_VIEW_ARRAY_SIZE (omp_clause_dup) != NULL_TREE)
+	DECL_STREAMING_FLAG_2 (view_decl) = 1;
+
       TREE_NO_WARNING (stream_id_out) = 1;
       TREE_NO_WARNING (view_decl) = 1;
 

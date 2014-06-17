@@ -660,6 +660,21 @@ void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
 	__built_in_wstream_df_alloc_view_data_slab(view, size, slab_cache);
 }
 
+void __built_in_wstream_df_alloc_view_data_vec(size_t n, void* v, size_t size)
+{
+  wstream_df_view_p dummy_view = (wstream_df_view_p) v;
+
+  for (size_t i = 0; i < n; ++i)
+    {
+      wstream_df_view_p view = &((wstream_df_view_p) dummy_view->next)[i];
+
+      if(!dummy_view->reuse_associated_view)
+	view->reuse_associated_view = NULL;
+
+      __built_in_wstream_df_alloc_view_data(view, size);
+    }
+}
+
 void __built_in_wstream_df_free_view_data(void* v)
 {
 	wstream_df_view_p view = v;
@@ -1504,23 +1519,33 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
   wstream_df_view_p dummy_view = (wstream_df_view_p) v;
   unsigned int i;
 
+  /* if(n == 0) { */
+  /*   tdecrease_n (dummy_view->owner, 0, 0); */
+  /* } */
+
   for (i = 0; i < n; ++i)
     {
       wstream_df_stream_p stream = ((wstream_df_stream_p *) s)[i];
       wstream_df_view_p view = &((wstream_df_view_p) dummy_view->next)[i];
 
-      /* Data position for consumers.  */
-      view->data = (is_read_view_p) ?
-	(void *)(((char *) dummy_view->data) + i * dummy_view->horizon) : NULL;
-
       /* Only connections with the same burst are allowed for now.  */
       view->burst = dummy_view->burst;
       view->horizon = dummy_view->horizon;
+
+      assert(view->horizon != 0);
+
       view->owner = dummy_view->owner;
-      view->reuse_associated_view = NULL;
+
+      if(!dummy_view->reuse_associated_view) {
+	view->reuse_associated_view = NULL;
+      } else {
+	view->data = NULL;
+      }
+
       view->reuse_data_view = NULL;
       view->reuse_consumer_view = NULL;
-      
+      view->refcount = dummy_view->refcount;
+
       /* FIXME-apop: this is quite tricky, read views may be impacted
 	 by old variadic write views' overloaded "reached_position"
 	 values.  Fixed for now by clearing the field here.  */

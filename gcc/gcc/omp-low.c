@@ -2549,10 +2549,22 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		      if(OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c) != NULL_TREE)
 			{
 			  gimple_seq tseq = NULL;
-			  tree reuse_prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_PREPARE_DATA);
+			  tree reuse_prepare_data_fn;
+
 			  view_ref = build_receiver_ref (view, false, ctx);
 			  ref = build_addr(view_ref, current_function_decl);
-			  x = build_call_expr (reuse_prepare_data_fn, 1, ref);
+
+			  if(v->is_array_view) {
+			    tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+					     view_ref, v->wstream_df_view_field_reached_pos, NULL);
+
+			    reuse_prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_PREPARE_DATA_VEC);
+			    x = build_call_expr (reuse_prepare_data_fn, 2, size_ref, ref);
+			  } else {
+			    reuse_prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_PREPARE_DATA);
+			    x = build_call_expr (reuse_prepare_data_fn, 1, ref);
+			  }
+
 			  gimplify_stmt (&x, ilist);
 			}
 
@@ -2564,9 +2576,13 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 
 			  view_ref = build_receiver_ref (view, false, ctx);
 			  ref = build_addr(view_ref, current_function_decl);
-			  tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA);
-			  x = build_call_expr (reuse_update_data_fn, 1, ref);
-			  gimplify_stmt (&x, &tseq);
+
+			  if(OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c) != NULL_TREE)
+			    {
+			      tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA);
+			      x = build_call_expr (reuse_update_data_fn, 1, ref);
+			      gimplify_stmt (&x, &tseq);
+			    }
 
 			  tree bcast_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_BROADCAST);
 			  x = build_call_expr (bcast_fn, 1, build_fold_addr_expr (view_ref));
@@ -2597,14 +2613,24 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 			}
 		      else
 			{
-			  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE_N_VEC);
 			  gimple_seq tseq = NULL;
 			  tree size_ref, burst_ref;
 
+			  view_ref = build_receiver_ref (view, false, ctx);
+			  size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+					     view_ref, v->wstream_df_view_field_reached_pos, NULL);
+			  ref = build_addr(view_ref, current_function_decl);
 			  burst_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_burst),
 					      view_ref, v->wstream_df_view_field_burst, NULL);
-			  size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
-					      view_ref, v->wstream_df_view_field_reached_pos, NULL);
+
+			  if(OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c) != NULL_TREE)
+			    {
+			      tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA_VEC);
+			      x = build_call_expr (reuse_update_data_fn, 2, size_ref, ref);
+			      gimplify_stmt (&x, &tseq);
+			    }
+
+			  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE_N_VEC);
 			  x = build_call_expr (tdec_fn, 4, size_ref,
 					       build_fold_addr_expr (view_ref), burst_ref, build_int_cst (integer_type_node, 1));
 			  gimplify_stmt (&x, &tseq);
@@ -3167,6 +3193,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
       location_t loc = gimple_location (ctx->stmt);
       tree tcreate_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TCREATE);
       tree alloc_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ALLOC_DATA);
+      tree alloc_data_fn_vec = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ALLOC_DATA_VEC);
       tree frame_ptr = gimple_omp_taskreg_data_arg (ctx->stmt);
       tree synch_ctr = size_zero_node;
 
@@ -3420,18 +3447,14 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      if(OMP_CLAUSE_CODE (c) == OMP_CLAUSE_INPUT)
 		{
 		  ref = build_fold_addr_expr (view_ref_prematch);
-
-		  if (v->is_array_view == true) {
-		    tree array_view_data_size =
-		      fold_build2 (MULT_EXPR, size_type_node, horizon,
-				   fold_convert (size_type_node, view_array_size));
-		    tmp = unshare_expr (array_view_data_size);
-		  } else {
-		    tmp = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon),
+		  tmp = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon),
 				  unshare_expr (view_ref_prematch), v->wstream_df_view_field_horizon, NULL);
-		  }
 
-		  t = build_call_expr (alloc_data_fn, 2, ref, tmp);
+		  if(v->is_array_view)
+		    t = build_call_expr (alloc_data_fn_vec, 3, fold_convert (size_type_node, view_array_size), ref, tmp);
+		  else
+		    t = build_call_expr (alloc_data_fn, 2, ref, tmp);
+
 		  gimplify_and_add (t, &alloc_list);
 		}
 	      else
@@ -3559,17 +3582,33 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 		  tree field = lookup_sfield (OMP_CLAUSE_VIEW_ID (c), ctx);
 		  tmp = build_simple_mem_ref_loc (loc, frame_ptr_prematch);
 		  tree view_ref = build3 (COMPONENT_REF, TREE_TYPE (field),
-				     tmp, field, NULL);
+					  tmp, field, NULL);
 
 		  tree other_field = lookup_sfield (OMP_CLAUSE_VIEW_ID (OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c)), ctx);
 		  tmp = build_simple_mem_ref_loc (loc, frame_ptr_prematch);
 		  tree other_view_ref = build3 (COMPONENT_REF, TREE_TYPE (other_field),
-				     tmp, other_field, NULL);
-		  //other_view_ref = build1 (ADDR_EXPR, TREE_TYPE(other_view_ref), other_view_ref);
+						tmp, other_field, NULL);
+
 		  other_view_ref = build_addr (other_view_ref, current_function_decl);
-		  ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_associated_view),
+
+		  /* If array view: call associate_n_views only for the real view */
+		  if(v->is_array_view)
+		    {
+		      struct wstream_df_view *v_assoc = lookup_wstream_df_view (ctx, view_other);
+		      view_ref = build_addr (view_ref, current_function_decl);
+
+		      tree view_array_size = OMP_CLAUSE_VIEW_ARRAY_SIZE (c);
+		      tree assoc_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ASSOCIATE_N_VIEWS);
+		      t = build_call_expr (assoc_fn, 3, fold_convert (size_type_node, view_array_size), view_ref, other_view_ref);
+		      gimplify_and_add (t, &datafield_list);
+		    }
+		  /* If not an array view: just assign pointer and we're done */
+		  else
+		    {
+		      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_associated_view),
 				unshare_expr (view_ref), v->wstream_df_view_field_reuse_associated_view, NULL);
-		  gimplify_assign (ref, other_view_ref, &datafield_list);
+		      gimplify_assign (ref, other_view_ref, &datafield_list);
+		    }
 		}
 	    }
 	}

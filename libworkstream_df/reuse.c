@@ -5,6 +5,33 @@
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache);
 extern __thread wstream_df_thread_p current_thread;
 
+void
+__builtin_wstream_df_associate_n_views (size_t n, void *pin, void *pfake)
+{
+  assert(pin != pfake);
+
+  wstream_df_view_p dummy_in_view = pin;
+  wstream_df_view_p dummy_fake_view = pfake;
+
+  wstream_df_view_p in_view_arr = dummy_in_view->next;
+  wstream_df_view_p fake_view_arr = dummy_fake_view->next;
+
+  /* Set reuse_associated_view of fake view, such that
+     resolve_n_dependencesrecognizes that these views are inout_reuse
+     views */
+  dummy_in_view->reuse_associated_view = dummy_fake_view;
+  dummy_fake_view->reuse_associated_view = dummy_in_view;
+
+  for(size_t i = 0; i < n; i++) {
+    in_view_arr[i].reuse_associated_view = &fake_view_arr[i];
+    in_view_arr[i].reuse_consumer_view = NULL;
+
+    fake_view_arr[i].reuse_associated_view = &in_view_arr[i];
+    fake_view_arr[i].reuse_consumer_view = NULL;
+    fake_view_arr[i].burst = dummy_in_view->horizon;
+  }
+}
+
 void reuse_view_sanity_check(wstream_df_view_p out_view, wstream_df_view_p in_view)
 {
   if(in_view->reached_position != 0 || out_view->burst != in_view->horizon)
@@ -158,6 +185,15 @@ void __built_in_wstream_df_reuse_prepare_data(void* v)
   assert(in_view->refcount > 0);
 }
 
+void __built_in_wstream_df_reuse_prepare_data_vec(size_t n, void* v)
+{
+  wstream_df_view_p fake_view = v;
+  wstream_df_view_p view_arr = fake_view->next;
+
+  for(size_t i = 0; i < n; i++)
+    __built_in_wstream_df_reuse_prepare_data(&view_arr[i]);
+}
+
 void __built_in_wstream_df_reuse_update_data(void* v)
 {
   /* Fake output view of the task that terminates */
@@ -207,4 +243,13 @@ void __built_in_wstream_df_reuse_update_data(void* v)
     __built_in_wstream_df_dec_view_ref(in_view, 1);
     __built_in_wstream_df_dec_frame_ref(in_view->owner, 1);
   }
+}
+
+void __built_in_wstream_df_reuse_update_data_vec(size_t n, void* v)
+{
+  wstream_df_view_p fake_view = v;
+  wstream_df_view_p view_arr = fake_view->next;
+
+  for(size_t i = 0; i < n; i++)
+    __built_in_wstream_df_reuse_update_data(&view_arr[i]);
 }
