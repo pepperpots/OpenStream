@@ -3184,7 +3184,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
   bool has_do_out_taskwait_call = false;
   tree metadata_size;
   tree data_offset;
-  tree frame_ptr_prematch = create_tmp_var (ptr_type_node, ".frame_ptr_prematch");
+  tree frame_ptr_prematch = gimple_omp_taskreg_data_arg (ctx->stmt);
 
   if (is_streaming_task_ctx (ctx))
     {
@@ -3793,8 +3793,8 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	}
     }
 
-  gimple_seq_add_seq (ilist, firstprivate_list);
   gimple_seq_add_seq (ilist, tcreate_call_list);
+  gimple_seq_add_seq (ilist, firstprivate_list);
   gimple_seq_add_seq (ilist, datafield_list);
   gimple_seq_add_seq (ilist, prematch_call_list);
   gimple_seq_add_seq (ilist, dominant_prematch_node_call_list);
