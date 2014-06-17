@@ -82,9 +82,9 @@ typedef struct wstream_df_view
   struct wstream_df_view* reuse_consumer_view;
   size_t refcount;
   struct wstream_df_view* view_chain_next;
-  int copy_count;
-  int reuse_count;
-  int ignore_count;
+  size_t copy_count;
+  size_t reuse_count;
+  size_t ignore_count;
 } wstream_df_view_t, *wstream_df_view_p;
 
 /* The stream data structure.  It only relies on two linked lists of

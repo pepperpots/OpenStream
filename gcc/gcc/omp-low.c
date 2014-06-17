@@ -7986,19 +7986,19 @@ build_wstream_df_view_type (omp_context *ctx, tree data_type)
 
   /* Add fields.  */
   name = create_tmp_var_name ("ignore_count");
-  type = integer_type_node;
+  type = size_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
   insert_field_into_struct (view_t, field);
   ret->wstream_df_view_field_ignore_count = field;
 
   name = create_tmp_var_name ("reuse_count");
-  type = integer_type_node;
+  type = size_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
   insert_field_into_struct (view_t, field);
   ret->wstream_df_view_field_reuse_count = field;
 
   name = create_tmp_var_name ("copy_count");
-  type = integer_type_node;
+  type = size_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
   insert_field_into_struct (view_t, field);
   ret->wstream_df_view_field_copy_count = field;
