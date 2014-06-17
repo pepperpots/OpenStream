@@ -3634,6 +3634,10 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 
       t = build_call_expr (tcreate_fn, 4, synch_ctr, metadata_size, workfn, has_lp);
       gimplify_assign (frame_ptr_prematch, fold_convert (TREE_TYPE (frame_ptr_prematch), t), &tcreate_call_list);
+
+      tree finish_resdep_fn = builtin_decl_explicit (BUILT_IN_FINISH_RESDEP);
+      t = build_call_expr(finish_resdep_fn, 1, frame_ptr_prematch);
+      gimplify_and_add (t, &resdep_list);
     }
 
   for (c = clauses; c ; c = OMP_CLAUSE_CHAIN (c))

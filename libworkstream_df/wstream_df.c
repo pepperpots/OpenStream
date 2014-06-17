@@ -209,7 +209,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   //  printf("F+ Allocating %p\n", frame_pointer);
 
-  frame_pointer->synchronization_counter = sc;
+  frame_pointer->synchronization_counter = sc+1;
   frame_pointer->size = size;
   frame_pointer->last_owner = cthread->worker_id;
   frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
@@ -400,6 +400,14 @@ tdecrease_n (void *data, size_t n, bool is_write)
     }
 
   trace_state_restore(cthread);
+}
+
+/* Called when all calls to resolve_dependences have been issued. The
+ * final decrementation prevents the task from running in case there
+ * are some variadic views with 0 references left.*/
+void __builtin_finish_resdep(void* pfp)
+{
+	tdecrease_n (pfp, 1, false);
 }
 
 /* Decrease the synchronization counter by one.  This is not used in
@@ -1518,10 +1526,6 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
 {
   wstream_df_view_p dummy_view = (wstream_df_view_p) v;
   unsigned int i;
-
-  /* if(n == 0) { */
-  /*   tdecrease_n (dummy_view->owner, 0, 0); */
-  /* } */
 
   for (i = 0; i < n; ++i)
     {
