@@ -10892,6 +10892,7 @@ c_finish_omp_clauses (tree clauses)
 	case OMP_CLAUSE_COLLAPSE:
 	case OMP_CLAUSE_FINAL:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_TASK_NAME:
 	  pc = &OMP_CLAUSE_CHAIN (c);
 	  continue;
 

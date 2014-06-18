@@ -235,7 +235,8 @@ is_streaming_task (gimple stmt)
   tree c  = gimple_omp_task_clauses (stmt);
 
   if (find_omp_clause (c, OMP_CLAUSE_INPUT) != NULL
-      || find_omp_clause (c, OMP_CLAUSE_OUTPUT) != NULL)
+      || find_omp_clause (c, OMP_CLAUSE_OUTPUT) != NULL
+      || find_omp_clause (c, OMP_CLAUSE_TASK_NAME) != NULL)
     return true;
   return false;
 }
@@ -1623,6 +1624,7 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	case OMP_CLAUSE_COLLAPSE:
 	case OMP_CLAUSE_UNTIED:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_TASK_NAME:
 	  break;
 
 	default:
@@ -1680,6 +1682,7 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	case OMP_CLAUSE_UNTIED:
 	case OMP_CLAUSE_FINAL:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_TASK_NAME:
 	  break;
 
 	default:
@@ -7965,9 +7968,21 @@ struct gimple_opt_pass pass_lower_omp =
 static void
 create_wstream_df_work_function (omp_context *ctx)
 {
-  tree decl, type, name, t;
+  tree decl, type, name, t, name_clause;
+  const char* name_clause_str;
 
-  name = clone_function_name (current_function_decl, "_wstream_df_workfn");
+  name_clause = find_omp_clause (gimple_omp_task_clauses(ctx->stmt), OMP_CLAUSE_TASK_NAME);
+
+  if(name_clause != NULL_TREE)
+    {
+      name_clause_str = OMP_CLAUSE_TASK_NAME_IDENTSTR(name_clause);
+      name = get_identifier(name_clause_str);
+    }
+  else
+    {
+      name = clone_function_name (current_function_decl, "_wstream_df_workfn");
+    }
+
   type = build_function_type_list (void_type_node, ptr_type_node, NULL_TREE);
   decl = build_decl (gimple_location (ctx->stmt), FUNCTION_DECL, name, type);
   ctx->cb.dst_fn = decl;

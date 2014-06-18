@@ -6253,6 +6253,7 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_INPUT:
 	case OMP_CLAUSE_OUTPUT:
 	case OMP_CLAUSE_INOUT_REUSE:
+	case OMP_CLAUSE_TASK_NAME:
 	  break;
 
 	case OMP_CLAUSE_PEEK:
@@ -6510,6 +6511,7 @@ gimplify_adjust_omp_clauses (tree *list_p)
 	case OMP_CLAUSE_COLLAPSE:
 	case OMP_CLAUSE_FINAL:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_TASK_NAME:
 	  break;
 
 	default:

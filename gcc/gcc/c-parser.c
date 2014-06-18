@@ -8712,6 +8712,10 @@ c_parser_omp_clause_name (c_parser *parser)
 	  else if (!strcmp ("shared", p))
 	    result = PRAGMA_OMP_CLAUSE_SHARED;
 	  break;
+	case 't':
+	  if (!strcmp ("task_name", p))
+	    result = PRAGMA_OMP_CLAUSE_TASK_NAME;
+	  break;
 	case 'u':
 	  if (!strcmp ("untied", p))
 	    result = PRAGMA_OMP_CLAUSE_UNTIED;
@@ -9015,6 +9019,42 @@ c_parser_omp_stream_clause (c_parser *parser,
 }
 
 tree create_tmp_var_name (const char *);
+
+static tree
+c_parser_omp_stream_clause_task_name (c_parser *parser,
+				  enum omp_clause_code kind,
+				  tree list)
+{
+  tree omp_clause;
+  gcc_assert (kind == OMP_CLAUSE_TASK_NAME);
+
+  /* The clause's location.  */
+  location_t clause_loc = c_parser_peek_token (parser)->location;
+
+  if(find_omp_clause (list, OMP_CLAUSE_TASK_NAME) != NULL_TREE)
+      error("task name specified more than once");
+
+  if (!c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
+    return list;
+
+  if (!c_parser_next_token_is (parser, CPP_NAME))
+    {
+      c_parser_error(parser, "expected identifier as task name");
+      return list;
+    }
+
+  const char *p = IDENTIFIER_POINTER (c_parser_peek_token (parser)->value);
+
+  omp_clause = build_omp_clause (clause_loc, kind);
+  OMP_CLAUSE_CHAIN (omp_clause) = list;
+  OMP_CLAUSE_TASK_NAME_IDENTSTR(omp_clause) = p;
+  list = omp_clause;
+
+  c_parser_consume_token (parser);
+  c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
+
+  return list;
+}
 
 static tree
 c_parser_omp_stream_clause_reuse (c_parser *parser,
@@ -9429,6 +9469,12 @@ c_parser_omp_clause_inout_reuse (c_parser *parser, tree list)
   return c_parser_omp_stream_clause_reuse (parser, OMP_CLAUSE_INOUT_REUSE, list);
 }
 
+static tree
+c_parser_omp_clause_task_name (c_parser *parser, tree list)
+{
+  return c_parser_omp_stream_clause_task_name (parser, OMP_CLAUSE_TASK_NAME, list);
+}
+
 /* OpenMP 2.5:
    lastprivate ( variable-list ) */
 
@@ -9825,6 +9871,10 @@ c_parser_omp_all_clauses (c_parser *parser, unsigned int mask,
 	case PRAGMA_OMP_CLAUSE_INPUT:
 	  clauses = c_parser_omp_clause_input (parser, clauses);
 	  c_name = "input";
+	  break;
+	case PRAGMA_OMP_CLAUSE_TASK_NAME:
+	  clauses = c_parser_omp_clause_task_name (parser, clauses);
+	  c_name = "task_name";
 	  break;
 	case PRAGMA_OMP_CLAUSE_INOUT_REUSE:
 	  clauses = c_parser_omp_clause_inout_reuse (parser, clauses);
@@ -10951,6 +11001,7 @@ c_parser_omp_single (location_t loc, c_parser *parser)
  	| (1u << PRAGMA_OMP_CLAUSE_OUTPUT)		\
  	| (1u << PRAGMA_OMP_CLAUSE_PEEK)		\
  	| (1u << PRAGMA_OMP_CLAUSE_INOUT_REUSE)	\
+ 	| (1u << PRAGMA_OMP_CLAUSE_TASK_NAME)		\
 	| (1u << PRAGMA_OMP_CLAUSE_NUM_THREADS)
 
 static tree

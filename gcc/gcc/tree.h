@@ -417,7 +417,10 @@ enum omp_clause_code
   OMP_CLAUSE_FINAL,
 
   /* OpenMP clause: mergeable.  */
-  OMP_CLAUSE_MERGEABLE
+  OMP_CLAUSE_MERGEABLE,
+
+  /* OpenMP clause: task_name */
+  OMP_CLAUSE_TASK_NAME
 };
 
 /* The definition of tree nodes fills the next several pages.  */
@@ -1868,6 +1871,10 @@ extern void protected_set_expr_location (tree, location_t);
 
 #define OMP_CRITICAL_BODY(NODE)    TREE_OPERAND (OMP_CRITICAL_CHECK (NODE), 0)
 #define OMP_CRITICAL_NAME(NODE)    TREE_OPERAND (OMP_CRITICAL_CHECK (NODE), 1)
+
+#define OMP_CLAUSE_TASK_NAME_IDENTSTR(NODE) \
+	OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE,		\
+						      OMP_CLAUSE_TASK_NAME), 0)
 
 #define OMP_CLAUSE_CHAIN(NODE)     TREE_CHAIN (OMP_CLAUSE_CHECK (NODE))
 #define OMP_CLAUSE_DECL(NODE)      					\
