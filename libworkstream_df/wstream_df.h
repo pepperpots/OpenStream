@@ -52,7 +52,8 @@ extern void wstream_df_stream_ctor (void **, size_t);
 extern void wstream_df_stream_array_ctor (void **, size_t, size_t);
 /* Decrement reference counter on streams in the array and deallocate
    streams upon reaching 0.  */
-extern void wstream_df_stream_dtor (void **, size_t);
+extern void wstream_df_stream_dtor (void *);
+extern void wstream_df_stream_array_dtor (void **, size_t);
 /* Add a reference to a stream when passing it as firstprivate to a
    task.  */
 extern void wstream_df_stream_reference (void *, size_t);

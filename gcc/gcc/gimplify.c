@@ -1228,25 +1228,30 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 
       if (DECL_STREAMING_FLAG_0 (t) && !DECL_STREAMING_FLAG_3 (t))
 	{
-	  tree n_streams = create_tmp_var (size_type_node, ".num_streams");
 	  tree ns, fn, type, num_streams;
 	  gimple_seq cleanup = NULL, new_body = NULL;
 	  gimple call, gs;
 
 	  /* Find the number of streams to deallocate if this is an array of streams.  */
 	  type = DECL_INITIAL_TYPE (t);
-	  num_streams = size_one_node;
 	  if (TREE_CODE (type) == ARRAY_TYPE)
 	    {
+	      tree n_streams = create_tmp_var (size_type_node, ".num_streams");
 	      tree size = TYPE_MAX_VALUE (TYPE_DOMAIN (type));
 	      num_streams = fold_build2 (PLUS_EXPR, size_type_node,
 					 size, size_one_node);
+
+	      gimplify_assign (n_streams, num_streams, &cleanup);
+
+	      fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_ARRAY_DTOR);
+	      call = gimple_build_call (fn, 2, t, n_streams);
+	    }
+	  else
+	    {
+	      fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_DTOR);
+	      call = gimple_build_call (fn, 1, t);
 	    }
 
-	  /* Add DTOR call.  */
-	  gimplify_assign (n_streams, num_streams, &cleanup);
-	  fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_DTOR);
-	  call = gimple_build_call (fn, 2, t, n_streams);
 	  gimplify_seq_add_stmt (&cleanup, call);
 	  gs = gimple_build_try (gimple_bind_body (gimple_bind), cleanup,
 				 GIMPLE_TRY_FINALLY);

@@ -1460,21 +1460,20 @@ dec_stream_ref (void *s)
 #endif
 }
 
+void
+wstream_df_stream_dtor (void *s)
+{
+  dec_stream_ref (s);
+}
+
 /* Deallocate the array of streams S.  */
 void
-wstream_df_stream_dtor (void **s, size_t num_streams)
+wstream_df_stream_array_dtor (void **s, size_t num_streams)
 {
   unsigned int i;
 
-  if (num_streams == 1)
-    {
-      dec_stream_ref ((void *)s);
-    }
-  else
-    {
-      for (i = 0; i < num_streams; ++i)
-	dec_stream_ref (s[i]);
-    }
+  for (i = 0; i < num_streams; ++i)
+    dec_stream_ref (s[i]);
 }
 
 /* Take an additional reference on stream(s) S.  */
