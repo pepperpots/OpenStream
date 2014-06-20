@@ -12,6 +12,9 @@ kmeans: kmeans.c kmeans_common.c ../common/common.c
 stream_df_kmeans: stream_df_kmeans.c kmeans_common.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
+stream_df_kmeans_reuse: stream_df_kmeans_reuse.c kmeans_common.c ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+
 openmp_loop_kmeans: openmp_loop_kmeans.c kmeans_common.c ../common/common.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp $(CFLAGS)
 
