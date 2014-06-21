@@ -707,5 +707,10 @@ int main(int argc, char** argv)
 	free(smembership_ref);
 	free(sfinal_ref);
 
+	free(g_params.data);
+	free(g_params.mship);
+	free(g_params.ccenters);
+	free(nmembers);
+
 	return 0;
 }
