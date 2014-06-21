@@ -24,6 +24,12 @@ icc_stream_df_kmeans_reuse: stream_df_kmeans_reuse.c stream_df_kmeans_reuse_outl
 stream_df_kmeans_reuse: stream_df_kmeans_reuse.c stream_df_kmeans_reuse_outline.o kmeans_common.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
+icc_stream_kmeans_from_df: stream_kmeans_from_df.c stream_kmeans_from_df_outline_icc.o kmeans_common.c ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_LIB_DIR)/libirc.a
+
+stream_kmeans_from_df: stream_kmeans_from_df.c stream_kmeans_from_df_outline.o kmeans_common.c ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+
 openmp_loop_kmeans: openmp_loop_kmeans.c kmeans_common.c ../common/common.c
 	$(PLAIN_GCC) $^ -o $@ -fopenmp $(CFLAGS)
 
@@ -41,6 +47,7 @@ clean:
 	icc_kmeans \
 	icc_stream_df_kmeans \
 	icc_stream_df_kmeans_reuse \
+	icc_stream_kmeans_from_df \
 	icc_openmp_loop_kmeans \
 	icc_openmp_loop_kmeans_interleaved
 
