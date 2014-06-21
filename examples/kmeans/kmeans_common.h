@@ -17,6 +17,8 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <stdio.h>
+
 #define DEFAULT_K_MIN 4
 #define DEFAULT_K_MAX 13
 #define DEFAULT_NUM_DIMS 3
@@ -47,4 +49,21 @@ static inline float euclid_dist_sq(int n, float* ref, float* val)
 	}
 
 	return dist;
+}
+
+static inline int dump_kmeans_gnuplot(const char* out_file, int nd, int n, int k, float* vals, int* membership)
+{
+	FILE* fp = fopen(out_file, "w+");
+
+	if(!fp)
+		return 1;
+
+	for(int i = 0; i < n; i++) {
+		for(int j = 0; j < nd; j++)
+			fprintf(fp, "%f ", vals[i*nd+j]);
+
+		fprintf(fp, "%d\n", membership[i]);
+	}
+
+	return 0;
 }

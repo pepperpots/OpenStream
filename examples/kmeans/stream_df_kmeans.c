@@ -496,6 +496,7 @@ int main(int argc, char** argv)
 	g_params.data = NULL;
 	int option;
 	const char* in_file = NULL;
+	const char* out_file = NULL;
 	g_params.mship = NULL;
 	g_params.ccenters = NULL;
 	int* nmembers;
@@ -505,7 +506,7 @@ int main(int argc, char** argv)
 	g_params.num_blocks = g_params.n / g_params.block_size;
 
 	/* Parse options */
-	while ((option = getopt(argc, argv, "b:d:f:i:m:n:p:t:vh")) != -1)
+	while ((option = getopt(argc, argv, "b:d:f:i:m:n:o:p:t:vh")) != -1)
 	{
 		switch(option)
 		{
@@ -527,6 +528,9 @@ int main(int argc, char** argv)
 			case 'n':
 				k_min = atoi(optarg);
 				break;
+			case 'o':
+				out_file = optarg;
+				break;
 			case 'p':
 				g_params.n = atoi(optarg);
 				break;
@@ -544,6 +548,7 @@ int main(int argc, char** argv)
 				       "  -i <input file>              Read data from an input file in minebench binary format\n"
 				       "  -m <val>                     Maximal number of clusters, default is %d\n"
 				       "  -n <val>                     Minimal number of clusters, default is %d\n"
+				       "  -o <output_file>             Output file containing final values\n"
 				       "  -p <num_points>              Number of points; only required if no input\n"
 				       "                               file is specified; default is %d\n"
 				       "  -t <threshold>               Threshold for convergence, default is %f\n"
@@ -685,6 +690,13 @@ int main(int argc, char** argv)
 		printf("\n");
 
 	printf("%.5f\n", tdiff(&end, &start));
+
+	if(out_file) {
+		if(dump_kmeans_gnuplot(out_file, g_params.nd, g_params.n, g_params.k, g_params.data, g_params.mship)) {
+			fprintf(stderr, "Could not write output file \"%s\".\n", out_file);
+			exit(1);
+		}
+	}
 
 	free(sdata_ref);
 	free(sstop_ref);
