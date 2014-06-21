@@ -294,16 +294,11 @@ main(int argc, char *argv[])
   double * data;
   double **blocked_data;
 
-  if (posix_memalign ((void **) &data, 64, size * sizeof (double)))
+  if (posix_memalign_interleaved ((void **) &data, 64, size * sizeof (double)))
     {
       printf ("Out of memory.\n");
       exit (1);
     }
-
-  if(wstream_df_interleave_data(data, size * sizeof (double))) {
-	  fprintf(stderr, "Error interleaving data\n");
-	  exit(1);
-  }
 
   // Generate random numbers or read from file
   if (in_file == NULL)
@@ -326,30 +321,20 @@ main(int argc, char *argv[])
     data[i*N + i] += N;
 
   // blocked matrix
-  if (posix_memalign ((void **) &blocked_data, 64,
+  if (posix_memalign_interleaved ((void **) &blocked_data, 64,
 		      num_blocks * sizeof (double *)))
     {
       printf ("Out of memory.\n");
       exit (1);
     }
 
-  if(wstream_df_interleave_data(blocked_data, num_blocks * sizeof (double))) {
-	  fprintf(stderr, "Error interleaving data\n");
-	  exit(1);
-  }
-
   for (i = 0; i < num_blocks; ++i) {
-    if (posix_memalign ((void **) &blocked_data[i], 64,
+    if (posix_memalign_interleaved ((void **) &blocked_data[i], 64,
 			block_size * block_size * sizeof (double)))
       {
 	printf ("Out of memory.\n");
 	exit (1);
       }
-
-    if(wstream_df_interleave_data(blocked_data[i], block_size * block_size * sizeof (double))) {
-	    fprintf(stderr, "Error interleaving data\n");
-	    exit(1);
-    }
   }
 
 

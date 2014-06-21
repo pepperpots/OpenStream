@@ -623,27 +623,17 @@ main(int argc, char *argv[])
   int size = N * N;
   int blocks = (N / block_size);
 
-  if (posix_memalign ((void **) &input_data, 64, size * sizeof (double)))
+  if (posix_memalign_interleaved ((void **) &input_data, 64, size * sizeof (double)))
     {
       printf ("Out of memory.\n");
       exit (1);
     }
 
-  if(wstream_df_interleave_data(input_data, size * sizeof (double))) {
-	  fprintf(stderr, "Error interleaving data\n");
-	  exit(1);
-  }
-
-  if (posix_memalign ((void **) &work_data, 64, size * sizeof (double)))
+  if (posix_memalign_interleaved ((void **) &work_data, 64, size * sizeof (double)))
     {
       printf ("Out of memory.\n");
       exit (1);
     }
-
-  if(wstream_df_interleave_data(work_data, size * sizeof (double))) {
-	  fprintf(stderr, "Error interleaving data\n");
-	  exit(1);
-  }
 
   // Generate random numbers or read from file
   if (in_file == NULL)

@@ -208,13 +208,8 @@ main(int argc, char *argv[])
   num_blocks = blocks * blocks;
 
   // Allocate data array
-  if (posix_memalign ((void **) &data, 64, size * sizeof (double)))
+  if (posix_memalign_interleaved ((void **) &data, 64, size * sizeof (double)))
     { printf ("Out of memory.\n"); exit (1); }
-
-  if(wstream_df_interleave_data(data, size * sizeof (double))) {
-	  fprintf(stderr, "Error interleaving data\n");
-	  exit(1);
-  }
 
   // Generate random numbers or read from file
   if (in_file == NULL)

@@ -87,12 +87,7 @@ main (int argc, char **argv)
 
   {
     int num_blocks = (N - 2) >> bs;
-    double *data = malloc (N * N * sizeof(double));
-
-    if(wstream_df_interleave_data(data, N*N*sizeof(double))) {
-	    fprintf(stderr, "Error interleaving data\n");
-	    exit(1);
-    }
+    double *data = malloc_interleaved (N * N * sizeof(double));
 
     int a;
     struct timeval start, end;

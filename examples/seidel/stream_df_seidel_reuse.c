@@ -647,12 +647,7 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
-	double* matrix = malloc(N*N*sizeof(double));
-
-	if(wstream_df_interleave_data(matrix, N*N*sizeof(double))) {
-		fprintf(stderr, "Error interleaving data\n");
-		exit(1);
-	}
+	double* matrix = malloc_interleaved(N*N*sizeof(double));
 
 	int blocks_x = N / block_size;
 	int blocks_y = N / block_size;

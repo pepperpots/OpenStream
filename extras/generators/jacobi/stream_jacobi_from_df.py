@@ -1140,13 +1140,8 @@ def dump_main_fun(config):
         sys.stdout.write("*N_"+config["dim_names"][dim])
     sys.stdout.write(";\n")
 
-    sys.stdout.write("	double* matrix = malloc(matrix_size);\n")
+    sys.stdout.write("	double* matrix = malloc_interleaved(matrix_size);\n")
 
-    sys.stdout.write("\n")
-    sys.stdout.write("	if(wstream_df_interleave_data(matrix, matrix_size)) {\n")
-    sys.stdout.write("		fprintf(stderr, \"Error interleaving data\\n\");\n")
-    sys.stdout.write("		exit(1);\n")
-    sys.stdout.write("	}\n")
     sys.stdout.write("\n")
 
     for dim in range(config["num_dims"]):
@@ -1173,11 +1168,7 @@ def dump_main_fun(config):
 
     for dim in range(config["num_dims"]):
         for direction in range(2):
-                sys.stdout.write("	double* global_savers_"+config["dimref_names"][dim][direction]+" = malloc(2*one_saver_size_"+config["dimref_names"][dim][direction]+"*blocks);\n")
-                sys.stdout.write("	if(wstream_df_interleave_data(global_savers_"+config["dimref_names"][dim][direction]+", 2*one_saver_size_"+config["dimref_names"][dim][direction]+"*blocks)) {\n")
-                sys.stdout.write("		fprintf(stderr, \"Error interleaving data\\n\");\n")
-                sys.stdout.write("		exit(1);\n")
-                sys.stdout.write("	}\n")
+                sys.stdout.write("	double* global_savers_"+config["dimref_names"][dim][direction]+" = malloc_interleaved(2*one_saver_size_"+config["dimref_names"][dim][direction]+"*blocks);\n")
                 sys.stdout.write("\n")
 
     sys.stdout.write("	int sdfbarrier[2] __attribute__((stream));\n")

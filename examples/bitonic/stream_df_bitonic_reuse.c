@@ -343,12 +343,7 @@ int main(int argc, char** argv)
 	}
 
 	/* Sequence that will contain the input keys */
-	keys = malloc(num_keys*sizeof(key_t));
-
-	if(wstream_df_interleave_data(keys, num_keys*sizeof(key_t))) {
-		fprintf(stderr, "Error interleaving data\n");
-		exit(1);
-	}
+	keys = malloc_interleaved(num_keys*sizeof(key_t));
 
 	/* Number of parallel stages (stages with an number of output elements
 	 * greater than the block size

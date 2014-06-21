@@ -572,21 +572,15 @@ int main(int argc, char** argv)
 		if(verbose)
 			printf("Allocating space for random %d points... ", g_params.n);
 
-		if(!(g_params.data = malloc(g_params.n*g_params.nd*sizeof(float)))) {
+		if(!(g_params.data = malloc_interleaved(g_params.n*g_params.nd*sizeof(float)))) {
 			fprintf(stderr, "Could not allocate point array.\n");
 			exit(1);
 		}
 
-		if(verbose)
+		if(verbose) {
 			printf("done.\n");
-
-		if(wstream_df_interleave_data(g_params.data, g_params.n*g_params.nd*sizeof(float))) {
-			fprintf(stderr, "Error interleaving data\n");
-			exit(1);
-		}
-
-		if(verbose)
 			printf("Initializing %d random points... ", g_params.n); fflush(stdout);
+		}
 
 		init_random_points_random_walk_clust(g_params.nd, g_params.n, k_max, g_params.data);
 
@@ -594,17 +588,17 @@ int main(int argc, char** argv)
 			printf("done.\n");
 	}
 
-	if(!(g_params.mship = malloc(g_params.n*sizeof(int)))) {
+	if(!(g_params.mship = malloc_interleaved(g_params.n*sizeof(int)))) {
 		fprintf(stderr, "Could not allocate membership array.\n");
 		exit(1);
 	}
 
-	if(!(g_params.ccenters = malloc(k_max*g_params.nd*sizeof(float)))) {
+	if(!(g_params.ccenters = malloc_interleaved(k_max*g_params.nd*sizeof(float)))) {
 		fprintf(stderr, "Could not allocate cluster array.\n");
 		exit(1);
 	}
 
-	if(!(nmembers = malloc(k_max*g_params.nd*sizeof(int)))) {
+	if(!(nmembers = malloc_interleaved(k_max*g_params.nd*sizeof(int)))) {
 		fprintf(stderr, "Could not allocate array for the number of points per cluster.\n");
 		exit(1);
 	}

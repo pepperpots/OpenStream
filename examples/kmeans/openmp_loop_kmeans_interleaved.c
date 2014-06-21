@@ -235,35 +235,25 @@ int main(int argc, char** argv)
 			exit(1);
 		}
 	} else {
-		if(!(vals = malloc(n*nd*sizeof(float)))) {
+		if(!(vals = malloc_interleaved(n*nd*sizeof(float)))) {
 			fprintf(stderr, "Could not allocate point array.\n");
-			exit(1);
-		}
-
-		if(wstream_df_interleave_data(vals, n*nd*sizeof(float))) {
-			fprintf(stderr, "Error interleaving data\n");
 			exit(1);
 		}
 
 		init_random_points_random_walk_clust(nd, n, k_max, vals);
 	}
 
-	if(!(membership = malloc(n*nd*sizeof(int)))) {
+	if(!(membership = malloc_interleaved(n*nd*sizeof(int)))) {
 		fprintf(stderr, "Could not allocate membership array.\n");
 		exit(1);
 	}
 
-	if(wstream_df_interleave_data(membership, n*nd*sizeof(int))) {
-		fprintf(stderr, "Error interleaving data\n");
-		exit(1);
-	}
-
-	if(!(cluster_centers = malloc(k_max*nd*sizeof(float)))) {
+	if(!(cluster_centers = malloc_interleaved(k_max*nd*sizeof(float)))) {
 		fprintf(stderr, "Could not allocate cluster array.\n");
 		exit(1);
 	}
 
-	if(!(nmembers = malloc(k_max*nd*sizeof(int)))) {
+	if(!(nmembers = malloc_interleaved(k_max*nd*sizeof(int)))) {
 		fprintf(stderr, "Could not allocate array for the number of points per cluster.\n");
 		exit(1);
 	}

@@ -1016,13 +1016,7 @@ def dump_main_fun(config):
         sys.stdout.write("*N_"+config["dim_names"][dim])
     sys.stdout.write(";\n")
 
-    sys.stdout.write("	double* matrix = malloc(matrix_size);\n")
-
-    sys.stdout.write("\n")
-    sys.stdout.write("	if(wstream_df_interleave_data(matrix, matrix_size)) {\n")
-    sys.stdout.write("		fprintf(stderr, \"Error interleaving data\\n\");\n")
-    sys.stdout.write("		exit(1);\n")
-    sys.stdout.write("	}\n")
+    sys.stdout.write("	double* matrix = malloc_interleaved(matrix_size);\n")
     sys.stdout.write("\n")
 
     for dim in range(config["num_dims"]):

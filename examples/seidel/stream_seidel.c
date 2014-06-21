@@ -176,12 +176,7 @@ main (int argc, char **argv)
     struct timeval *start = (struct timeval *) malloc (sizeof (struct timeval));
     struct timeval *end = (struct timeval *) malloc (sizeof (struct timeval));
 
-    posix_memalign ((void**) &(data), 128, sizeof(double[N][N]));
-
-    if(wstream_df_interleave_data(data, N*N*sizeof(double))) {
-	    fprintf(stderr, "Error interleaving data\n");
-	    exit(1);
-    }
+    posix_memalign_interleaved ((void**) &(data), 128, sizeof(double[N][N]));
 
     for (i = 0; i < N; ++i)
       for (j = 0; j < N; ++j)
