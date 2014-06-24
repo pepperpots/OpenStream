@@ -1,7 +1,19 @@
+#include "interleave.h"
 #include <numaif.h>
 #include <stdio.h>
 #include "config.h"
 
+#ifdef UNIFORM_MEMORY_ACCESS
+int wstream_df_interleave_data(void* p, size_t size)
+{
+	return 0;
+}
+
+int wstream_df_alloc_on_node(void* p, size_t size, int node)
+{
+	return 0;
+}
+#else
 int wstream_df_interleave_data(void* p, size_t size)
 {
 	unsigned long nodemask = 0;
@@ -32,3 +44,4 @@ int wstream_df_alloc_on_node(void* p, size_t size, int node)
 
 	return 0;
 }
+#endif

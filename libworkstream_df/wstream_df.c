@@ -18,6 +18,7 @@
 #include "alloc.h"
 #include "reuse.h"
 #include "prng.h"
+#include "interleave.h"
 
 /***************************************************************************/
 /***************************************************************************/
@@ -1116,18 +1117,13 @@ int cpu_used(int cpu)
 wstream_df_thread_p allocate_worker_struct(int for_cpu)
 {
 	int node = mem_numa_node(for_cpu);
-	unsigned long node_mask = 1 << node;
 	void* ptr;
 	size_t size = ROUND_UP(sizeof(wstream_df_thread_t), PAGE_SIZE);
 
 	if(posix_memalign(&ptr, PAGE_SIZE, size))
 		wstream_df_fatal("Memory allocation failed!");
 
-	if(mbind(ptr, size, MPOL_BIND, &node_mask, MAX_NUMA_NODES+1, MPOL_MF_MOVE)) {
-		fprintf(stderr, "mbind error:\n");
-		perror("mbind");
-		exit(1);
-	}
+	wstream_df_alloc_on_node(ptr, size, node);
 
 	return ptr;
 }

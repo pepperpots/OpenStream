@@ -1,4 +1,5 @@
 #include "numa.h"
+#include "interleave.h"
 
 static wstream_df_numa_node_p wstream_df_numa_nodes[MAX_NUMA_NODES];
 
@@ -15,23 +16,15 @@ static inline void numa_node_init(wstream_df_numa_node_p node, int node_id)
 int numa_nodes_init(void)
 {
   size_t size = ROUND_UP(sizeof(wstream_df_numa_node_t), PAGE_SIZE);
-  unsigned long node_mask;
   void* ptr;
 
   for(int i = 0; i < MAX_NUMA_NODES; i++) {
-    node_mask = 1 << i;
-
     if(posix_memalign(&ptr, PAGE_SIZE, size))
       wstream_df_fatal("Cannot allocate numa node structure");
 
+    wstream_df_alloc_on_node(ptr, size, i);
+
     wstream_df_numa_nodes[i] = ptr;
-
-    if(mbind(ptr, size, MPOL_BIND, &node_mask, MAX_NUMA_NODES+1, MPOL_MF_MOVE)) {
-      fprintf(stderr, "mbind error:\n");
-      perror("mbind");
-      exit(1);
-    }
-
     numa_node_init(wstream_df_numa_nodes[i], i);
   }
 

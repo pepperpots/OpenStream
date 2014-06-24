@@ -13,6 +13,7 @@
 #include "trace.h"
 #include "error.h"
 #include "glib_extras.h"
+#include "interleave.h"
 
 struct wstream_df_thread;
 
@@ -64,6 +65,12 @@ static inline int slab_force_huge_pages(void* addr, size_t size)
   return slab_force_advise_pages(addr, size, MADV_HUGEPAGE);
 }
 
+#ifdef UNIFORM_MEMORY_ACCESS
+static inline int slab_get_numa_node(void* address, unsigned int size)
+{
+	return 0;
+}
+#else
 static inline int slab_get_numa_node(void* address, unsigned int size)
 {
 	void* addr_aligned = (void*)(((unsigned long)address) & ~(0xfff));
@@ -119,6 +126,7 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
 
 	return max_node;
 }
+#endif
 
 #define __slab_max_slabs 64
 #define __slab_align 64
@@ -363,12 +371,7 @@ slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, 
 			   __slab_align,
 			   alloc_size));
 
-  unsigned long nodemask = (1 << node);
-  if(mbind((void*)((long)alloc & ~(0xFFF)), alloc_size, MPOL_BIND, &nodemask, MAX_NUMA_NODES+1, MPOL_MF_MOVE) != 0) {
-	  fprintf(stderr, "mbind error:\n");
-	  perror("mbind");
-	  exit(1);
-  }
+  wstream_df_alloc_on_node(alloc, alloc_size, node);
 
   memset(alloc, 0, alloc_size);
 
