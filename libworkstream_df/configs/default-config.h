@@ -62,7 +62,7 @@
  * 0: The core itself, probably with a private 1st level cache
  * 1: All of the machine's cores
  */
-static inline int mem_cores_at_level(unsigned int level)
+static inline int mem_cores_at_level(unsigned int level, unsigned int cpu)
 {
 	assert(level < MEM_NUM_LEVELS);
 
@@ -115,11 +115,11 @@ static inline int mem_transfer_costs(unsigned int a, unsigned int b)
  */
 static inline int mem_nth_sibling_at_level(unsigned int level, unsigned int cpu, unsigned int sibling_num)
 {
-	unsigned int base = cpu - (cpu % mem_cores_at_level(level));
+	unsigned int base = cpu - (cpu % mem_cores_at_level(level, cpu));
 	unsigned int sibling = base + sibling_num;
 
 	if(sibling == cpu)
-		return base + (((sibling_num + 1) % mem_cores_at_level(level)));
+		return base + (((sibling_num + 1) % mem_cores_at_level(level, cpu)));
 
 	return sibling;
 }
