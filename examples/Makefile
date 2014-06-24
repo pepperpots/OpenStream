@@ -1,6 +1,6 @@
 include Makefile.config
 
-SUBDIRS=cholesky fft_1d fibo fmradio seidel syntax jacobi knapsack matmul strassen sparse_lu bzip2 mergesort bitonic kmeans
+SUBDIRS=cholesky fft_1d fibo fmradio seidel syntax sparse_lu bitonic kmeans
 
 .PHONY: $(SUBDIRS)
 
