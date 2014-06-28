@@ -1,7 +1,7 @@
 /**
- * Dataflow implementation of blocked cholesky factorization.
+ * SHM implementation of blocked cholesky factorization.
  *
- * Copyright (C) 2013 Andi Drebes <andi.drebes@lip6.fr>
+ * Copyright (C) 2014 Andi Drebes <andi.drebes@lip6.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as published
@@ -24,11 +24,9 @@
 #include <math.h>
 #include <getopt.h>
 #include <string.h>
+#include <numaif.h>
 #include "../common/common.h"
 #include "../common/sync.h"
-
-#define _SPEEDUPS 0
-#define _VERIFY 0
 
 #ifdef USE_MKL
   #include <mkl_cblas.h>
@@ -37,6 +35,10 @@
   #include <cblas.h>
   #include "../common/lapack.h"
 #endif
+
+#define _SPEEDUPS 0
+#define _VERIFY 0
+#define _WITH_OUTPUT 0
 
 #include <unistd.h>
 
@@ -77,20 +79,33 @@ int num_dtrsm_dsyrk_proxy_streams_at_level(int l, int blocks);
 int final_input_stream(int id_x, int id_y, int blocks);
 void create_terminal_task(double* data, int id_x, int id_y, int N, int block_size);
 
-void copy_block_from_global(double* global_data, double* block, int id_x, int id_y, int N, int block_size)
+void dump_matrix_2d(double* matrix, FILE* fp, int N_y, int N_x)
 {
-  for(int y = 0; y < block_size; y++) {
-    int global_y = id_y*block_size+y;
-    memcpy(&block[y*block_size], &global_data[global_y*N+id_x*block_size], block_size*sizeof(double));
+  size_t pos;
+
+  for(int y = 0; y < N_y; y++) {
+    for(int x = 0; x < N_x; x++) {
+      pos = 0 + y*N_x + x;
+
+      fprintf(fp, "%f\t", matrix[pos]);
+    }
+
+    fprintf(fp, "\n");
   }
 }
 
-void copy_block_to_global(double* global_data, double* block, int id_x, int id_y, int N, int block_size)
+void matrix_add_padding(double* matrix, int N, int padding_elements)
 {
-  for(int y = 0; y < block_size; y++) {
-    int global_y = id_y*block_size+y;
-    memcpy(&global_data[global_y*N+id_x*block_size], &block[y*block_size], block_size*sizeof(double));
-  }
+  /* Re-align lines taking into account per-line padding */
+  for(int i = N-1; i >= 0; i--)
+    memmove(&matrix[i*(N+padding_elements)], &matrix[i*N], N*sizeof(double));
+}
+
+void matrix_strip_padding(double* matrix, int N, int padding_elements)
+{
+  /* Remove padding from global matrix */
+  for(int i = 0; i < N; i++)
+    memmove(&matrix[i*N], &matrix[i*(N+padding_elements)], N*sizeof(double));
 }
 
 int dgemm_base(int l, int blocks) {
@@ -229,165 +244,207 @@ int num_streams_at_level(int l, int blocks)
     num_dtrsm_dsyrk_proxy_streams_at_level(l, blocks);
 }
 
-void create_dgemm_task(double* input_data, int x, int blocks, int block_size, int y, int stage)
+void create_dgemm_task(double* global_matrix, int x, int blocks, int block_size, int padding_elements, int y, int stage)
 {
   int upper_stream = dgemm_upper_input_stream(x, blocks, y, stage);
   int lower_stream = dgemm_lower_input_stream(x, blocks, y, stage);
   int self_stream = dgemm_self_input_stream(x, blocks, y, stage);
   int out_stream = dgemm_output_stream(x, blocks, y, stage);
 
-  double upper_in[block_size*block_size];
-  double lower_in[block_size*block_size];
-  double self_in[block_size*block_size];
-  double out[block_size*block_size];
+  double upper_in[1];
+  double lower_in[1];
+  double self_in[1];
+  double out[1];
 
   int N = block_size*blocks;
 
+  int global_x = x * block_size;
+  int global_y = y * block_size;
+  double* global = &global_matrix[global_y * (N+padding_elements) + global_x];
+
+  int global_ul_x = stage * block_size;
+  int global_ul_y = (y-1) * block_size;
+  double* global_ul = &global_matrix[global_ul_y * (N+padding_elements) + global_ul_x];
+
+  int global_l_x = stage * block_size;
+  int global_l_y = global_y;
+  double* global_l = &global_matrix[global_l_y * (N+padding_elements) + global_l_x];
+
+
   if(stage == 0)
     {
-        #pragma omp task input(streams[upper_stream] >> upper_in[block_size*block_size], \
-		       streams[lower_stream] >> lower_in[block_size*block_size]) \
-	  output(streams[out_stream] << out[block_size*block_size])
+        #pragma omp task input(streams[upper_stream] >> upper_in[1], \
+		       streams[lower_stream] >> lower_in[1]) \
+	  output(streams[out_stream] << out[1])
         {
-	  copy_block_from_global(input_data, out, x, y, N, block_size);
 
 	  cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 		       block_size, block_size, block_size,
-		       -1.0, upper_in, block_size,
-		       lower_in, block_size,
-		       1.0, out, block_size);
+		       -1.0,
+		       global_ul, N+padding_elements,
+		       global_l, N+padding_elements,
+		       1.0,
+		       global, N+padding_elements);
 
 	  if(stage+2 < x)
-	    create_dgemm_task(input_data, x, blocks, block_size, y, stage+2);
+	    create_dgemm_task(global_matrix, x, blocks, block_size, padding_elements, y, stage+2);
 	}
     } else  {
-       #pragma omp task input(streams[upper_stream] >> upper_in[block_size*block_size], \
-			      streams[lower_stream] >> lower_in[block_size*block_size]) \
-	       inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
+       #pragma omp task input(streams[upper_stream] >> upper_in[1], \
+			      streams[lower_stream] >> lower_in[1], \
+			      streams[self_stream] >> self_in[1]) \
+	 output(streams[out_stream] << out[1])
       {
 	cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
-		     block_size, block_size, block_size,
-		     -1.0, upper_in, block_size,
-		     lower_in, block_size,
-		     1.0, out, block_size);
+		       block_size, block_size, block_size,
+		       -1.0,
+		       global_ul, N+padding_elements,
+		       global_l, N+padding_elements,
+		       1.0,
+		       global, N+padding_elements);
 
 	if(stage+2 < x)
-	  create_dgemm_task(input_data, x, blocks, block_size, y, stage+2);
+	  create_dgemm_task(global_matrix, x, blocks, block_size, padding_elements, y, stage+2);
       }
     }
 }
 
-void create_dsyrk_task(double* input_data, int x, int blocks, int block_size, int stage)
+void create_dsyrk_task(double* global_matrix, int x, int blocks, int block_size, int padding_elements, int stage)
 {
   int self_stream = dsyrk_self_input_stream(x, blocks, stage);
   int left_stream = dsyrk_left_input_stream(x, blocks, stage);
   int out_stream = dsyrk_output_stream(x, blocks, stage);
 
-  double self_in[block_size*block_size];
-  double left_in[block_size*block_size];
-  double out[block_size*block_size];
+  double self_in[1];
+  double left_in[1];
+  double out[1];
 
   int N = block_size*blocks;
 
-  if(stage == 0) {
-    #pragma omp task input(streams[left_stream] >> left_in[block_size*block_size]) \
-      output(streams[out_stream] << out[block_size*block_size])
-    {
-      copy_block_from_global(input_data, out, x, x, N, block_size);
+  int global_x = x * block_size;
+  int global_y = x * block_size;
+  double* global = &global_matrix[global_y * (N+padding_elements) + global_x];
 
+  int global_l_x = stage * block_size;
+  int global_l_y = global_y;
+  double* global_l = &global_matrix[global_l_y * (N+padding_elements) + global_l_x];
+
+  if(stage == 0) {
+    #pragma omp task input(streams[left_stream] >> left_in[1]) \
+      output(streams[out_stream] << out[1])
+    {
       cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
 		   block_size, block_size,
-		   -1.0, left_in, block_size,
-		   1.0, out, block_size);
+		   -1.0, global_l, N+padding_elements,
+		   1.0, global, N+padding_elements);
 
       if(stage + 2 < x)
-	create_dsyrk_task(input_data, x, blocks, block_size, stage+2);
+	create_dsyrk_task(global_matrix, x, blocks, block_size, padding_elements, stage+2);
     }
   } else {
-#pragma omp task input(streams[left_stream] >> left_in[block_size*block_size]) \
-	    inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
+    #pragma omp task input(streams[left_stream] >> left_in[1], \
+			   streams[self_stream] >> self_in[1]) \
+      output(streams[out_stream] << out[1])
     {
+      //memcpy(out, self_in, block_size*block_size*sizeof(double));
+
       cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
 		   block_size, block_size,
-		   -1.0, left_in, block_size,
-		   1.0, out, block_size);
+		   -1.0, global_l, N+padding_elements,
+		   1.0, global, N+padding_elements);
 
       if(stage + 2 < x)
-	create_dsyrk_task(input_data, x, blocks, block_size, stage+2);
+	create_dsyrk_task(global_matrix, x, blocks, block_size, padding_elements, stage+2);
     }
   }
 }
 
-void create_dpotrf_task(double* input_data, double* work_data, int x, int blocks, int block_size)
+void create_dpotrf_task(double* global_matrix, int x, int blocks, int block_size, int padding_elements)
 {
   int self_stream = dpotrf_self_input_stream(x, blocks);
   int out_stream = dpotrf_output_stream(x, blocks);
-  double self_in[block_size*block_size];
-  double out[block_size*block_size];
+  double self_in[1];
+  double out[1];
   int N = blocks*block_size;
 
-  create_terminal_task(work_data, x, x, N, block_size);
+  int global_x = x * block_size;
+  int global_y = x * block_size;
+  double* global = &global_matrix[global_y * (N+padding_elements) + global_x];
+
+  create_terminal_task(global_matrix, x, x, N, block_size);
 
   if(x == 0) {
-    #pragma omp task output(streams[out_stream] << out[block_size*block_size])
+    #pragma omp task output(streams[out_stream] << out[1])
     {
-      char upper = 'U';
+      unsigned char upper = 'U';
       int n = block_size;
+      int bign = N+padding_elements;
       int nfo;
 
-      copy_block_from_global(input_data, out, x, x, N, block_size);
-
-      dpotrf_(&upper, &n, out, &n, &nfo);
+      dpotrf_(&upper, &n, global, &bign, &nfo);
     }
   } else {
-    #pragma omp task inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
+    #pragma omp task input(streams[self_stream] >> self_in[1]) \
+      output(streams[out_stream] << out[1])
     {
-      char upper = 'U';
+      unsigned char upper = 'U';
       int n = block_size;
+      int bign = N+padding_elements;
       int nfo;
 
-      dpotrf_(&upper, &n, out, &n, &nfo);
+      //memcpy(out, self_in, block_size*block_size*sizeof(double));
+
+      dpotrf_(&upper, &n, global, &bign, &nfo);
     }
   }
 }
 
-void create_dtrsm_task(double* input_data, double* work_data, int x, int blocks, int block_size, int y)
+void create_dtrsm_task(double* global_matrix, int x, int blocks, int block_size, int padding_elements, int y)
 {
   int self_stream = dtrsm_self_input_stream(x, blocks, y);
   int top_stream = dtrsm_top_input_stream(x, blocks, y);
   int out_stream = dtrsm_output_stream(x, blocks, y);
 
-  double self_in[block_size*block_size];
-  double top_in[block_size*block_size];
-  double out[block_size*block_size];
+  double self_in[1];
+  double top_in[1];
+  double out[1];
 
   int N = block_size*blocks;
-  create_terminal_task(work_data, x, y, N, block_size);
+
+  int global_x = x * block_size;
+  int global_y = y * block_size;
+  double* global = &global_matrix[global_y * (N+padding_elements) + global_x];
+
+  int global_u_x = global_x;
+  int global_u_y = global_x;
+  double* global_u = &global_matrix[global_u_y * (N+padding_elements) + global_u_x];
+
+  create_terminal_task(global_matrix, x, y, N, block_size);
 
   if(x == 0) {
-    #pragma omp task input(streams[top_stream] >> top_in[block_size*block_size]) \
-      output(streams[out_stream] << out[block_size*block_size])
+    #pragma omp task input(streams[top_stream] >> top_in[1]) \
+      output(streams[out_stream] << out[1])
     {
-      copy_block_from_global(input_data, out, x, y, N, block_size);
       cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 		   block_size, block_size,
-		   1.0, top_in, block_size,
-		   out, block_size);
+		   1.0, global_u, N+padding_elements,
+		   global, N+padding_elements);
     }
   } else {
-    #pragma omp task input(streams[top_stream] >> top_in[block_size*block_size]) \
-	    inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
+    #pragma omp task input(streams[top_stream] >> top_in[1], \
+			   streams[self_stream] >> self_in[1]) \
+      output(streams[out_stream] << out[1])
     {
       cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 		   block_size, block_size,
-		   1.0, top_in, block_size,
-		   out, block_size);
+		   1.0, global_u, N+padding_elements,
+		   global, N+padding_elements);
     }
   }
 }
 
 
-void new_stream_dpotrf(double* input_data, double* work_data, int block_size, int blocks)
+void new_stream_dpotrf(double* global_matrix, int block_size, int padding_elements, int blocks)
 {
   int per_block = 1;
 
@@ -397,27 +454,27 @@ void new_stream_dpotrf(double* input_data, double* work_data, int block_size, in
       for (int x = xx; x < xx+per_block; ++x)
 	{
 	  if(x > 0) {
-	    create_dsyrk_task(input_data, x, blocks, block_size, 0);
+	    create_dsyrk_task(global_matrix, x, blocks, block_size, padding_elements, 0);
 
 	    if(x > 1)
-	      create_dsyrk_task(input_data, x, blocks, block_size, 1);
+	      create_dsyrk_task(global_matrix, x, blocks, block_size, padding_elements, 1);
 	  }
 
-	  create_dpotrf_task(input_data, work_data, x, blocks, block_size);
+	  create_dpotrf_task(global_matrix, x, blocks, block_size, padding_elements);
 
 	  if(x > 0) {
 	    for (int y = x + 1; y < blocks; ++y) {
-	      create_dgemm_task(input_data, x, blocks, block_size, y, 0);
+	      create_dgemm_task(global_matrix, x, blocks, block_size, padding_elements, y, 0);
 
 	      if(x > 1)
-		create_dgemm_task(input_data, x, blocks, block_size, y, 1);
+		create_dgemm_task(global_matrix, x, blocks, block_size, padding_elements, y, 1);
 	    }
 	  }
 
 	  for(int yy = x + 1; yy < blocks; yy += per_block)
 	    {
 	      for (int y = yy; y < blocks && y < yy + per_block; ++y)
-		create_dtrsm_task(input_data, work_data, x, blocks, block_size, y);
+		create_dtrsm_task(global_matrix, x, blocks, block_size, padding_elements, y);
 	    }
 	}
     }
@@ -436,6 +493,8 @@ verify (int N, double *data, double* seq_data)
       }
     }
   }
+
+  printf("VERIFICATION: OK\n");
 }
 
 int num_dgemm_streams_at_level(int l, int blocks) {
@@ -464,24 +523,22 @@ void create_dtrsm_proxy_tasks(double* data, int id_x, int id_y, int N, int block
   int blocks = N / block_size;
   int out_stream;
 
-  double in[block_size*block_size];
-  double out[block_size*block_size];
+  double in[1];
+  double out[1];
 
   for(int stage = 0; stage <= blocks - id_x - 3; stage++) {
     out_stream = dtrsm_dgemm_proxy_output_stream(id_x, blocks, id_y, stage);
 
-  #pragma omp task output(streams[out_stream] << out[block_size*block_size])
+  #pragma omp task output(streams[out_stream] << out[1])
     {
-	    //copy_block_from_global(data, out, id_x, id_y, N, block_size);
     }
   }
 
   if(id_x != id_y) {
     out_stream = dtrsm_dsyrk_proxy_output_stream(id_x, blocks, id_y);
 
-    #pragma omp task output(streams[out_stream] << out[block_size*block_size])
+    #pragma omp task output(streams[out_stream] << out[1])
     {
-	    //copy_block_from_global(data, out, id_x, id_y, N, block_size);
     }
   }
 }
@@ -491,15 +548,14 @@ void create_dpotrf_proxy_tasks(double* data, int id_x, int id_y, int N, int bloc
   int blocks = N / block_size;
   int out_stream;
 
-  double in[block_size*block_size];
-  double out[block_size*block_size];
+  double in[1];
+  double out[1];
 
   for(int proxy_y = id_y + 1; proxy_y < blocks; proxy_y++) {
     out_stream = dpotrf_dtrsm_proxy_output_stream(id_x, blocks, proxy_y - id_x - 1);
 
-    #pragma omp task output(streams[out_stream] << out[block_size*block_size])
+    #pragma omp task output(streams[out_stream] << out[1])
     {
-	    //copy_block_from_global(data, out, id_x, id_y, N, block_size);
     }
   }
 }
@@ -523,16 +579,14 @@ void create_df_barrier_task(void)
 
 void create_terminal_task(double* data, int id_x, int id_y, int N, int block_size)
 {
-  double block_acc[block_size*block_size];
+  double block_acc[1];
   int blocks = N / block_size;
   int input_stream;
 
   input_stream = final_input_stream(id_x, id_y, blocks);
 
-  #pragma omp task input(streams[input_stream] >> block_acc[block_size*block_size])
+  #pragma omp task input(streams[input_stream] >> block_acc[1])
   {
-    copy_block_to_global(data, block_acc, id_x, id_y, N, block_size);
-
     if(id_x == id_y)
       create_dpotrf_proxy_tasks(data, id_x, id_y, N, block_size);
     else
@@ -549,6 +603,8 @@ main(int argc, char *argv[])
   int option;
   int i;
   int N = 4096;
+  int padding = 64;
+  int padding_elements = padding / sizeof(double);
 
   int numiters = 10;
   int block_size = 256;
@@ -557,13 +613,12 @@ main(int argc, char *argv[])
   FILE *in_file = NULL;
 
   double* seq_data;
-  double* work_data;
-  double * input_data;
+  double * global_matrix;
 
   struct timeval start;
   struct timeval end;
 
-  while ((option = getopt(argc, argv, "n:s:b:r:i:o:h")) != -1)
+  while ((option = getopt(argc, argv, "n:s:b:r:i:o:hp:")) != -1)
     {
       switch(option)
 	{
@@ -585,6 +640,17 @@ main(int argc, char *argv[])
 	case 'o':
 	  res_file = fopen(optarg, "w");
 	  break;
+	case 'p':
+	  padding = atoi(optarg);
+
+	  if(padding % sizeof(double)) {
+	    fprintf(stderr, "Padding must be a multiple of sizeof(double) (%lu).\n",
+		    sizeof(double));
+	    exit(1);
+	  }
+
+	  padding_elements = padding / sizeof(double);
+	  break;
 	case 'h':
 	  printf("Usage: %s [option]...\n\n"
 		 "Options:\n"
@@ -593,7 +659,9 @@ main(int argc, char *argv[])
 		 "  -b <block size power>        Set the block size 1 << <block size power>\n"
 		 "  -r <number of iterations>    Number of repetitions of the execution\n"
 		 "  -i <input file>              Read matrix data from an input file\n"
-		 "  -o <output file>             Write matrix data to an output file\n",
+		 "  -o <output file>             Write matrix data to an output file\n"
+		 "  -p <padding>                 Padding at the end of aline of the global matrix. Should be\n"
+		 "                               equal to the size of one cache line, e.g. 64.\n",
 		 argv[0], N);
 	  exit(0);
 	  break;
@@ -612,13 +680,7 @@ main(int argc, char *argv[])
   int size = N * N;
   int blocks = (N / block_size);
 
-  if (posix_memalign_interleaved ((void **) &input_data, 64, size * sizeof (double)))
-    {
-      printf ("Out of memory.\n");
-      exit (1);
-    }
-
-  if (posix_memalign_interleaved ((void **) &work_data, 64, size * sizeof (double)))
+  if (posix_memalign_interleaved ((void **) &global_matrix, 64, size * sizeof (double) + N * padding))
     {
       printf ("Out of memory.\n");
       exit (1);
@@ -629,20 +691,20 @@ main(int argc, char *argv[])
     {
       int seed[4] = {1092, 43, 77, 1};
       int sp = 1;
-      dlarnv_(&sp, seed, &size, input_data);
+      dlarnv_(&sp, seed, &size, global_matrix);
 
-      // Also allow saving input_data sessions
+      // Also allow saving global_matrix sessions
       if (res_file != NULL)
-	fwrite (input_data, sizeof (double), size, res_file);
+	fwrite (global_matrix, sizeof (double), size, res_file);
     }
   else
     {
-      fread (input_data, sizeof(double), size, in_file);
+      fread (global_matrix, sizeof(double), size, in_file);
     }
 
   // Ensure matrix is definite positive
   for(i = 0; i < N; ++i)
-    input_data[i*N + i] += N;
+    global_matrix[i*N + i] += N;
 
   int num_streams = num_streams_at_level(blocks-1, blocks);
   double lstreams[num_streams] __attribute__((stream));
@@ -657,7 +719,7 @@ main(int argc, char *argv[])
     char upper = 'U';
     int nfo;
     seq_data = malloc(size*sizeof(double));
-    memcpy(seq_data, input_data, size*sizeof(double));
+    memcpy(seq_data, global_matrix, size*sizeof(double));
     dpotrf_(&upper, &N, seq_data, &N, &nfo);
   } else {
     /* Perform at least one call to dpotrf_. The first call seems to be a lot
@@ -673,20 +735,20 @@ main(int argc, char *argv[])
 
       for(int y = 0; y < block_size; y++)
 	for(int x = 0; x < block_size; x++)
-	  buffer[y*block_size+x] = input_data[y*N+x];
+	  buffer[y*block_size+x] = global_matrix[y*N+x];
 
     dpotrf_(&upper, &n, buffer, &n, &nfo);
     free(buffer);
   }
 
+  matrix_add_padding(global_matrix, N, padding_elements);
+
   double stream_time = 0.0;
 
   for(int iter = 0; iter < numiters; iter++) {
-    memcpy(work_data, input_data, size*sizeof(double));
-
     gettimeofday (&start, NULL);
     openstream_start_hardware_counters();
-    new_stream_dpotrf(input_data, work_data, block_size, blocks);
+    new_stream_dpotrf(global_matrix, block_size, padding_elements, blocks);
 
     int token[1];
     #pragma omp task input(dfbarrier_stream[0] >> token[1])
@@ -698,14 +760,21 @@ main(int argc, char *argv[])
 
     stream_time += tdiff(&end, &start);
 
-    if (_VERIFY)
-      verify (N, work_data, seq_data);
+    if(_VERIFY || _WITH_OUTPUT)
+        matrix_strip_padding(global_matrix, N, padding_elements);
+
+    if (_VERIFY) {
+      verify (N, global_matrix, seq_data);
+    }
   }
 
   printf ("%.5f \n", stream_time);
 
-  free(input_data);
-  free(work_data);
+  #if _WITH_OUTPUT
+  dump_matrix_2d(global_matrix, stdout, N, N);
+  #endif
+
+  free(global_matrix);
 
   if(_VERIFY)
     free(seq_data);
