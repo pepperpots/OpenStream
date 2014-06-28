@@ -364,6 +364,7 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   int factor;
   unsigned int rand_idx;
   int node_id;
+  int input_size = 0;
 
 #if defined(PUSH_EQUAL_RANDOM)
     size_t others[MAX_NUMA_NODES];
@@ -386,7 +387,12 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
 
     if(node_id != -1)
       data[node_id] += vi->horizon * factor;
+
+    input_size += vi->horizon;
   }
+
+  if(input_size < PUSH_MIN_FRAME_SIZE)
+    return 0;
 
   for(int target_node = 0; target_node < MAX_NUMA_NODES; target_node++)
     for(int source_node = 0; source_node < MAX_NUMA_NODES; source_node++)
