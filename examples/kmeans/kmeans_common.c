@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
+#include <assert.h>
 
 /**
  * Returns a random float value in [-1.0;1.0]
@@ -29,6 +31,16 @@
 float frand(void)
 {
 	return (float)(rand() - RAND_MAX/2) / (float)RAND_MAX;
+}
+
+float frand_from_int(int* rands)
+{
+	*rands = (*rands) * 1103515245 + 12345;
+	int nbits = sizeof(*rands)*8;
+	int rnd = (*rands) >> (nbits/2);
+	double d = rnd / ((double)(1 << (nbits / 2)));
+
+	return d;
 }
 
 /**
@@ -53,7 +65,7 @@ void init_membership(int n, int* membership)
  */
 void init_clusters(int k, int nd, float* ccenters, int n, float* vals)
 {
-	srand(7899292);
+	srand(799292);
 	for(int i = 0; i < k; i++) {
 		/* Pick a random point */
 		int pt = rand() % n;
@@ -121,21 +133,22 @@ out:
  */
 void init_random_points_random_walk_clust(int nd, int n, int k, float* vals)
 {
+	int rands = 77777 + k * 19;
 	int vals_per_clust = n / k;
 	float ccenter[nd];
 	float walk[nd];
 
-	srand(2268882);
+	srand(226882);
 
 	for(int i = 0; i < n; i++) {
 		if(i % vals_per_clust == 0) {
 			memset(walk, 0, sizeof(walk));
 			for(int dim = 0; dim < nd; dim++)
-				ccenter[dim] = frand();
+				ccenter[dim] = frand_from_int(&rands);
 		}
 
 		for(int dim = 0; dim < nd; dim++) {
-			walk[dim] += frand();
+			walk[dim] += frand_from_int(&rands);
 			float val = walk[dim];
 			vals[i*nd+dim] = ccenter[dim] + val;
 		}
