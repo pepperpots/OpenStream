@@ -21,7 +21,7 @@
 void
 c_dpotrf (int block_size, int blocks, double **blocked_data, int i, int j, int k)
 {
-  unsigned char upper = 'U';
+  char upper = 'U';
   int n = block_size;
   int nfo;
 
@@ -222,8 +222,8 @@ main(int argc, char *argv[])
   // Generate random numbers or read from file
   if (in_file == NULL)
     {
-      long int seed[4] = {1092, 43, 77, 1};
-      long int sp = 1;
+      int seed[4] = {1092, 43, 77, 1};
+      int sp = 1;
       dlarnv_(&sp, seed, &size, data);
 
       if (res_file != NULL)
@@ -257,7 +257,7 @@ main(int argc, char *argv[])
 
     if (_SPEEDUPS)
       {
-	unsigned char upper = 'U';
+	char upper = 'U';
 	int nfo;
 	double stream_time = 0, seq_time = 0;
 	double * seq_data;

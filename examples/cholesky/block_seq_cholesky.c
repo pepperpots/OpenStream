@@ -3,19 +3,22 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <math.h>
-#include <cblas.h>
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
+
+#ifdef USE_MKL
+  #include <mkl_cblas.h>
+  #include <mkl_lapack.h>
+#else
+  #include <cblas.h>
+  #include "../common/lapack.h"
+#endif
 
 #define _SPEEDUPS 1
 #define _VERIFY 1
 
 #include <unistd.h>
-
-/* Missing declarations from liblapack */
-int dlarnv_(long *idist, long *iseed, int *n, double *x);
-void dpotrf_( unsigned char *uplo, int * n, double *a, int *lda, int *info );
 
 void
 stream_dpotrf (int block_size, int blocks,
@@ -46,7 +49,7 @@ stream_dpotrf (int block_size, int blocks,
 	}
 
       {
-	      unsigned char upper = 'U';
+	      char upper = 'U';
 	      int n = block_size;
 	      int nfo;
 
@@ -183,8 +186,8 @@ main(int argc, char *argv[])
   // Generate random numbers or read from file
   if (in_file == NULL)
     {
-      long int seed[4] = {1092, 43, 77, 1};
-      long int sp = 1;
+      int seed[4] = {1092, 43, 77, 1};
+      int sp = 1;
       dlarnv_(&sp, seed, &size, data);
 
       // Also allow saving data sessions
@@ -228,7 +231,7 @@ main(int argc, char *argv[])
 
     if (_SPEEDUPS)
       {
-	unsigned char upper = 'U';
+	char upper = 'U';
 	int nfo;
 	double stream_time = 0, seq_time = 0;
 

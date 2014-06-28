@@ -4,10 +4,16 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <math.h>
-#include <cblas.h>
 #include <getopt.h>
 #include "../common/common.h"
-#include "../common/lapack.h"
+
+#ifdef USE_MKL
+  #include <mkl_cblas.h>
+  #include <mkl_lapack.h>
+#else
+  #include <cblas.h>
+  #include "../common/lapack.h"
+#endif
 
 #define _WITH_OUTPUT 0
 
@@ -29,7 +35,7 @@ main(int argc, char *argv[])
 
   double * data;
   int nfo;
-  unsigned char upper = 'U';
+  char upper = 'U';
 
   while ((option = getopt(argc, argv, "n:s:r:i:o:h")) != -1)
     {
@@ -87,8 +93,8 @@ main(int argc, char *argv[])
   // Generate random numbers or read from file
   if (in_file == NULL)
     {
-      long int seed[4] = {1092, 43, 77, 1};
-      long sp = 1;
+      int seed[4] = {1092, 43, 77, 1};
+      int sp = 1;
       dlarnv_(&sp, seed, &size, data);
 
       // Also allow saving data sessions

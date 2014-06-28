@@ -3,12 +3,18 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <math.h>
-#include <cblas.h>
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
 #include "../common/sync.h"
-#include "../common/lapack.h"
+
+#ifdef USE_MKL
+  #include <mkl_cblas.h>
+  #include <mkl_lapack.h>
+#else
+  #include <cblas.h>
+  #include "../common/lapack.h"
+#endif
 
 #define _SPEEDUPS 0
 #define _VERIFY 0
@@ -112,7 +118,7 @@ stream_dpotrf (int block_size, int blocks,
 	  {
 #pragma omp task input (streams[j*blocks + j] >> w_0) output (streams[j*blocks + j] << w_1)
 	    {
-	      unsigned char upper = 'U';
+	      char upper = 'U';
 	      int n = block_size;
 	      int nfo;
 
@@ -131,7 +137,7 @@ stream_dpotrf (int block_size, int blocks,
 #pragma omp task input (streams[j*blocks + j] >> w_0) output (streams[j*blocks + j] << w_1) \
   input (Rstreams[j*blocks + j] >> Rwin[readers])
 	    {
-	      unsigned char upper = 'U';
+	      char upper = 'U';
 	      int n = block_size;
 	      int nfo;
 
@@ -302,8 +308,8 @@ main(int argc, char *argv[])
   // Generate random numbers or read from file
   if (in_file == NULL)
     {
-      long int seed[4] = {1092, 43, 77, 1};
-      long int sp = 1;
+      int seed[4] = {1092, 43, 77, 1};
+      int sp = 1;
       dlarnv_(&sp, seed, &size, data);
 
       // Also allow saving data sessions
@@ -382,7 +388,7 @@ main(int argc, char *argv[])
 
     if (_SPEEDUPS)
       {
-	unsigned char upper = 'U';
+	char upper = 'U';
 	int nfo;
 	double stream_time = 0, seq_time = 0;
 

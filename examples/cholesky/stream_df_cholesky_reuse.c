@@ -22,15 +22,21 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <math.h>
-#include <cblas.h>
 #include <getopt.h>
 #include <string.h>
 #include "../common/common.h"
 #include "../common/sync.h"
-#include "../common/lapack.h"
 
 #define _SPEEDUPS 0
 #define _VERIFY 0
+
+#ifdef USE_MKL
+  #include <mkl_cblas.h>
+  #include <mkl_lapack.h>
+#else
+  #include <cblas.h>
+  #include "../common/lapack.h"
+#endif
 
 #include <unistd.h>
 
@@ -333,7 +339,7 @@ void create_dpotrf_task(double* input_data, double* work_data, int x, int blocks
   if(x == 0) {
     #pragma omp task output(streams[out_stream] << out[block_size*block_size])
     {
-      unsigned char upper = 'U';
+      char upper = 'U';
       int n = block_size;
       int nfo;
 
@@ -346,7 +352,7 @@ void create_dpotrf_task(double* input_data, double* work_data, int x, int blocks
 /* input(streams[self_stream] >> self_in[block_size*block_size]) \ */
       /* output(streams[out_stream] << out[block_size*block_size]) */
     {
-      unsigned char upper = 'U';
+      char upper = 'U';
       int n = block_size;
       int nfo;
 
@@ -646,8 +652,8 @@ main(int argc, char *argv[])
   // Generate random numbers or read from file
   if (in_file == NULL)
     {
-      long int seed[4] = {1092, 43, 77, 1};
-      long int sp = 1;
+      int seed[4] = {1092, 43, 77, 1};
+      int sp = 1;
       dlarnv_(&sp, seed, &size, input_data);
 
       // Also allow saving input_data sessions
@@ -673,7 +679,7 @@ main(int argc, char *argv[])
   memcpy(dfbarrier_stream, ldfbarrier_stream, sizeof(void*));
 
   if(_VERIFY) {
-    unsigned char upper = 'U';
+    char upper = 'U';
     int nfo;
     seq_data = malloc(size*sizeof(double));
     memcpy(seq_data, input_data, size*sizeof(double));
@@ -684,7 +690,7 @@ main(int argc, char *argv[])
      * This call ensures that time for loading the library is not counted in
      * the parallel phase.
      */
-    unsigned char upper = 'U';
+    char upper = 'U';
     int nfo;
     int n = block_size;
 
