@@ -28,7 +28,7 @@
 #include "../common/sync.h"
 
 #define _SPEEDUPS 0
-#define _VERIFY 0
+#define _VERIFY 1
 
 #ifdef USE_MKL
   #include <mkl_cblas.h>
@@ -262,13 +262,9 @@ void create_dgemm_task(double* input_data, int x, int blocks, int block_size, in
 	}
     } else  {
        #pragma omp task input(streams[upper_stream] >> upper_in[block_size*block_size], \
-			      streams[lower_stream] >> lower_in[block_size*block_size] \
-			      /* streams[self_stream] >> self_in[block_size*block_size] */) \
-	       /* output(streams[out_stream] << out[block_size*block_size])  */ \
+			      streams[lower_stream] >> lower_in[block_size*block_size]) \
 	       inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
       {
-	      //memcpy(out, self_in, block_size*block_size*sizeof(double));
-
 	cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 		     block_size, block_size, block_size,
 		     -1.0, upper_in, block_size,
@@ -309,12 +305,8 @@ void create_dsyrk_task(double* input_data, int x, int blocks, int block_size, in
     }
   } else {
 #pragma omp task input(streams[left_stream] >> left_in[block_size*block_size]) \
-	/* streams[self_stream] >> self_in[block_size*block_size]) \ */ \
 	    inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
-      /* output(streams[out_stream] << out[block_size*block_size]) */
     {
-	    //memcpy(out, self_in, block_size*block_size*sizeof(double));
-
       cblas_dsyrk (CblasRowMajor, CblasLower, CblasNoTrans,
 		   block_size, block_size,
 		   -1.0, left_in, block_size,
@@ -348,15 +340,11 @@ void create_dpotrf_task(double* input_data, double* work_data, int x, int blocks
       dpotrf_(&upper, &n, out, &n, &nfo);
     }
   } else {
-#pragma omp task inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
-/* input(streams[self_stream] >> self_in[block_size*block_size]) \ */
-      /* output(streams[out_stream] << out[block_size*block_size]) */
+    #pragma omp task inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
     {
       char upper = 'U';
       int n = block_size;
       int nfo;
-
-//      memcpy(out, self_in, block_size*block_size*sizeof(double));
 
       dpotrf_(&upper, &n, out, &n, &nfo);
     }
@@ -387,12 +375,9 @@ void create_dtrsm_task(double* input_data, double* work_data, int x, int blocks,
 		   out, block_size);
     }
   } else {
-    #pragma omp task input(streams[top_stream] >> top_in[block_size*block_size] \
-			   /* streams[self_stream] >> self_in[block_size*block_size] */) \
+    #pragma omp task input(streams[top_stream] >> top_in[block_size*block_size]) \
 	    inout_reuse(streams[self_stream] >> out[block_size*block_size] >> streams[out_stream])
-      /* output(streams[out_stream] << out[block_size*block_size]) */
     {
-	    //memcpy(out, self_in, block_size*block_size*sizeof(double));
       cblas_dtrsm (CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
 		   block_size, block_size,
 		   1.0, top_in, block_size,
