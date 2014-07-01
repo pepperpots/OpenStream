@@ -34,22 +34,34 @@ openmp_%: openmp_%.c ../common/common.c
 	$(PLAIN_GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -llapack -lblas -lcblas $(LD_RPATH_FLAGS) -I../../install/include/ -L../../install/lib64 -lnuma
 
 # Versions using the Intel Math Kernel Library
-CFLAGS_MKL=-I$(MKLROOT)/include -DUSE_MKL
-LDFLAGS_MKL=-Wl,--start-group \
+CFLAGS_MKL=-I$(MKLROOT)/include -DUSE_MKL -std=c99
+LDFLAGS_MKL_SEQ=-Wl,--start-group \
 	$(MKLROOT)/lib/intel64/libmkl_intel_lp64.a \
 	$(MKLROOT)/lib/intel64/libmkl_core.a \
 	$(MKLROOT)/lib/intel64/libmkl_sequential.a \
 	-Wl,--end-group \
 	-lpthread -lm -ldl
 
+LDFLAGS_MKL_PAR= -Wl,--start-group \
+	$(MKLROOT)/lib/intel64/libmkl_intel_lp64.a \
+	$(MKLROOT)/lib/intel64/libmkl_core.a \
+	$(MKLROOT)/lib/intel64/libmkl_intel_thread.a \
+	-Wl,--end-group \
+	-L$(ICC_LIB_DIR) \
+	-liomp5 -ldl -lpthread -lm -lnuma
+
 mkl_cholesky: cholesky.c ../common/common.c
 	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
-	$(GCC)  $(CFLAGS_MKL) $^ -o $@ -fno-inline $(LDFLAGS_MKL)
+	$(GCC)  $(CFLAGS_MKL) $^ -o $@ -fno-inline $(LDFLAGS_MKL_SEQ)
+
+mkl_par_cholesky: mkl_par_cholesky.c ../common/common.c
+	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
+	$(GCC)  $(CFLAGS_MKL) $^ -o $@ -fno-inline $(LDFLAGS_MKL_PAR)
 
 mkl_block_seq_cholesky: block_seq_cholesky.c ../common/common.c
 	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
-	$(GCC)  $(CFLAGS_MKL) $^ -o $@ -fno-inline $(LDFLAGS_MKL)
+	$(GCC)  $(CFLAGS_MKL) $^ -o $@ -fno-inline $(LDFLAGS_MKL_SEQ)
 
 mkl_stream_%: stream_%.c ../common/common.c ../common/sync.c
 	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
-	$(GCC) $(CFLAGS) $(LDFLAGS) $(CFLAGS_MKL) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LD_RPATH_FLAGS) $(LDFLAGS_MKL)
+	$(GCC) $(CFLAGS) $(LDFLAGS) $(CFLAGS_MKL) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LD_RPATH_FLAGS) $(LDFLAGS_MKL_SEQ)
