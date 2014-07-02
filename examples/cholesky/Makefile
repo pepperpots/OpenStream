@@ -5,6 +5,7 @@ TESTS = cholesky \
 	block_seq_cholesky \
 	stream_df_cholesky \
 	stream_cholesky_from_df \
+	stream_df_cholesky_reuse \
 	stream_starss_translation_cholesky \
 	stream_df_cholesky_hyb \
 	stream_df_cholesky_hyb_reuse
