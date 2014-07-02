@@ -25,8 +25,14 @@ stream_%: stream_%.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df -lblas -lcblas -llapack $(LD_RPATH_FLAGS)
 
 clean:
-	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt cilk_cholesky openmp_loop_cholesky openmp_task_cholesky \
+	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt \
+		cilk_cholesky \
+		openmp_loop_cholesky \
+		openmp_task_cholesky \
+		openmp_loop_cholesky_interleaved \
+		openmp_task_cholesky_interleaved \
 		mkl_cholesky \
+		mkl_par_cholesky \
 		mkl_block_seq_cholesky \
 		mkl_stream_cholesky \
 		mkl_stream_cholesky_from_df \
