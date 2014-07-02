@@ -27,6 +27,7 @@
 #include <numaif.h>
 #include "../common/common.h"
 #include "../common/sync.h"
+#include "cholesky_common.h"
 
 #ifdef USE_MKL
   #include <mkl_cblas.h>
@@ -92,20 +93,6 @@ void dump_matrix_2d(double* matrix, FILE* fp, int N_y, int N_x)
 
     fprintf(fp, "\n");
   }
-}
-
-void matrix_add_padding(double* matrix, int N, int padding_elements)
-{
-  /* Re-align lines taking into account per-line padding */
-  for(int i = N-1; i >= 0; i--)
-    memmove(&matrix[i*(N+padding_elements)], &matrix[i*N], N*sizeof(double));
-}
-
-void matrix_strip_padding(double* matrix, int N, int padding_elements)
-{
-  /* Remove padding from global matrix */
-  for(int i = 0; i < N; i++)
-    memmove(&matrix[i*N], &matrix[i*(N+padding_elements)], N*sizeof(double));
 }
 
 int dgemm_base(int l, int blocks) {

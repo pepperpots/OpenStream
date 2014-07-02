@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <numaif.h>
 #include "../common/common.h"
+#include "cholesky_common.h"
 
 #include <mkl_cblas.h>
 #include <mkl_lapack.h>
@@ -31,20 +32,6 @@ static int interleave_data(void* p, size_t size)
 	}
 
 	return 0;
-}
-
-void matrix_add_padding(double* matrix, int N, int padding_elements)
-{
-  /* Re-align lines taking into account per-line padding */
-  for(int i = N-1; i >= 0; i--)
-    memmove(&matrix[i*(N+padding_elements)], &matrix[i*N], N*sizeof(double));
-}
-
-void matrix_strip_padding(double* matrix, int N, int padding_elements)
-{
-  /* Remove padding from global matrix */
-  for(int i = 0; i < N; i++)
-    memmove(&matrix[i*N], &matrix[i*(N+padding_elements)], N*sizeof(double));
 }
 
 int
