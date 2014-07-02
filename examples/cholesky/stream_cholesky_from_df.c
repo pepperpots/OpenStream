@@ -80,21 +80,6 @@ int num_dtrsm_dsyrk_proxy_streams_at_level(int l, int blocks);
 int final_input_stream(int id_x, int id_y, int blocks);
 void create_terminal_task(double* data, int id_x, int id_y, int N, int block_size);
 
-void dump_matrix_2d(double* matrix, FILE* fp, int N_y, int N_x)
-{
-  size_t pos;
-
-  for(int y = 0; y < N_y; y++) {
-    for(int x = 0; x < N_x; x++) {
-      pos = 0 + y*N_x + x;
-
-      fprintf(fp, "%f\t", matrix[pos]);
-    }
-
-    fprintf(fp, "\n");
-  }
-}
-
 int dgemm_base(int l, int blocks) {
   if(l == 0)
     return 0;

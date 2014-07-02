@@ -17,6 +17,8 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <stdio.h>
+
 static inline void matrix_add_padding(double* matrix, int N, int padding_elements)
 {
 	if(padding_elements == 0)
@@ -35,4 +37,19 @@ static inline void matrix_strip_padding(double* matrix, int N, int padding_eleme
 	/* Remove padding from global matrix */
 	for(int i = 0; i < N; i++)
 		memmove(&matrix[i*N], &matrix[i*(N+padding_elements)], N*sizeof(double));
+}
+
+static inline void dump_matrix_2d(double* matrix, FILE* fp, int N_y, int N_x)
+{
+	size_t pos;
+
+	for(int y = 0; y < N_y; y++) {
+		for(int x = 0; x < N_x; x++) {
+			pos = 0 + y*N_x + x;
+
+			fprintf(fp, "%f\t", matrix[pos]);
+		}
+
+		fprintf(fp, "\n");
+	}
 }
