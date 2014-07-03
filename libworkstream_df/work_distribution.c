@@ -375,9 +375,8 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   memset(scores, 0, sizeof(data));
 
   for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
-
     /* By default assume that data is going to be reused */
-    if(is_reuse_view(vi) && !reuse_view_has_own_data(vi))
+    if(vi->reuse_data_view)
       node_id = wstream_numa_node_of(vi->reuse_data_view->data);
     else
       node_id = wstream_numa_node_of(vi->data);
@@ -447,6 +446,7 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   }
 
   *target_worker = max_worker;
+
   return 1;
 }
 

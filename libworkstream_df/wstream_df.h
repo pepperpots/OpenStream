@@ -80,7 +80,7 @@ typedef struct wstream_df_view
   size_t reached_position;
   struct wstream_df_view* reuse_associated_view;
   struct wstream_df_view* reuse_data_view;
-  struct wstream_df_view* reuse_consumer_view;
+  struct wstream_df_view* consumer_view;
   size_t refcount;
   struct wstream_df_view* view_chain_next;
   size_t copy_count;

@@ -24,10 +24,10 @@ __builtin_wstream_df_associate_n_views (size_t n, void *pin, void *pfake)
 
   for(size_t i = 0; i < n; i++) {
     in_view_arr[i].reuse_associated_view = &fake_view_arr[i];
-    in_view_arr[i].reuse_consumer_view = NULL;
+    in_view_arr[i].consumer_view = NULL;
 
     fake_view_arr[i].reuse_associated_view = &in_view_arr[i];
-    fake_view_arr[i].reuse_consumer_view = NULL;
+    fake_view_arr[i].consumer_view = NULL;
     fake_view_arr[i].burst = dummy_in_view->horizon;
   }
 }
@@ -47,7 +47,7 @@ void match_reuse_output_clause_with_reuse_input_clause(wstream_df_view_p out_vie
 {
   reuse_view_sanity_check(out_view, in_view);
 
-  out_view->reuse_consumer_view = in_view;
+  out_view->consumer_view = in_view;
   in_view->reuse_data_view = out_view->reuse_associated_view;
 
   /* The data pointer will be set at the beginning of the execution as
@@ -71,6 +71,9 @@ void match_reuse_input_clause_with_output_clause(wstream_df_view_p out_view, wst
   reuse_view_sanity_check(out_view, in_view);
   in_view->reuse_data_view = NULL;
 
+#ifdef DEFERRED_ALLOC
+  out_view->consumer_view = in_view;
+#else
   /* The output clause assumes that it writes to a regular input
    * clause and expects in_view->data to be a valid pointer.
    * FIXME: Do not use local slab cache here */
@@ -78,16 +81,25 @@ void match_reuse_input_clause_with_output_clause(wstream_df_view_p out_view, wst
 
   assert(in_view->data);
   assert(reuse_view_has_own_data(in_view));
+#endif
 }
 
 void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wstream_df_view_p in_view)
 {
   reuse_view_sanity_check(out_view, in_view);
-  out_view->reuse_consumer_view = in_view;
+  out_view->consumer_view = in_view;
 
   assert(!is_reuse_view(in_view));
-  assert(in_view->data);
   assert(in_view->refcount == 1);
+
+#ifdef DEFERRED_ALLOC
+  if(!in_view->data) {
+    match_reuse_output_clause_with_reuse_input_clause(out_view, in_view);
+    return;
+  }
+#else
+  assert(in_view->data);
+#endif
 
   /* Increment reference count of the output clause */
   __built_in_wstream_df_inc_frame_ref(out_view->owner, 1);
@@ -97,18 +109,37 @@ void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wst
 /* The parameter v is a pointer to the fake output view of the task
  * that is to be executed.
  */
-void __built_in_wstream_df_reuse_prepare_data(void* v)
+void __built_in_wstream_df_prepare_data(void* v)
 {
-  int force_reuse = 0;
-
-#ifndef REUSE_COPY_ON_NODE_CHANGE
-  force_reuse = 1;
-#endif
-
   wstream_df_thread_p cthread = current_thread;
 
   /* Fake output view of the task to be executed */
   wstream_df_view_p out_view = v;
+  int force_reuse = 0;
+
+  /* View of a direct consumer of the task to be executed */
+  wstream_df_view_p consumer_view = out_view->consumer_view;
+
+  /* Check if this is a deferred allocation between a normal output
+   * view and an input view */
+  if(!is_reuse_view(out_view) && !out_view->data) {
+      /* We're the only producer of the consumer view and the view
+       * buffer has not been allocated yet. Allocate consumer's buffer
+       * and return.*/
+    __built_in_wstream_df_alloc_view_data_slab(consumer_view, consumer_view->horizon, cthread->slab_cache);
+
+    if(is_reuse_view(consumer_view))
+      consumer_view->reuse_data_view = NULL;
+
+    out_view->data = consumer_view->data;
+  }
+
+  if(!is_reuse_view(out_view))
+    return;
+
+#ifndef REUSE_COPY_ON_NODE_CHANGE
+  force_reuse = 1;
+#endif
 
   /* Input view of the task to be executed */
   wstream_df_view_p in_view = out_view->reuse_associated_view;
@@ -119,9 +150,6 @@ void __built_in_wstream_df_reuse_prepare_data(void* v)
     return;
 
   wstream_df_view_p reuse_data_view = in_view->reuse_data_view;
-
-  /* View of a direct consumer of the task to be executed */
-  wstream_df_view_p consumer_view = out_view->reuse_consumer_view;
 
   if(wstream_is_fresh(reuse_data_view->data) && reuse_data_view->horizon > 10000) {
     wstream_update_numa_node_of(reuse_data_view->data);
@@ -185,17 +213,23 @@ void __built_in_wstream_df_reuse_prepare_data(void* v)
   assert(in_view->refcount > 0);
 }
 
-void __built_in_wstream_df_reuse_prepare_data_vec(size_t n, void* v)
+void __built_in_wstream_df_prepare_data_vec(size_t n, void* v)
 {
   wstream_df_view_p fake_view = v;
   wstream_df_view_p view_arr = fake_view->next;
 
   for(size_t i = 0; i < n; i++)
-    __built_in_wstream_df_reuse_prepare_data(&view_arr[i]);
+    __built_in_wstream_df_prepare_data(&view_arr[i]);
 }
 
 void __built_in_wstream_df_reuse_update_data(void* v)
 {
+#ifdef DEFERRED_ALLOC
+    const int deferred_alloc_enabled = 1;
+#else
+    const int deferred_alloc_enabled = 0;
+#endif
+
   /* Fake output view of the task that terminates */
   wstream_df_view_p out_view = v;
 
@@ -203,41 +237,29 @@ void __built_in_wstream_df_reuse_update_data(void* v)
   wstream_df_view_p in_view = out_view->reuse_associated_view;
 
   /* If we don't have a consumer there's nothing to do */
-  if(!out_view->reuse_consumer_view)
+  if(!out_view->consumer_view)
     return;
 
   /* For consumer views that are reuse views we need to propagate
    * our producer's view if we have reused its data */
-  if(is_reuse_view(out_view->reuse_consumer_view)) {
+  if(is_reuse_view(out_view->consumer_view) ||
+     (deferred_alloc_enabled && !out_view->consumer_view->data))
+  {
     if(!reuse_view_has_own_data(in_view)) {
       /* Transfer data ownership to this view */
+      out_view->consumer_view->data = in_view->data;
       in_view->reuse_data_view->data = NULL;
-
-      /* /\* Set our consumer's reuse data view to our predecessor *\/ */
-      /* out_view->reuse_consumer_view->reuse_data_view = in_view->reuse_data_view; */
-
-      /* /\* Set out predecessor's consumer to our consumer *\/ */
-      /* in_view->reuse_data_view->reuse_consumer_view = out_view->reuse_consumer_view; */
-
-      /* Increase our predecessor's refcount as our consumer potentially
-       * reuses it */
-      /* __built_in_wstream_df_inc_view_ref(in_view->reuse_data_view, 1); */
-      /* __built_in_wstream_df_inc_frame_ref(in_view->reuse_data_view->owner, 1); */
-
-      /* Our consumer has speculatively incremented our reference
-       * counter. All the references from the consumer to us have been
-       * overwritten, so we can safely decrement out own reference
-       * counter. */
-      /* __built_in_wstream_df_dec_view_ref(in_view, 1); */
-      /* __built_in_wstream_df_dec_frame_ref(in_view->owner, 1); */
 
       __built_in_wstream_df_dec_view_ref(in_view->reuse_data_view, 1);
       __built_in_wstream_df_dec_frame_ref(in_view->reuse_data_view->owner, 1);
+    } else {
+      out_view->consumer_view->data = in_view->data;
     }
   } else {
-    /* The consumer view is an ordinary input view and we just need to
-     * copy data to its input buffer. */
-    memcpy(out_view->reuse_consumer_view->data, in_view->data, in_view->horizon);
+    /* The consumer view is an ordinary input view with allocated
+     * buffer. We just need to copy data to the consumer's input
+     * buffer.*/
+    memcpy(out_view->consumer_view->data, in_view->data, in_view->horizon);
 
     /* Decrement our own reference counter */
     __built_in_wstream_df_dec_view_ref(in_view, 1);

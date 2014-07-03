@@ -669,7 +669,17 @@ void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
 	__built_in_wstream_df_alloc_view_data_slab(view, size, slab_cache);
 }
 
-void __built_in_wstream_df_alloc_view_data_vec(size_t n, void* v, size_t size)
+void __built_in_wstream_df_alloc_view_data_deferred(void* v, size_t size)
+{
+#ifdef DEFERRED_ALLOC
+	wstream_df_view_p view = v;
+	view->data = NULL;
+#else
+	__built_in_wstream_df_alloc_view_data(v, size);
+#endif
+}
+
+void __built_in_wstream_df_alloc_view_data_vec_deferred(size_t n, void* v, size_t size)
 {
   wstream_df_view_p dummy_view = (wstream_df_view_p) v;
 
@@ -680,7 +690,7 @@ void __built_in_wstream_df_alloc_view_data_vec(size_t n, void* v, size_t size)
       if(!dummy_view->reuse_associated_view)
 	view->reuse_associated_view = NULL;
 
-      __built_in_wstream_df_alloc_view_data(view, size);
+      __built_in_wstream_df_alloc_view_data_deferred(view, size);
     }
 }
 
@@ -776,6 +786,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
   wstream_df_list_p cons_queue = &stream->consumer_queue;
 
   wstream_df_frame_p fp = view->owner;
+  int defer_further = 0;
 
   if(is_read_view_p)
     add_view_to_chain(&fp->input_view_chain, view);
@@ -823,7 +834,26 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 		  match_reuse_output_clause_with_input_clause(prod_view, view);
 	      }
 
-	      prod_view->data = ((char *)view->data) + view->reached_position;
+#ifdef DEFERRED_ALLOC
+	      /* Data of the consumer view has not been allocated
+	       * yet. If we are the only producer, we further defer
+	       * allocation until the producer gets ready. Otherwise
+	       * we need to allocate here, such that the other
+	       * producers get a valid data pointer */
+	      if(!view->data) {
+		if(!is_reuse_view(view) && view->horizon != prod_view->burst) {
+		  __built_in_wstream_df_alloc_view_data(view, view->horizon);
+		} else {
+		  defer_further = 1;
+		  prod_view->data = NULL;
+		  prod_view->consumer_view = view;
+		}
+	      }
+#endif
+
+	      if(!defer_further)
+		prod_view->data = ((char *)view->data) + view->reached_position;
+
 	      /* Data owner is the consumer.  */
 	      prod_view->owner = view->owner;
 	      /* Link this view's siblings to the producer for broadcasting.  */
@@ -869,7 +899,26 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	      match_reuse_output_clause_with_input_clause(view, cons_view);
 	  }
 
-	  view->data = ((char *)cons_view->data) + cons_view->reached_position;
+#ifdef DEFERRED_ALLOC
+	  /* Data of the consumer view has not been allocated
+	   * yet. If we are the only producer, we further defer
+	   * allocation until the producer gets ready. Otherwise
+	   * we need to allocate here, such that the other
+	   * producers get a valid data pointer */
+	  if(!cons_view->data) {
+	    if(!is_reuse_view(cons_view) && cons_view->horizon != view->burst) {
+	      __built_in_wstream_df_alloc_view_data(cons_view, cons_view->horizon);
+	    } else {
+	      defer_further = 1;
+	      view->data = NULL;
+	      view->consumer_view = cons_view;
+	    }
+	  }
+#endif
+
+	  if(!defer_further)
+	    view->data = ((char *)cons_view->data) + cons_view->reached_position;
+
 	  view->owner = cons_view->owner;
 	  view->sibling = cons_view->sibling;
 	  view->reached_position = cons_view->reached_position;
@@ -1542,7 +1591,7 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       }
 
       view->reuse_data_view = NULL;
-      view->reuse_consumer_view = NULL;
+      view->consumer_view = NULL;
       view->refcount = dummy_view->refcount;
 
       /* FIXME-apop: this is quite tricky, read views may be impacted
@@ -1569,6 +1618,12 @@ broadcast (void *v)
 
   while ((cons_view = cons_view->sibling) != NULL)
     {
+
+#ifdef DEFERRED_ALLOC
+      if(!cons_view->data)
+	__built_in_wstream_df_alloc_view_data(cons_view, cons_view->horizon);
+#endif
+
       memcpy (((char *)cons_view->data) + offset, base_addr, burst);
       tdecrease_n ((void *) cons_view->owner, burst, 1);
     }

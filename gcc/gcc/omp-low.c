@@ -199,7 +199,7 @@ typedef struct wstream_df_view
   tree wstream_df_view_field_reached_pos;
   tree wstream_df_view_field_reuse_associated_view;
   tree wstream_df_view_field_reuse_data_view;
-  tree wstream_df_view_field_reuse_consumer_view;
+  tree wstream_df_view_field_consumer_view;
   tree wstream_df_view_field_refcount;
   tree wstream_df_view_field_view_chain_next;
   tree wstream_df_view_field_copy_count;
@@ -2549,27 +2549,24 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		    {
 		      tree prefetch = builtin_decl_explicit (BUILT_IN_PREFETCH);
 
-		      if(OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c) != NULL_TREE)
-			{
-			  gimple_seq tseq = NULL;
-			  tree reuse_prepare_data_fn;
+		      gimple_seq tseq = NULL;
+		      tree prepare_data_fn;
 
-			  view_ref = build_receiver_ref (view, false, ctx);
-			  ref = build_addr(view_ref, current_function_decl);
+		      view_ref = build_receiver_ref (view, false, ctx);
+		      ref = build_addr(view_ref, current_function_decl);
 
-			  if(v->is_array_view) {
-			    tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
-					     view_ref, v->wstream_df_view_field_reached_pos, NULL);
+		      if(v->is_array_view) {
+			tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+						view_ref, v->wstream_df_view_field_reached_pos, NULL);
 
-			    reuse_prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_PREPARE_DATA_VEC);
-			    x = build_call_expr (reuse_prepare_data_fn, 2, size_ref, ref);
-			  } else {
-			    reuse_prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_PREPARE_DATA);
-			    x = build_call_expr (reuse_prepare_data_fn, 1, ref);
-			  }
+			prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_DATA_VEC);
+			x = build_call_expr (prepare_data_fn, 2, size_ref, ref);
+		      } else {
+			prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_DATA);
+			x = build_call_expr (prepare_data_fn, 1, ref);
+		      }
 
-			  gimplify_stmt (&x, ilist);
-			}
+		      gimplify_stmt (&x, ilist);
 
 		      if (v->is_array_view == false)
 			{
@@ -3195,8 +3192,8 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
       tree has_lp = boolean_false_node;
       location_t loc = gimple_location (ctx->stmt);
       tree tcreate_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TCREATE);
-      tree alloc_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ALLOC_DATA);
-      tree alloc_data_fn_vec = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ALLOC_DATA_VEC);
+      tree alloc_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ALLOC_DATA_DEFERRED);
+      tree alloc_data_fn_vec = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_ALLOC_DATA_VEC_DEFERRED);
       tree frame_ptr = gimple_omp_taskreg_data_arg (ctx->stmt);
       tree synch_ctr = size_zero_node;
 
@@ -3295,9 +3292,9 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_copy_count, NULL);
 	      gimplify_assign (ref, integer_zero_node, &datafield_list);
 
-	      /* Set reuse_consumer_view to NULL */
-	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_consumer_view),
-			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_reuse_consumer_view, NULL);
+	      /* Set consumer_view to NULL */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_consumer_view),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_consumer_view, NULL);
 	      gimplify_assign (ref, null_pointer_node, &datafield_list);
 
 	      /* Set the reached position to 0 if this is a normal
@@ -8073,11 +8070,11 @@ build_wstream_df_view_type (omp_context *ctx, tree data_type)
   insert_field_into_struct (view_t, field);
   ret->wstream_df_view_field_refcount = field;
 
-  name = create_tmp_var_name ("reuse_consumer_view");
+  name = create_tmp_var_name ("consumer_view");
   type = ptr_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
   insert_field_into_struct (view_t, field);
-  ret->wstream_df_view_field_reuse_consumer_view = field;
+  ret->wstream_df_view_field_consumer_view = field;
 
   name = create_tmp_var_name ("reuse_data_view");
   type = ptr_type_node;
