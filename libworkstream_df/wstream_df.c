@@ -757,14 +757,27 @@ void __built_in_wstream_df_dec_view_ref_vec(void* data, size_t num, size_t n)
     }
 }
 
-
-
-
 void
 add_view_to_chain(wstream_df_view_p* start, wstream_df_view_p view)
 {
   view->view_chain_next = *start;
   *start = view;
+}
+
+void
+check_add_view_to_chain(wstream_df_view_p* start, wstream_df_view_p view)
+{
+  /* Only add view to chain if it's not already included*/
+  if(view->view_chain_next) {
+    return;
+  } else {
+    for(wstream_df_view_p it = *start; it; it = it->view_chain_next) {
+      if(it == view)
+	return;
+    }
+  }
+
+  add_view_to_chain(start, view);
 }
 
 /*
@@ -789,9 +802,9 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
   int defer_further = 0;
 
   if(is_read_view_p)
-    add_view_to_chain(&fp->input_view_chain, view);
+    check_add_view_to_chain(&fp->input_view_chain, view);
   else
-    add_view_to_chain(&fp->output_view_chain, view);
+    check_add_view_to_chain(&fp->output_view_chain, view);
 
   trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
 
