@@ -11,6 +11,7 @@
 #include "config.h"
 #include "list.h"
 #include "profiling.h"
+#include "broadcast.h"
 
 #if ALLOW_PUSHES
 #define FIFO_SIZE NUM_PUSH_SLOTS
@@ -86,6 +87,7 @@ typedef struct wstream_df_view
   size_t copy_count;
   size_t reuse_count;
   size_t ignore_count;
+  struct wstream_df_broadcast_table* broadcast_table;
 } wstream_df_view_t, *wstream_df_view_p;
 
 /* The stream data structure.  It only relies on two linked lists of
@@ -244,5 +246,6 @@ void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n);
 void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n);
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n);
+void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt);
 
 #endif

@@ -729,6 +729,24 @@ void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n)
   __sync_add_and_fetch (&(fp->refcount), n);
 }
 
+void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt)
+{
+  wstream_df_thread_p cthread = current_thread;
+  int sc = __sync_sub_and_fetch (&bt->refcount, 1);
+
+  if(sc == 0) {
+    /* Free local copies */
+    for(int i = 0; i < MAX_NUMA_NODES; i++) {
+      if(bt->node_src[i]) {
+	wstream_df_numa_node_p node = numa_node_by_id(i);
+	wstream_free(&node->slab_cache, (void*)bt->node_src[i]);
+      }
+    }
+
+    wstream_free(cthread->slab_cache, bt);
+  }
+}
+
 /* In_view is the input view of the terminating task */
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
 {
@@ -736,8 +754,13 @@ void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
 
   sc = __sync_sub_and_fetch (&in_view->refcount, n);
 
-  if(sc == 0)
-    __built_in_wstream_df_free_view_data(in_view);
+  if(sc == 0) {
+    /* If this is a reusing peek view check broadcast table */
+    if(in_view->broadcast_table)
+      dec_broadcast_table_ref(in_view->broadcast_table);
+    else
+	__built_in_wstream_df_free_view_data(in_view);
+  }
 }
 
 void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n)
@@ -859,10 +882,12 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 		} else {
 		  defer_further = 1;
 		  prod_view->data = NULL;
-		  prod_view->consumer_view = view;
 		}
 	      }
 #endif
+
+	      if(view->horizon == prod_view->burst)
+		prod_view->consumer_view = view;
 
 	      if(!defer_further)
 		prod_view->data = ((char *)view->data) + view->reached_position;
@@ -924,10 +949,12 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	    } else {
 	      defer_further = 1;
 	      view->data = NULL;
-	      view->consumer_view = cons_view;
 	    }
 	  }
 #endif
+
+	  if(cons_view->horizon == view->burst)
+	    view->consumer_view = cons_view;
 
 	  if(!defer_further)
 	    view->data = ((char *)cons_view->data) + cons_view->reached_position;
@@ -1604,6 +1631,7 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       }
 
       view->reuse_data_view = NULL;
+      view->broadcast_table = NULL;
       view->consumer_view = NULL;
       view->refcount = dummy_view->refcount;
 
@@ -1620,25 +1648,69 @@ static inline void
 broadcast (void *v)
 {
   wstream_df_view_p prod_view = (wstream_df_view_p) v;
-  wstream_df_view_p cons_view = prod_view;
   wstream_df_thread_p cthread = current_thread;
+  wstream_df_broadcast_table_p bt = NULL;
 
   trace_state_change(cthread, WORKER_STATE_RT_BCAST);
 
   size_t offset = prod_view->reached_position;
   size_t burst = prod_view->burst;
   void *base_addr = prod_view->data;
+  int use_broadcast_table = 0;
 
-  while ((cons_view = cons_view->sibling) != NULL)
-    {
+  wstream_df_view_p first_cons_view = prod_view->consumer_view;
 
-#ifdef DEFERRED_ALLOC
-      if(!cons_view->data)
-	__built_in_wstream_df_alloc_view_data(cons_view, cons_view->horizon);
+#ifdef USE_BROADCAST_TABLES
+  /* If the producer's burst matches all of the the consumer's
+   *  horizons then use a broadcast table */
+  if(first_cons_view) {
+    use_broadcast_table = 1;
+
+    /* Get NUMA node of source data */
+    if(wstream_is_fresh(first_cons_view->data)) {
+      wstream_update_numa_node_of(first_cons_view->data);
+      trace_frame_info(cthread, first_cons_view->data);
+      slab_set_max_initial_writer_of(first_cons_view->data, 0, 0);
+    }
+
+    /* Init broadcast table */
+    wstream_alloc (cthread, cthread->slab_cache, &bt, 64, sizeof (*bt));
+    broadcast_table_init(bt);
+
+    first_cons_view->broadcast_table = bt;
+
+    /* Init source entry in broadcast table */
+    bt->src_node = wstream_numa_node_of(first_cons_view->data);
+
+    assert(bt->src_node != -1);
+
+    bt->refcount = 1;
+    bt->node_src[bt->src_node] = first_cons_view->data;
+  }
 #endif
 
-      memcpy (((char *)cons_view->data) + offset, base_addr, burst);
-      tdecrease_n ((void *) cons_view->owner, burst, 1);
+  for(wstream_df_view_p peek_view = prod_view->sibling;
+      peek_view;
+      peek_view = peek_view->sibling)
+    {
+      if(!peek_view->data &&
+	 prod_view->burst == peek_view->horizon &&
+	 use_broadcast_table)
+	{
+	  /* Defer copy */
+	  peek_view->broadcast_table = bt;
+	  bt->refcount++;
+	}
+      else
+	{
+#ifdef DEFERRED_ALLOC
+	  if(!peek_view->data)
+	    __built_in_wstream_df_alloc_view_data(peek_view, peek_view->horizon);
+#endif
+	  memcpy (((char *)peek_view->data) + offset, base_addr, burst);
+	}
+
+      tdecrease_n ((void *) peek_view->owner, burst, 1);
     }
 
   trace_state_restore(cthread);
@@ -1678,58 +1750,48 @@ __builtin_ia32_tick (void *s, size_t burst)
   wstream_df_list_p cons_queue = &stream->consumer_queue;
   wstream_df_view_p cons_view;
 
-  wqueue_counters_enter_runtime(current_thread);
+  wstream_df_thread_p cthread = current_thread;
 
-  /* ASSERT that cons_view->active_peek_chain != NULL !! Otherwise
-     this requires passing the matching producers a fake consumer view
-     where to write at least during the producers' execution ... */
-  if (cons_queue->active_peek_chain == NULL)
-    {
-      wstream_df_frame_p cons_frame;
+  wqueue_counters_enter_runtime(cthread);
 
-      /* Normally an error, but for OMPSs expansion, we need to allow
-	 it.  */
-      /*  wstream_df_fatal ("TICK (%d) matches no PEEK view, which is unsupported at this time.",
-	  burst * stream->elem_size);
-      */
-      /* Allocate a fake view, with a fake data block, that allows to
-	 keep the same dependence resolution algorithm.  */
-      size_t size = sizeof (wstream_df_view_t) + burst * stream->elem_size + sizeof (wstream_df_frame_t);
-      wstream_alloc(current_thread, current_thread->slab_cache, &cons_frame, 64, size);
-      memset (cons_frame, 0, size);
+  if(cons_queue->active_peek_chain == NULL) {
+	  wstream_df_frame_p cons_frame;
 
-      /* Avoid one atomic operation by setting the "next" field (which
-	 is the SC in the frame) to the size, which means TDEC won't
-	 do anything.  */
-      cons_frame->synchronization_counter = burst * stream->elem_size;
-      cons_frame->size = size;
+	  /* Allocate a fake view, with a fake data block, that allows to
+	     keep the same dependence resolution algorithm.  */
+	  size_t size = sizeof(wstream_df_view_t) + sizeof(wstream_df_frame_t);
+	  cons_frame = slab_alloc(cthread, cthread->slab_cache, size);
+	  memset(cons_frame, 0, size);
 
-      /* Guard for TDEC: use "work_fn" field as a marker that this
-	 frame is not to be considered in optimizations and should be
-	 deallocated if it's TDEC'd.  We assume a function pointer
-	 cannot be "0x1".  */
-      cons_frame->work_fn = (void *)1;
+	  cons_frame->synchronization_counter = burst * stream->elem_size;
+	  cons_frame->size = size;
 
-      cons_view = (wstream_df_view_p) (((char *) cons_frame) + sizeof (wstream_df_frame_t));
-      cons_view->horizon = burst * stream->elem_size;
-      cons_view->burst = cons_view->horizon;
-      cons_view->owner = cons_frame;
-      cons_view->data = ((char *) cons_view) + sizeof (wstream_df_view_t);
-    }
-  else
-    {
-      /* TICKing mostly means flushing the active_peek_chain to the main
-	 consumer queue, then trying to resolve dependences.  */
-      cons_view = (wstream_df_view_p) cons_queue->active_peek_chain;
-      cons_queue->active_peek_chain = cons_view->sibling;
-      cons_view->sibling = NULL;
-      cons_view->burst = cons_view->horizon;
+	  /* Guard for TDEC: use "work_fn" field as a marker that this
+	     frame is not to be considered in optimizations and should be
+	     deallocated if it's TDEC'd.  We assume a function pointer
+	     cannot be "0x1".  */
+	  cons_frame->work_fn = (void *)1;
 
-      /* ASSERT that burst == cons_view->horizon !! */
-      if (burst * stream->elem_size != cons_view->horizon)
-	wstream_df_fatal ("TICK burst of %d elements does not match the burst %d of preceding PEEK operations.",
-		    burst, cons_view->horizon / stream->elem_size);
-    }
+	  cons_view = (wstream_df_view_p)((char*)cons_frame)+sizeof(wstream_df_frame_t);
+	  cons_view->horizon = burst * stream->elem_size;
+	  cons_view->burst = cons_view->horizon;
+	  cons_view->owner = cons_frame;
+
+	  __built_in_wstream_df_alloc_view_data(cons_view, cons_view->horizon);
+
+  } else {
+	  /* TICKing mostly means flushing the active_peek_chain to the main
+	     consumer queue, then trying to resolve dependences.  */
+	  cons_view = (wstream_df_view_p) cons_queue->active_peek_chain;
+	  cons_queue->active_peek_chain = cons_view->sibling;
+	  cons_view->sibling = NULL;
+	  cons_view->burst = cons_view->horizon;
+
+	  /* ASSERT that burst == cons_view->horizon !! */
+	  if (burst * stream->elem_size != cons_view->horizon)
+		  wstream_df_fatal ("TICK burst of %d elements does not match the burst %d of preceding PEEK operations.",
+				    burst, cons_view->horizon / stream->elem_size);
+  }
 
   wstream_df_resolve_dependences ((void *) cons_view, s, true);
 }

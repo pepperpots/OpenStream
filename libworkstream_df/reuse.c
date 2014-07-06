@@ -1,6 +1,7 @@
 #include "reuse.h"
 #include "alloc.h"
 #include "numa.h"
+#include "broadcast.h"
 
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache);
 extern __thread wstream_df_thread_p current_thread;
@@ -104,6 +105,83 @@ void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wst
   /* Increment reference count of the output clause */
   __built_in_wstream_df_inc_frame_ref(out_view->owner, 1);
   __built_in_wstream_df_inc_view_ref(out_view->reuse_associated_view, 1);
+}
+
+void __built_in_wstream_df_prepare_peek_data(void* v)
+{
+#ifdef USE_BROADCAST_TABLES
+  wstream_df_thread_p cthread = current_thread;
+  wstream_df_view_p peek_view = v;
+  wstream_df_broadcast_table_p bt = peek_view->broadcast_table;
+  int this_node_id = cthread->numa_node->id;
+  void* wait_for_update_val = (void*)1;
+
+  /* Data pointer already assigned. Nothing to do */
+  if(peek_view->data)
+    return;
+
+  assert(peek_view->broadcast_table);
+
+retry:
+  /* If local copy is available: just reuse */
+  if(bt->node_src[this_node_id] &&
+     bt->node_src[this_node_id] != wait_for_update_val)
+    {
+      peek_view->data = (void*)bt->node_src[this_node_id];
+      assert(wstream_numa_node_of(peek_view->data) == this_node_id);
+    }
+  else
+    {
+      if(bt->node_src[this_node_id] == wait_for_update_val)
+	{
+	busy_wait:
+	  /* Fail, busy wait until completion and retry */
+	  while(bt->node_src[this_node_id] == wait_for_update_val)
+	    pthread_yield();
+
+	  goto retry;
+	}
+      else
+	{
+	  /* Try to be the worker that creates the local copy */
+	  if(__sync_bool_compare_and_swap (&bt->node_src[this_node_id], NULL, wait_for_update_val))
+	    {
+	      /* Otherwise, allocate own buffer, copy data and update table */
+	      __built_in_wstream_df_alloc_view_data_slab(peek_view, peek_view->horizon, cthread->slab_cache);
+	      memcpy(peek_view->data, (void*)bt->node_src[bt->src_node], peek_view->horizon);
+
+	      trace_data_read(cthread, 0, peek_view->horizon, 0, (void*)bt->node_src[bt->src_node]);
+
+	      /* Get NUMA node of source data */
+	      if(wstream_is_fresh(peek_view->data)) {
+		wstream_update_numa_node_of(peek_view->data);
+		trace_frame_info(cthread, peek_view->data);
+		slab_set_max_initial_writer_of(peek_view->data, 0, 0);
+	      }
+
+	      assert(wstream_numa_node_of(peek_view->data) == this_node_id);
+
+	      /* Try to update broadcast table with local copy */
+	      __sync_bool_compare_and_swap (&bt->node_src[this_node_id], wait_for_update_val, peek_view->data);
+	    }
+	  else
+	    {
+	      goto busy_wait;
+	    }
+	}
+  }
+#endif
+}
+
+void __built_in_wstream_df_prepare_peek_data_vec(size_t n, void* v)
+{
+#ifdef USE_BROADCAST_TABLES
+  wstream_df_view_p fake_view = v;
+  wstream_df_view_p view_arr = fake_view->next;
+
+  for(size_t i = 0; i < n; i++)
+    __built_in_wstream_df_prepare_peek_data(&view_arr[i]);
+#endif
 }
 
 /* The parameter v is a pointer to the fake output view of the task

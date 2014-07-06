@@ -378,6 +378,8 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
     /* By default assume that data is going to be reused */
     if(vi->reuse_data_view)
       node_id = wstream_numa_node_of(vi->reuse_data_view->data);
+    else if(vi->broadcast_table) /* Peek view with deferred copy */
+      node_id = -1;
     else
       node_id = wstream_numa_node_of(vi->data);
 
