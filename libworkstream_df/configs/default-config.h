@@ -72,7 +72,7 @@ static inline int mem_cores_at_level(unsigned int level, unsigned int cpu)
 	if(level == 0)
 		return 1;
 
-	return wstream_df_num_cores();
+	return wstream_df_num_cores_cached();
 }
 
 /* Returns the name of a level in the memory hierarchy */

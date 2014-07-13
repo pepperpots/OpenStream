@@ -31,6 +31,7 @@ static wstream_df_thread_p* wstream_df_worker_threads;
 wstream_df_numa_node_p wstream_df_default_node;
 static int num_workers;
 static int* wstream_df_worker_cpus;
+int __wstream_df_num_cores_cached = -1;
 
 void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 
@@ -1282,7 +1283,7 @@ void pre_main()
   if(getenv("OMP_NUM_THREADS"))
     num_workers = atoi(getenv("OMP_NUM_THREADS"));
   else
-    num_workers = wstream_df_num_cores ();
+    num_workers = wstream_df_num_cores_unbound ();
 #else
   num_workers = _WSTREAM_DF_NUM_THREADS;
 #endif
@@ -1318,7 +1319,8 @@ void pre_main()
 
   wstream_df_worker_cpus[current_thread->cpu] = 0;
 
-  ncores = wstream_df_num_cores ();
+  ncores = wstream_df_num_cores_unbound ();
+  __wstream_df_num_cores_cached = ncores;
 
   numa_node = mem_numa_node(current_thread->cpu);
   numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
