@@ -142,8 +142,6 @@ typedef struct slab
 
 typedef struct slab_metainfo {
 	int allocator_id;
-	int max_initial_writer_id;
-	unsigned int max_initial_writer_size;
 	unsigned int size;
 	int numa_node;
 } slab_metainfo_t, *slab_metainfo_p;
@@ -202,29 +200,7 @@ static inline unsigned int
 slab_is_fresh(void* ptr)
 {
   slab_metainfo_p metainfo = slab_metainfo(ptr);
-  return (metainfo->max_initial_writer_id == -1);
-}
-
-static inline unsigned int
-slab_max_initial_writer_of(void* ptr)
-{
-  slab_metainfo_p metainfo = slab_metainfo(ptr);
-  return metainfo->max_initial_writer_id;
-}
-
-static inline unsigned int
-slab_max_initial_writer_size_of(void* ptr)
-{
-  slab_metainfo_p metainfo = slab_metainfo(ptr);
-  return metainfo->max_initial_writer_size;
-}
-
-static inline void
-slab_set_max_initial_writer_of(void* ptr, int miw, unsigned int size)
-{
-  slab_metainfo_p metainfo = slab_metainfo(ptr);
-  metainfo->max_initial_writer_id = miw;
-  metainfo->max_initial_writer_size = size;
+  return (metainfo->numa_node == -1);
 }
 
 static inline int
@@ -267,7 +243,6 @@ slab_update_numa_node_of_if_fresh(void* ptr, struct wstream_df_thread* cthread, 
 
   if(get_slab_index(metainfo->size) <= __slab_max_size) {
     metainfo->numa_node = slab_get_numa_node((char*)ptr, metainfo->size);
-    metainfo->max_initial_writer_id = 0;
 
     if(trace)
       trace_frame_info(cthread, ptr);
@@ -278,8 +253,6 @@ static inline void
 slab_metainfo_init(slab_cache_p slab_cache, slab_metainfo_p metainfo)
 {
       metainfo->allocator_id = slab_cache->allocator_id;
-      metainfo->max_initial_writer_id = -1;
-      metainfo->max_initial_writer_size = 0;
       metainfo->numa_node = -1;
 }
 

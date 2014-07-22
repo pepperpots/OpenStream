@@ -440,9 +440,6 @@ __builtin_ia32_tend (void *fp)
   if(slab_allocator_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
 
-  if(slab_max_initial_writer_of(fp) == cthread->worker_id)
-    inc_wqueue_counter(&cthread->tasks_executed_max_initial_writer, 1);
-
   __built_in_wstream_df_dec_frame_ref(cfp, 1);
 
   /* If this task belongs to a barrier, increment the exec count and
