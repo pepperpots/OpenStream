@@ -128,7 +128,7 @@ retry:
      bt->node_src[this_node_id] != wait_for_update_val)
     {
       peek_view->data = (void*)bt->node_src[this_node_id];
-      assert(wstream_numa_node_of(peek_view->data) == this_node_id);
+      assert(slab_numa_node_of(peek_view->data) == this_node_id);
     }
   else
     {
@@ -155,7 +155,7 @@ retry:
 	      /* Get NUMA node of source data */
 	      slab_update_numa_node_of_if_fresh(peek_view->data, cthread, 1);
 
-	      assert(wstream_numa_node_of(peek_view->data) == this_node_id);
+	      assert(slab_numa_node_of(peek_view->data) == this_node_id);
 
 	      /* Try to update broadcast table with local copy */
 	      __sync_bool_compare_and_swap (&bt->node_src[this_node_id], wait_for_update_val, peek_view->data);
@@ -228,7 +228,7 @@ void __built_in_wstream_df_prepare_data(void* v)
   slab_update_numa_node_of_if_fresh(reuse_data_view->data, cthread, 1);
 
   /* Node of the data if reused */
-  int reuse_numa_node = wstream_numa_node_of(reuse_data_view->data);
+  int reuse_numa_node = slab_numa_node_of(reuse_data_view->data);
 
   /* Node of the task that is to be executed */
   int this_numa_node = cthread->numa_node->id;

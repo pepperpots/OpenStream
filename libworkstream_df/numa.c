@@ -5,7 +5,7 @@ static wstream_df_numa_node_p wstream_df_numa_nodes[MAX_NUMA_NODES];
 
 static inline void numa_node_init(wstream_df_numa_node_p node, int node_id)
 {
-  wstream_init_alloc(&node->slab_cache, node_id);
+  slab_init_allocator(&node->slab_cache, node_id);
   /* slab_warmup_size (&node->slab_cache, 524288, 16, node_id); */
   node->leader = NULL;
   node->num_workers = 0;

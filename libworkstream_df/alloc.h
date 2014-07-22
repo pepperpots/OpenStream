@@ -548,44 +548,4 @@ slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
 #undef __slab_max_size
 #undef __slab_alloc_size
 
-#if !NO_SLAB_ALLOCATOR
-#  define wstream_alloc(CTHREAD, SLAB, PP,A,S)	\
-	*(PP) = slab_alloc ((CTHREAD), (SLAB), (S))
-#  define wstream_free(SLAB, P)			\
-  slab_free ((SLAB), (P))
-#  define wstream_init_alloc(SLAB, ID)		\
-  slab_init_allocator (SLAB, ID)
-#  define wstream_allocator_of(P)		\
-  slab_allocator_of(P)
-#  define wstream_numa_node_of(P)		\
-  slab_numa_node_of(P)
-#  define wstream_size_of(P)		\
-  slab_size_of(P)
-#  define wstream_is_fresh(P)		\
-  slab_is_fresh(P)
-#  define wstream_max_initial_writer_of(P)		\
-  slab_max_initial_writer_of(P)
-#  define wstream_max_initial_writer_size_of(P)		\
-  slab_max_initial_writer_size_of(P)
-#  define wstream_set_max_initial_writer_of(P, MIW, SZ)	\
-	slab_set_max_initial_writer_of(P, MIW, SZ)
-#  define wstream_update_numa_node_of(P) \
-  slab_update_numa_node_of(P)
-#else
-#  define wstream_alloc(CTHREAD, SLAB, PP,A,S)			\
-  assert (!posix_memalign ((void **) (PP), (A), (S)))
-#  define wstream_free(SLAB, P)			\
-  free ((P))
-#  define wstream_init_alloc(SLAB, ID)
-#  define wstream_allocator_of(P) (-1)
-#  define wstream_numa_node_of(P) (-1)
-#  define wstream_size_of(P) (-1)
-#  define wstream_is_fresh(P) (0)
-#  define wstream_max_initial_writer_of(P) (0)
-#  define wstream_max_initial_writer_size_of(P) (0)
-#  define wstream_set_max_initial_writer_of(P, MIW, SZ) do { } while(0)
-#  define wstream_update_numa_node_of(P) do { } while(0)
-#endif
-
-
 #endif

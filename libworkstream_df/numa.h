@@ -18,10 +18,7 @@ int numa_nodes_init(void);
 
 static inline void numa_node_add_thread(wstream_df_numa_node_p node, wstream_df_thread_p thread)
 {
-#if !NO_SLAB_ALLOCATOR
   thread->slab_cache = &node->slab_cache;
-#endif
-
   thread->numa_node = node;
 
   if(!node->leader || node->leader->worker_id > thread->worker_id)

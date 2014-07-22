@@ -43,13 +43,13 @@ static void trace_signal_handler(int sig);
 
 static inline void wstream_free_frame(wstream_df_frame_p fp)
 {
-  int node_id = wstream_numa_node_of(fp);
+  int node_id = slab_numa_node_of(fp);
 
   if(node_id != -1) {
     wstream_df_numa_node_p node = numa_node_by_id(node_id);
-    wstream_free(&node->slab_cache, fp);
+    slab_free(&node->slab_cache, fp);
   } else {
-    wstream_free(&wstream_df_default_node->slab_cache, fp);
+    slab_free(&wstream_df_default_node->slab_cache, fp);
  }
 
   trace_tdestroy(current_thread, fp);
@@ -70,7 +70,7 @@ wstream_df_create_barrier ()
 {
   barrier_p barrier;
 
-  wstream_alloc (current_thread, current_thread->slab_cache, &barrier, 64, sizeof (barrier_t));
+  barrier = slab_alloc (current_thread, current_thread->slab_cache, sizeof (barrier_t));
   memset (barrier, 0, sizeof (barrier_t));
 
   /* Add one guard elemment, it will be matched by one increment of
@@ -88,7 +88,7 @@ try_pass_barrier (barrier_p bar)
   if (bar->barrier_counter_created == exec)
     {
       if (bar->barrier_unused == true)
-	wstream_free (current_thread->slab_cache, bar);
+	slab_free (current_thread->slab_cache, bar);
       else
 	{
 	  wstream_df_thread_p cthread = current_thread;
@@ -154,7 +154,7 @@ wstream_df_taskwait ()
 	 this scheduler will be, so leave NULL then set when a barrier
 	 passes to the barrier's continuation).  */
 
-      wstream_alloc(cthread, cthread->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
+      stack = slab_alloc(cthread, cthread->slab_cache, WSTREAM_STACK_SIZE);
       ws_prepcontext (&ctx, stack, WSTREAM_STACK_SIZE, worker_thread);
       ws_prepcontext (&cbar->continuation_context, NULL, WSTREAM_STACK_SIZE, NULL);
 
@@ -175,10 +175,10 @@ wstream_df_taskwait ()
 	 the context that was swapped out (can only happen in TEND).  The
 	 stack-stored variable BAR should have been preserved even if the
 	 thread-local "current_barrier" has not.  */
-      wstream_free (cthread->slab_cache, cthread->current_stack);
+      slab_free (cthread->slab_cache, cthread->current_stack);
     }
 
-  wstream_free (cthread->slab_cache, cbar);
+  slab_free (cthread->slab_cache, cbar);
   /* Restore thread-local variables.  */
   cthread->current_stack = save_stack;
   current_barrier = save_bar;  /* If this is a LP sync, restore barrier.  */
@@ -206,7 +206,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 #if ALLOW_WQEVENT_SAMPLING
   int curr_idx = cthread->num_events-1;
 #endif
-  wstream_alloc(cthread, cthread->slab_cache, &frame_pointer, 64, size);
+  frame_pointer = slab_alloc(cthread, cthread->slab_cache, size);
 
   //  printf("F+ Allocating %p\n", frame_pointer);
 
@@ -437,10 +437,10 @@ __builtin_ia32_tend (void *fp)
       current_barrier = NULL;
     }
 
-  if(wstream_allocator_of(fp) == cthread->worker_id)
+  if(slab_allocator_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_localalloc, 1);
 
-  if(wstream_max_initial_writer_of(fp) == cthread->worker_id)
+  if(slab_max_initial_writer_of(fp) == cthread->worker_id)
     inc_wqueue_counter(&cthread->tasks_executed_max_initial_writer, 1);
 
   __built_in_wstream_df_dec_frame_ref(cfp, 1);
@@ -610,11 +610,11 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 	wstream_df_thread_p cthread = current_thread;
 	wstream_df_frame_p fp = view->owner;
 
-	wstream_alloc(cthread, slab_cache, &view->data, 64, size);
+	view->data = slab_alloc(cthread, slab_cache, size);
 
 	/* Update data statistics of the frame */
-	if(!wstream_is_fresh(view->data)) {
-		int node_id = wstream_numa_node_of(view->data);
+	if(!slab_is_fresh(view->data)) {
+		int node_id = slab_numa_node_of(view->data);
 
 		if(node_id >= 0)
 			fp->bytes_prematch_nodes[node_id] += size;
@@ -690,14 +690,14 @@ void __built_in_wstream_df_free_view_data(void* v)
 	if(!view->data)
 	  return;
 
-	size_t size = wstream_size_of(view->data);
+	size_t size = slab_size_of(view->data);
 	int node_id;
 
-	if(size < 10000 || (node_id = wstream_numa_node_of(view->data)) < 0) {
-		wstream_free(cthread->slab_cache, view->data);
+	if(size < 10000 || (node_id = slab_numa_node_of(view->data)) < 0) {
+		slab_free(cthread->slab_cache, view->data);
 	} else {
 		wstream_df_numa_node_p node = numa_node_by_id(node_id);
-		wstream_free(&node->slab_cache, view->data);
+		slab_free(&node->slab_cache, view->data);
 	}
 }
 
@@ -724,11 +724,11 @@ void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt)
     for(int i = 0; i < MAX_NUMA_NODES; i++) {
       if(bt->node_src[i]) {
 	wstream_df_numa_node_p node = numa_node_by_id(i);
-	wstream_free(&node->slab_cache, (void*)bt->node_src[i]);
+	slab_free(&node->slab_cache, (void*)bt->node_src[i]);
       }
     }
 
-    wstream_free(cthread->slab_cache, bt);
+    slab_free(cthread->slab_cache, bt);
   }
 }
 
@@ -1248,8 +1248,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   if (errno < 0)
     wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
 
-  void *stack;
-  wstream_alloc(NULL, wstream_df_worker_threads[0]->slab_cache, &stack, 64, WSTREAM_STACK_SIZE);
+  void *stack = slab_alloc(NULL, wstream_df_worker_threads[0]->slab_cache, WSTREAM_STACK_SIZE);
   errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
   wstream_df_worker->current_stack = stack;
 
@@ -1434,7 +1433,7 @@ init_stream (void *s, size_t element_size)
 void
 wstream_df_stream_ctor (void **s, size_t element_size)
 {
-  wstream_alloc(current_thread, current_thread->slab_cache, s, 64, sizeof (wstream_df_stream_t));
+  s = slab_alloc(current_thread, current_thread->slab_cache, sizeof (wstream_df_stream_t));
   init_stream (*s, element_size);
 }
 
@@ -1445,7 +1444,7 @@ wstream_df_stream_array_ctor (void **s, size_t num_streams, size_t element_size)
 
   for (i = 0; i < num_streams; ++i)
     {
-      wstream_alloc(current_thread, current_thread->slab_cache, &s[i], 64, sizeof (wstream_df_stream_t));
+      s[i] = slab_alloc(current_thread, current_thread->slab_cache, sizeof (wstream_df_stream_t));
       init_stream (s[i], element_size);
     }
 }
@@ -1497,7 +1496,7 @@ dec_stream_ref (void *s)
   if (refcount == 0)
     {
       force_empty_queues (s);
-      wstream_free(current_thread->slab_cache, s);
+      slab_free(current_thread->slab_cache, s);
     }
 #if 0
   int refcount = stream->refcount;
@@ -1655,13 +1654,13 @@ broadcast (void *v)
     slab_update_numa_node_of_if_fresh(first_cons_view->data, cthread, 1);
 
     /* Init broadcast table */
-    wstream_alloc (cthread, cthread->slab_cache, &bt, 64, sizeof (*bt));
+    bt = slab_alloc (cthread, cthread->slab_cache, sizeof (*bt));
     broadcast_table_init(bt);
 
     first_cons_view->broadcast_table = bt;
 
     /* Init source entry in broadcast table */
-    bt->src_node = wstream_numa_node_of(first_cons_view->data);
+    bt->src_node = slab_numa_node_of(first_cons_view->data);
 
     assert(bt->src_node != -1);
 
@@ -1788,13 +1787,13 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
     else
       trace_data_write(cthread, view->burst, (uint64_t)view->data);
   } else {
-      int node_id = wstream_numa_node_of(view->data);
+      int node_id = slab_numa_node_of(view->data);
       wstream_df_thread_p leader = leader_of_numa_node_id(node_id);
 
       if(!leader)
-	trace_data_read(cthread, 0, wstream_size_of(view->data), 0, view->data);
+	trace_data_read(cthread, 0, slab_size_of(view->data), 0, view->data);
       else
-	trace_data_read(cthread, leader->cpu, wstream_size_of(view->data), 0, view->data);
+	trace_data_read(cthread, leader->cpu, slab_size_of(view->data), 0, view->data);
   }
 }
 

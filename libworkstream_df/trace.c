@@ -50,7 +50,7 @@ void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].frame_info.addr = (uint64_t)frame;
-  cthread->events[cthread->num_events].frame_info.numa_node = wstream_numa_node_of(frame);
+  cthread->events[cthread->num_events].frame_info.numa_node = slab_numa_node_of(frame);
   cthread->events[cthread->num_events].frame_info.size = frame->size;
   cthread->num_events++;
 }

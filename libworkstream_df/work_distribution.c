@@ -222,7 +222,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   memset(data, 0, sizeof(data));
 
   for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
-    int node_id = wstream_numa_node_of(vi->data);
+    int node_id = slab_numa_node_of(vi->data);
     int factor = 1;
 
     if(vi->reuse_data_view)
@@ -279,9 +279,9 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
     /* By default assume that data is going to be reused */
     if(is_reuse_view(vi) && !reuse_view_has_own_data(vi))
-      node_id = wstream_numa_node_of(vi->reuse_data_view->data);
+      node_id = slab_numa_node_of(vi->reuse_data_view->data);
     else
-      node_id = wstream_numa_node_of(vi->data);
+      node_id = slab_numa_node_of(vi->data);
 
     int factor = 1;
 
@@ -377,11 +377,11 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   for(wstream_df_view_p vi = fp->input_view_chain; vi; vi = vi->view_chain_next) {
     /* By default assume that data is going to be reused */
     if(vi->reuse_data_view)
-      node_id = wstream_numa_node_of(vi->reuse_data_view->data);
+      node_id = slab_numa_node_of(vi->reuse_data_view->data);
     else if(vi->broadcast_table) /* Peek view with deferred copy */
       node_id = -1;
     else
-      node_id = wstream_numa_node_of(vi->data);
+      node_id = slab_numa_node_of(vi->data);
 
     if(vi->reuse_data_view)
       factor = 2;
