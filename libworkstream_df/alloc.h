@@ -258,6 +258,23 @@ slab_update_numa_node_of(void* ptr)
 }
 
 static inline void
+slab_update_numa_node_of_if_fresh(void* ptr, struct wstream_df_thread* cthread, int trace)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+
+  if(!slab_is_fresh(ptr) || metainfo->size < 10000)
+	  return;
+
+  if(get_slab_index(metainfo->size) <= __slab_max_size) {
+    metainfo->numa_node = slab_get_numa_node((char*)ptr, metainfo->size);
+    metainfo->max_initial_writer_id = 0;
+
+    if(trace)
+      trace_frame_info(cthread, ptr);
+  }
+}
+
+static inline void
 slab_metainfo_init(slab_cache_p slab_cache, slab_metainfo_p metainfo)
 {
       metainfo->allocator_id = slab_cache->allocator_id;

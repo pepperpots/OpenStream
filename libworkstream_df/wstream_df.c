@@ -308,13 +308,9 @@ void get_max_worker_same_node(int* bytes_cpu, unsigned int num_workers,
 
 void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p fp)
 {
-  for(struct wstream_df_view* v = fp->input_view_chain; v; v = v->view_chain_next) {
-    if(v->data && wstream_is_fresh(v->data) && wstream_size_of(v->data) > 10000) {
-      wstream_update_numa_node_of(v->data);
-      trace_frame_info(cthread, v->data);
-      slab_set_max_initial_writer_of(v->data, 0, 0);
-    }
-  }
+  for(struct wstream_df_view* v = fp->input_view_chain; v; v = v->view_chain_next)
+    if(v->data)
+      slab_update_numa_node_of_if_fresh(v->data, cthread, 1);
 }
 
 /* Decrease the synchronization counter by N.  */
@@ -341,6 +337,7 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
   if (fp->synchronization_counter != (int) n)
     sc = __sync_sub_and_fetch (&(fp->synchronization_counter), n);
+
   /* else the atomic sub would return 0.  This relies on the fact that
      the synchronization_counter is strictly decreasing.  */
 
@@ -348,22 +345,10 @@ tdecrease_n (void *data, size_t n, bool is_write)
   if (sc == 0)
     {
       update_numa_nodes_of_views(cthread, fp);
+
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
-
-      if(wstream_is_fresh(fp)) {
-	get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
-	wstream_set_max_initial_writer_of(fp, max_worker, max_data);
-	wstream_update_numa_node_of(fp);
-	trace_frame_info(cthread, fp);
-
-	int node_id = wstream_numa_node_of(fp);
-	if(node_id >= 0) {
-	  wstream_df_numa_node_p node = numa_node_by_id(node_id);
-	  node->frame_bytes_allocated += fp->size;
-	}
-      }
 
       if (fp->work_fn == (void *) 1)
 	{
@@ -1667,11 +1652,7 @@ broadcast (void *v)
     use_broadcast_table = 1;
 
     /* Get NUMA node of source data */
-    if(wstream_is_fresh(first_cons_view->data)) {
-      wstream_update_numa_node_of(first_cons_view->data);
-      trace_frame_info(cthread, first_cons_view->data);
-      slab_set_max_initial_writer_of(first_cons_view->data, 0, 0);
-    }
+    slab_update_numa_node_of_if_fresh(first_cons_view->data, cthread, 1);
 
     /* Init broadcast table */
     wstream_alloc (cthread, cthread->slab_cache, &bt, 64, sizeof (*bt));

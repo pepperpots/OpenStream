@@ -153,11 +153,7 @@ retry:
 	      trace_data_read(cthread, 0, peek_view->horizon, 0, (void*)bt->node_src[bt->src_node]);
 
 	      /* Get NUMA node of source data */
-	      if(wstream_is_fresh(peek_view->data)) {
-		wstream_update_numa_node_of(peek_view->data);
-		trace_frame_info(cthread, peek_view->data);
-		slab_set_max_initial_writer_of(peek_view->data, 0, 0);
-	      }
+	      slab_update_numa_node_of_if_fresh(peek_view->data, cthread, 1);
 
 	      assert(wstream_numa_node_of(peek_view->data) == this_node_id);
 
@@ -229,11 +225,7 @@ void __built_in_wstream_df_prepare_data(void* v)
 
   wstream_df_view_p reuse_data_view = in_view->reuse_data_view;
 
-  if(wstream_is_fresh(reuse_data_view->data) && reuse_data_view->horizon > 10000) {
-    wstream_update_numa_node_of(reuse_data_view->data);
-    trace_frame_info(cthread, reuse_data_view->data);
-    slab_set_max_initial_writer_of(reuse_data_view->data, 0, 0);
-  }
+  slab_update_numa_node_of_if_fresh(reuse_data_view->data, cthread, 1);
 
   /* Node of the data if reused */
   int reuse_numa_node = wstream_numa_node_of(reuse_data_view->data);
