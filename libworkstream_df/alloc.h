@@ -250,6 +250,20 @@ slab_update_numa_node_of_if_fresh(void* ptr, struct wstream_df_thread* cthread, 
 }
 
 static inline void
+slab_update_numa_node_of_if_fresh_explicit(void* ptr, int node, struct wstream_df_thread* cthread, int trace)
+{
+  slab_metainfo_p metainfo = slab_metainfo(ptr);
+
+  if(metainfo->numa_node != -1 || metainfo->size < 10000)
+    return;
+
+  metainfo->numa_node = node;
+
+  if(trace)
+    trace_frame_info(cthread, ptr);
+}
+
+static inline void
 slab_metainfo_init(slab_cache_p slab_cache, slab_metainfo_p metainfo)
 {
       metainfo->allocator_id = slab_cache->allocator_id;

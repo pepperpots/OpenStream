@@ -1652,7 +1652,7 @@ broadcast (void *v)
     use_broadcast_table = 1;
 
     /* Get NUMA node of source data */
-    slab_update_numa_node_of_if_fresh(first_cons_view->data, cthread, 1);
+    slab_update_numa_node_of_if_fresh_explicit(first_cons_view->data, cthread->numa_node->id, cthread, 1);
 
     /* Init broadcast table */
     bt = slab_alloc (cthread, cthread->slab_cache, sizeof (*bt));
