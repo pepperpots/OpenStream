@@ -4,6 +4,8 @@
 #include "wstream_df.h"
 #include "numa.h"
 #include <pthread.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #ifdef MATRIX_PROFILE
 unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
@@ -233,6 +235,22 @@ wqueue_counters_enter_runtime(struct wstream_df_thread* th)
 }
 
 void
+wqueue_counters_profile_rusage(struct wstream_df_thread* th)
+{
+	struct rusage usage;
+
+	if(getrusage(RUSAGE_THREAD, &usage))
+		wstream_df_fatal("Call to getrusage failed!");
+
+	th->system_time_us =
+		(unsigned long long)usage.ru_stime.tv_sec * 1000000 +
+		(unsigned long long)usage.ru_stime.tv_usec;
+	th->major_page_faults = usage.ru_majflt;
+	th->minor_page_faults = usage.ru_minflt;
+	th->max_resident_size = usage.ru_maxrss;
+}
+
+void
 init_wqueue_counters (wstream_df_thread_p th)
 {
 	th->steals_owncached = 0;
@@ -254,6 +272,10 @@ init_wqueue_counters (wstream_df_thread_p th)
 
 	th->reuse_addr = 0;
 	th->reuse_copy = 0;
+	th->system_time_us = 0;
+	th->major_page_faults = 0;
+	th->minor_page_faults = 0;
+	th->max_resident_size = 0;
 
 	init_papi(th);
 }
@@ -267,7 +289,18 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	int i;
 	const char* events[] = WS_PAPI_EVENTS;
 #endif
-
+	printf ("Thread %d: system_time_us = %lld\n",
+		th->worker_id,
+		th->system_time_us);
+	printf ("Thread %d: major_page_faults = %lld\n",
+		th->worker_id,
+		th->major_page_faults);
+	printf ("Thread %d: minor_page_faults = %lld\n",
+		th->worker_id,
+		th->minor_page_faults);
+	printf ("Thread %d: max_resident_size = %lld\n",
+		th->worker_id,
+		th->max_resident_size);
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
 		th->tasks_created);

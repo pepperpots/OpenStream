@@ -19,7 +19,11 @@ static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "num_texec",
   "slab_refills",
   "reuse_addr",
-  "reuse_copy"
+  "reuse_copy",
+  "system_time_us",
+  "major_page_faults",
+  "minor_page_faults",
+  "max_resident_size"
 };
 
 #if ALLOW_WQEVENT_SAMPLING
@@ -64,6 +68,10 @@ void trace_runtime_counters(struct wstream_df_thread* cthread)
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_SLAB_REFILLS, cthread->slab_cache->slab_refills);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_REUSE_ADDR, cthread->reuse_addr);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_REUSE_COPY, cthread->reuse_copy);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_SYSTEM_TIME_US, cthread->system_time_us);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MAJOR_PAGE_FAULTS, cthread->major_page_faults);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MINOR_PAGE_FAULTS, cthread->minor_page_faults);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MAX_RESIDENT_SIZE, cthread->max_resident_size);
 
   uint64_t steals = 0;
   for(int level = 0; level < MEM_NUM_LEVELS; level++)

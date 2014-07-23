@@ -60,6 +60,10 @@ init_papi(struct wstream_df_thread* th);
 	unsigned long long tasks_executed_localalloc; \
 	unsigned long long reuse_addr; \
 	unsigned long long reuse_copy; \
+	unsigned long long system_time_us; \
+	unsigned long long major_page_faults; \
+	unsigned long long minor_page_faults; \
+	unsigned long long max_resident_size; \
 
 void
 init_wqueue_counters (struct wstream_df_thread* th);
@@ -72,6 +76,9 @@ stop_wqueue_counters (void);
 
 void
 wqueue_counters_enter_runtime(struct wstream_df_thread* th);
+
+void
+wqueue_counters_profile_rusage(struct wstream_df_thread* th);
 
 void
 dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread** wstream_df_worker_threads);
@@ -101,6 +108,7 @@ dump_global_wqueue_counters ();
 #define init_wqueue_counters(th) do {} while(0)
 #define setup_wqueue_counters() do {} while(0)
 #define wqueue_counters_enter_runtime(th) do {} while(0)
+#define wqueue_counters_profile_rusage(th) do {} while(0)
 #define stop_wqueue_counters() do {} while(0)
 #define dump_wqueue_counters(num_workers, wstream_df_worker_threads) do {} while(0)
 #define inc_wqueue_counter(ctr, delta) do {} while(0)

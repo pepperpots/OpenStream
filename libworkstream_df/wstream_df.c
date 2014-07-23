@@ -1021,9 +1021,13 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	  trace_task_exec_start(cthread, fp);
 	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 
+	  wqueue_counters_profile_rusage(cthread);
 	  update_papi(cthread);
 	  trace_runtime_counters(cthread);
+
 	  fp->work_fn (fp);
+
+	  wqueue_counters_profile_rusage(cthread);
 	  trace_runtime_counters(cthread);
 	  update_papi(cthread);
 
