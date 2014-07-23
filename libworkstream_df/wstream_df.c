@@ -43,15 +43,7 @@ static void trace_signal_handler(int sig);
 
 static inline void wstream_free_frame(wstream_df_frame_p fp)
 {
-  int node_id = slab_numa_node_of(fp);
-
-  if(node_id != -1) {
-    wstream_df_numa_node_p node = numa_node_by_id(node_id);
-    slab_free(&node->slab_cache, fp);
-  } else {
-    slab_free(&wstream_df_default_node->slab_cache, fp);
- }
-
+  slab_free(current_thread->slab_cache, fp);
   trace_tdestroy(current_thread, fp);
 }
 
