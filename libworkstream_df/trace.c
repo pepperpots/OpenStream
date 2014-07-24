@@ -23,7 +23,8 @@ static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "system_time_us",
   "major_page_faults",
   "minor_page_faults",
-  "max_resident_size"
+  "max_resident_size",
+  "inv_context_switches"
 };
 
 #if ALLOW_WQEVENT_SAMPLING
@@ -72,6 +73,7 @@ void trace_runtime_counters(struct wstream_df_thread* cthread)
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MAJOR_PAGE_FAULTS, cthread->major_page_faults);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MINOR_PAGE_FAULTS, cthread->minor_page_faults);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MAX_RESIDENT_SIZE, cthread->max_resident_size);
+  trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_INV_CONTEXT_SWITCHES, cthread->inv_context_switches);
 
   uint64_t steals = 0;
   for(int level = 0; level < MEM_NUM_LEVELS; level++)

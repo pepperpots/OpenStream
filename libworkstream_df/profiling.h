@@ -64,6 +64,7 @@ init_papi(struct wstream_df_thread* th);
 	unsigned long long major_page_faults; \
 	unsigned long long minor_page_faults; \
 	unsigned long long max_resident_size; \
+	unsigned long long inv_context_switches; \
 
 void
 init_wqueue_counters (struct wstream_df_thread* th);

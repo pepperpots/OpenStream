@@ -248,6 +248,7 @@ wqueue_counters_profile_rusage(struct wstream_df_thread* th)
 	th->major_page_faults = usage.ru_majflt;
 	th->minor_page_faults = usage.ru_minflt;
 	th->max_resident_size = usage.ru_maxrss;
+	th->inv_context_switches = usage.ru_nivcsw;
 }
 
 void
@@ -276,6 +277,7 @@ init_wqueue_counters (wstream_df_thread_p th)
 	th->major_page_faults = 0;
 	th->minor_page_faults = 0;
 	th->max_resident_size = 0;
+	th->inv_context_switches = 0;
 
 	init_papi(th);
 }
@@ -301,6 +303,9 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	printf ("Thread %d: max_resident_size = %lld\n",
 		th->worker_id,
 		th->max_resident_size);
+	printf ("Thread %d: inv_context_switches = %lld\n",
+		th->worker_id,
+		th->inv_context_switches);
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
 		th->tasks_created);
