@@ -35,7 +35,7 @@ void* sbottom_ref;
 void* scenter_ref;
 void* sdfbarrier_ref;
 
-void gauss_seidel_df_in_place(double* matrix, int blocks_x, int blocks_y, int block_size, int id_x, int id_y);
+void gauss_seidel_df_in_place_unrolled(double* matrix, int blocks_x, int blocks_y, int block_size, int id_x, int id_y);
 void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y);
 void create_terminal_task(double* matrix, int N, int numiters, int block_size, int id_x, int id_y);
 
@@ -105,7 +105,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sright_ref [(it+1)*blocks+id] << right_out[1], \
 			       scenter_ref[(it+1)*blocks+id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == 0 && id_x < blocks_x-1) {
@@ -119,7 +119,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sright_ref [(it+1)*blocks+id] << right_out[1], \
 			       scenter_ref[(it+1)*blocks+id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == 0 && id_x == blocks_x-1) {
@@ -131,7 +131,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sleft_ref  [(it+1)*blocks + id] << left_out[1],	\
 			       scenter_ref[(it+1)*blocks + id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_x == 0 && id_y < blocks_y-1) {
@@ -145,7 +145,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[1], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_x == 0 && id_y == blocks_y-1) {
@@ -157,7 +157,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[1], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == blocks_y-1 && id_x < blocks_x-1) {
@@ -171,7 +171,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[1], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_y == blocks_y-1 && id_x == blocks_x-1) {
@@ -183,7 +183,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sleft_ref[(it+1)*blocks+id] << left_out[1], \
 			       scenter_ref[(it+1)*blocks+id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else if(id_x == blocks_x-1 && id_y < blocks_y-1) {
@@ -197,7 +197,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sleft_ref  [(it+1)*blocks + id] << left_out[1],	\
 			       scenter_ref[(it+1)*blocks + id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	} else {
@@ -213,7 +213,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 			       sright_ref [(it+1)*blocks + id] << right_out[1], \
 			       scenter_ref[(it+1)*blocks + id] << center_out[1])
 		{
-			gauss_seidel_df_in_place(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
+			gauss_seidel_df_in_place_unrolled(matrix, blocks_x, blocks_y, block_size, id_x, id_y);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
 	}

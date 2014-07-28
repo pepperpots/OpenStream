@@ -50,3 +50,79 @@ void gauss_seidel_df_in_place(double* matrix, int blocks_x, int blocks_y, int bl
 		}
 	}
 }
+
+#define UPD_IN_PLACE_BORDER(_x, _y) do { \
+		int global_y = id_y * block_size + (_y);			\
+		int global_x = id_x * block_size + (_x);			\
+									\
+		double top_val = ((_y) == 0 && id_y == 0) ? 0.0 : matrix[(global_y-1)*N + global_x]; \
+		double left_val = ((_x) == 0 && id_x == 0) ? 0.0 : matrix[global_y*N + global_x-1]; \
+		double right_val = ((_x) == block_size-1 && id_x == blocks_x-1) ? 0.0 : matrix[global_y*N + global_x+1]; \
+		double bottom_val = ((_y) == block_size-1 && id_y == blocks_y - 1) ? 0.0 : matrix[(global_y+1)*N + global_x]; \
+		double center_val = matrix[global_y*N + global_x];	\
+		double new_val = (top_val + left_val + right_val + bottom_val + center_val) * 0.2; \
+									\
+		matrix[global_y*N + global_x] = new_val;		\
+	} while(0)
+
+#define UPD_IN_PLACE(_x, _y) matrix[(id_y * block_size + (_y))*N + (id_x * block_size + (_x))] = \
+		(matrix[((id_y * block_size + (_y))-1)*N + (id_x * block_size + (_x))] + \
+		 matrix[(id_y * block_size + (_y))*N + (id_x * block_size + (_x))-1] + \
+		 matrix[(id_y * block_size + (_y))*N + (id_x * block_size + (_x))+1] + \
+		 matrix[((id_y * block_size + (_y))+1)*N + (id_x * block_size + (_x))] + \
+		 matrix[(id_y * block_size + (_y))*N + (id_x * block_size + (_x))]) * 0.2
+
+#define MIN_IN_PLACE(x, y) (((x) < (y)) ? (x) : (y))
+
+void gauss_seidel_df_in_place_unrolled(double* matrix, int blocks_x, int blocks_y, int block_size, int id_x, int id_y)
+{
+	int N = blocks_x * block_size;
+
+	/* Left column */
+	for(int y = 0; y < block_size; y++)
+		UPD_IN_PLACE_BORDER(0, y);
+
+	/* top row */
+	for(int x = 1; x < block_size; x++)
+		UPD_IN_PLACE_BORDER(x, 0);
+
+	/* Center block */
+	for(int y = 1; y < block_size-1; y++) {
+		int unroll_factor = 16;
+		int prolog_lim = MIN_IN_PLACE(block_size-1, unroll_factor);
+		int epilog_start = block_size-1-((block_size-1) % unroll_factor);
+
+		for(int x = 1; x < prolog_lim; x++)
+			UPD_IN_PLACE(x, y);
+
+		for(int x = prolog_lim; x < epilog_start; x += unroll_factor) {
+			UPD_IN_PLACE(x+0, y);
+			UPD_IN_PLACE(x+1, y);
+			UPD_IN_PLACE(x+2, y);
+			UPD_IN_PLACE(x+3, y);
+			UPD_IN_PLACE(x+4, y);
+			UPD_IN_PLACE(x+5, y);
+			UPD_IN_PLACE(x+6, y);
+			UPD_IN_PLACE(x+7, y);
+			UPD_IN_PLACE(x+8, y);
+			UPD_IN_PLACE(x+9, y);
+			UPD_IN_PLACE(x+10, y);
+			UPD_IN_PLACE(x+11, y);
+			UPD_IN_PLACE(x+12, y);
+			UPD_IN_PLACE(x+13, y);
+			UPD_IN_PLACE(x+14, y);
+			UPD_IN_PLACE(x+15, y);
+		}
+
+		for(int x = epilog_start; x < block_size-1; x++)
+			UPD_IN_PLACE(x, y);
+	}
+
+	/* Right column */
+	for(int y = 1; y < block_size-1; y++)
+		UPD_IN_PLACE_BORDER(block_size-1, y);
+
+	/* Bottom row */
+	for(int x = 1; x < block_size; x++)
+		UPD_IN_PLACE_BORDER(x, block_size-1);
+}
