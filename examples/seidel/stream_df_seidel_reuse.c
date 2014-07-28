@@ -35,8 +35,8 @@ void* sbottom_ref;
 void* scenter_ref;
 void* sdfbarrier_ref;
 
-void gauss_seidel_df_in_place(int block_size, double* left, double* top,
-		     double* bottom, double* right, double* center);
+void gauss_seidel_df_in_place_unrolled(int block_size, double* left, double* top,
+				       double* bottom, double* right, double* center);
 
 void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int block_size, int numiters, int it, int id_x, int id_y);
 void create_terminal_task(double* matrix, int N, int numiters, int block_size, int id_x, int id_y);
@@ -103,7 +103,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sleft_ref  [it*blocks + (id+1)       ] >> right[block_size] >> sright_ref [(it+1)*blocks+id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks+id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 NULL, NULL, bottom, right, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -114,7 +114,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sleft_ref  [it*blocks + (id+1)       ] >> right[block_size]  >> sright_ref [(it+1)*blocks+id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks+id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 left, NULL, bottom, right, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -124,7 +124,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sright_ref [(it+1)*blocks + (id-1)   ] >> left[block_size] >> sleft_ref  [(it+1)*blocks + id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks + id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 left, NULL, bottom, NULL, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -135,7 +135,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sleft_ref  [it*blocks + (id+1)       ] >> right[block_size] >> sright_ref [(it+1)*blocks + id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks + id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 NULL, top, bottom, right, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -145,7 +145,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sleft_ref  [it*blocks + (id+1)       ] >> right[block_size] >> sright_ref [(it+1)*blocks + id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks + id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 NULL, top, NULL, right, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -156,7 +156,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sleft_ref  [it*blocks + (id+1)       ] >> right[block_size] >> sright_ref [(it+1)*blocks + id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks + id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 left, top, NULL, right, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -166,7 +166,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sright_ref [(it+1)*blocks + (id-1)       ] >> left[block_size] >> sleft_ref[(it+1)*blocks+id], \
 					     scenter_ref[it*blocks + id               ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks+id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 left, top, NULL, NULL, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -177,7 +177,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sright_ref [(it+1)*blocks + (id-1)   ] >> left[block_size] >> sleft_ref  [(it+1)*blocks + id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks + id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 left, top, bottom, NULL, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}
@@ -189,7 +189,7 @@ void create_next_iteration_task(double* matrix, int blocks_x, int blocks_y, int 
 					     sleft_ref  [it*blocks + (id+1)       ] >> right[block_size] >> sright_ref [(it+1)*blocks + id], \
 					     scenter_ref[it*blocks + id           ] >> center[block_size*block_size] >> scenter_ref[(it+1)*blocks + id])
 		{
-			gauss_seidel_df_in_place(block_size,
+			gauss_seidel_df_in_place_unrolled(block_size,
 						 left, top, bottom, right, center);
 			create_iter_followup_task(matrix, blocks_x, blocks_y, block_size, numiters, it, id_x, id_y);
 		}

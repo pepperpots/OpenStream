@@ -97,6 +97,97 @@ void gauss_seidel_df_in_place(int block_size,
 	}
 }
 
+#define UPD_IN_PLACE_BORDER(_x, _y) do { \
+		double top_val = ((_y) == 0)				\
+			? (top ? top[(_x)] : 0.0)			\
+			: center[((_y)-1)*block_size + (_x)];		\
+		double left_val = ((_x) == 0)				\
+			? (left ? left[(_y)] : 0.0)			\
+			: center[(_y)*block_size + ((_x)-1)];		\
+		double right_val = ((_x) == block_size-1)		\
+			? (right ? right[(_y)] : 0.0)			\
+			: center[(_y)*block_size + ((_x) + 1)];	\
+		double bottom_val = ((_y) == block_size-1)		\
+			? (bottom ? bottom[(_x)] : 0.0)		\
+			: center[((_y)+1)*block_size + (_x)];		\
+		double center_val = center[(_y)*block_size+(_x)];	\
+		double new_val = (top_val + left_val + right_val +	\
+				  bottom_val + center_val) * 0.2;	\
+									\
+		if((_x) == block_size-1 && right)			\
+			right[(_y)] = new_val;				\
+		if((_x) == 0 && left)					\
+			left[(_y)] = new_val;				\
+		if((_y) == block_size-1 && bottom)			\
+			bottom[(_x)] = new_val;			\
+		if((_y) == 0 && top)					\
+			top[(_x)] = new_val;				\
+									\
+		center[(_y)*block_size+(_x)] = new_val;		\
+	} while(0)
+
+#define UPD_IN_PLACE(_x, _y) center[(_y)*block_size+(_x)] =	\
+		(center[((_y)-1)*block_size + (_x)] +		\
+		 center[(_y)*block_size + ((_x)-1)] +		\
+		 center[(_y)*block_size + ((_x) + 1)] +	\
+		 center[((_y)+1)*block_size + (_x)] +		\
+		 center[(_y)*block_size+(_x)]) * 0.2
+
+#define MIN_IN_PLACE(x, y) (((x) < (y)) ? (x) : (y))
+
+void gauss_seidel_df_in_place_unrolled(int block_size,
+		     double* left, double* top,
+		     double* bottom, double* right, double* center)
+{
+	/* Left column */
+	for(int y = 0; y < block_size; y++)
+		UPD_IN_PLACE_BORDER(0, y);
+
+	/* top row */
+	for(int x = 1; x < block_size; x++)
+		UPD_IN_PLACE_BORDER(x, 0);
+
+	/* Center block */
+	for(int y = 1; y < block_size-1; y++) {
+		int unroll_factor = 16;
+		int prolog_lim = MIN_IN_PLACE(block_size-1, unroll_factor);
+		int epilog_start = block_size-1-((block_size-1) % unroll_factor);
+
+		for(int x = 1; x < prolog_lim; x++)
+			UPD_IN_PLACE(x, y);
+
+		for(int x = prolog_lim; x < epilog_start; x += unroll_factor) {
+			UPD_IN_PLACE(x+0, y);
+			UPD_IN_PLACE(x+1, y);
+			UPD_IN_PLACE(x+2, y);
+			UPD_IN_PLACE(x+3, y);
+			UPD_IN_PLACE(x+4, y);
+			UPD_IN_PLACE(x+5, y);
+			UPD_IN_PLACE(x+6, y);
+			UPD_IN_PLACE(x+7, y);
+			UPD_IN_PLACE(x+8, y);
+			UPD_IN_PLACE(x+9, y);
+			UPD_IN_PLACE(x+10, y);
+			UPD_IN_PLACE(x+11, y);
+			UPD_IN_PLACE(x+12, y);
+			UPD_IN_PLACE(x+13, y);
+			UPD_IN_PLACE(x+14, y);
+			UPD_IN_PLACE(x+15, y);
+		}
+
+		for(int x = epilog_start; x < block_size-1; x++)
+			UPD_IN_PLACE(x, y);
+	}
+
+	/* Right column */
+	for(int y = 1; y < block_size-1; y++)
+		UPD_IN_PLACE_BORDER(block_size-1, y);
+
+	/* Bottom row */
+	for(int x = 1; x < block_size; x++)
+		UPD_IN_PLACE_BORDER(x, block_size-1);
+}
+
 /* Copies data of a block of the initial matrix into
  * the vectors and the matrix of the output stream.
  *
