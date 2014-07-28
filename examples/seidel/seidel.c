@@ -21,6 +21,46 @@ gauss_seidel (int N, double a[N][N], int block_size)
       a[i][j] = 0.2 * (a[i][j] + a[i-1][j] + a[i+1][j] + a[i][j-1] + a[i][j+1]);
 }
 
+#define MIN_IN_PLACE(x, y) (((x) < (y)) ? (x) : (y))
+
+#define UPD_IN_PLACE(_x, _y) \
+  a[(_y)][(_x)] = 0.2 * (a[(_y)][(_x)] + a[(_y)-1][(_x)] + a[(_y)+1][(_x)] + a[(_y)][(_x)-1] + a[(_y)][(_x)+1])
+
+void
+gauss_seidel_unrolled (int N, double a[N][N], int block_size)
+{
+  for (int y = 1; y <= block_size; y++) {
+    int unroll_factor = 16;
+    int prolog_lim = MIN_IN_PLACE(block_size, unroll_factor);
+    int epilog_start = block_size-(block_size % unroll_factor);
+
+    for(int x = 1; x < prolog_lim; x++)
+      UPD_IN_PLACE(x, y);
+
+    for(int x = prolog_lim; x < epilog_start; x += unroll_factor) {
+			UPD_IN_PLACE(x+0, y);
+			UPD_IN_PLACE(x+1, y);
+			UPD_IN_PLACE(x+2, y);
+			UPD_IN_PLACE(x+3, y);
+			UPD_IN_PLACE(x+4, y);
+			UPD_IN_PLACE(x+5, y);
+			UPD_IN_PLACE(x+6, y);
+			UPD_IN_PLACE(x+7, y);
+			UPD_IN_PLACE(x+8, y);
+			UPD_IN_PLACE(x+9, y);
+			UPD_IN_PLACE(x+10, y);
+			UPD_IN_PLACE(x+11, y);
+			UPD_IN_PLACE(x+12, y);
+			UPD_IN_PLACE(x+13, y);
+			UPD_IN_PLACE(x+14, y);
+			UPD_IN_PLACE(x+15, y);
+    }
+
+    for(int x = epilog_start; x <= block_size; x++)
+      UPD_IN_PLACE(x, y);
+  }
+}
+
 
 int
 main (int argc, char **argv)
@@ -100,7 +140,7 @@ main (int argc, char **argv)
     for (iter = 0; iter < numiters; iter++)
       for (i = 0; i < N - 2; i += block_size)
 	for (j = 0; j < N - 2; j += block_size)
-	  gauss_seidel (N, &data[N * i + j], block_size);
+	  gauss_seidel_unrolled (N, &data[N * i + j], block_size);
 
     gettimeofday (end, NULL);
 
