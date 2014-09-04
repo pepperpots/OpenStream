@@ -1,6 +1,6 @@
 include ../Makefile.config
 
-TESTS = stream_df_jacobi_3d stream_df_jacobi_3d_reuse stream_jacobi_3d_from_df jacobi_3d
+TESTS = stream_df_jacobi_3d stream_df_jacobi_3d_reuse stream_jacobi_3d_from_df stream_jacobi_3d_seqctrl jacobi_3d
 CFLAGS =  -Wall -g -std=c99 -O3 -Wunused-parameter -ffast-math $(PROFILER_CFLAGS)
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc
 
@@ -10,6 +10,9 @@ jacobi_3d: jacobi_3d.c ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_jacobi_3d_from_df: stream_jacobi_3d_from_df.c ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+
+stream_jacobi_3d_seqctrl: stream_jacobi_3d_seqctrl.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 stream_df_jacobi_3d: stream_df_jacobi_3d.c ../common/common.c ../common/sync.c
@@ -28,6 +31,10 @@ stream_df_jacobi_3d_reuse.c: ../../extras/generators/jacobi/jacobi.py  ../../ext
 
 stream_jacobi_3d_from_df.c: ../../extras/generators/jacobi/jacobi.py  ../../extras/generators/jacobi/stream_jacobi_from_df.py
 	$< --dimensions=3 --version=stream_from_df > $@.tmp
+	mv $@.tmp $@
+
+stream_jacobi_3d_seqctrl.c: ../../extras/generators/jacobi/jacobi.py  ../../extras/generators/jacobi/stream_jacobi_seqctrl.py
+	$< --dimensions=3 --version=stream_seqctrl > $@.tmp
 	mv $@.tmp $@
 
 jacobi_3d.c: ../../extras/generators/jacobi/jacobi.py ../../extras/generators/jacobi/jacobi_seq.py

@@ -5,6 +5,7 @@ import stream_df_jacobi
 import jacobi_seq
 import stream_df_jacobi_reuse
 import stream_jacobi_from_df
+import stream_jacobi_seqctrl
 import jacobi_positions
 
 from optparse import OptionParser
@@ -68,6 +69,8 @@ elif options.version == "stream_df_reuse":
     stream_df_jacobi_reuse.dump_file(config)
 elif options.version == "stream_from_df":
     stream_jacobi_from_df.dump_file(config)
+elif options.version == "stream_seqctrl":
+    stream_jacobi_seqctrl.dump_file(config)
 elif options.version == "seq":
     jacobi_seq.dump_file(config)
 else:
