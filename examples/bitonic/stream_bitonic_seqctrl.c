@@ -69,10 +69,6 @@ static void compare_halves_rec(key_t* top, key_t* bottom, long num_keys)
 	if(num_keys < 1)
 		return;
 
-	/* compare_halves(top_in, bottom_in, num_keys); */
-	/* mergesort_block(top_in, top_out, num_keys); */
-	/* mergesort_block(bottom_in, bottom_out, num_keys); */
-
 	compare_halves(top, bottom, num_keys);
 
 	/* Compare boxes */
@@ -88,15 +84,8 @@ void create_init_task(int task_num)
 {
 	key_t top_out[1];
 
-	//printf("create_init_task(%d)\n", task_num);
-
 	#pragma omp task output(streams[task_num] << top_out[1])
 	{
-		if(num_par_stages > 0) {
-			if(task_num % 2 == 0) {
-				create_triangle_task(0, 0, task_num / 2);
-			}
-		}
 	}
 }
 
@@ -105,17 +94,11 @@ void create_init_sort_task(int task_num)
 	key_t top_in[1];
 	key_t top_out[1];
 
-	//printf("create_init_sort_task(%d)\n", task_num);
-
 	#pragma omp task input(streams[task_num] >> top_in[1]) \
 			output(streams[task_num+num_blocks] << top_out[1])
 	{
 		key_t* block = &keys[task_num * block_size];
 		quicksort_block(block, block_size);
-
-		if(num_par_stages > 0) {
-			create_atomic_compare_half_task(0, 0, task_num / 2, task_num % 2);
-		}
 	}
 }
 
@@ -123,8 +106,6 @@ void create_terminal_task(int task_num)
 {
 	key_t top_in[1];
 	int token[1];
-
-	//printf("create_terminal_task(%d)\n", task_num);
 
 	#pragma omp task input(streams[num_total_streams - num_blocks + task_num] >> top_in[1]) \
 		output(dfbarrier_stream[0] << token[1])
@@ -150,8 +131,6 @@ void create_triangle_task(int stage, int triangle_part, int box)
 	key_t bottom_in[1];
 	key_t bottom_out[1];
 
-	//printf("create_triangle_task(stage: %d, triangle_part: %d, box: %d)\n", stage, triangle_part, box);
-
 	#pragma omp task input(streams[top_in_offset]     >> top_in[1], \
 			       streams[bottom_in_offset]  >> bottom_in[1]) \
 			output(streams[top_out_offset]    << top_out[1], \
@@ -161,30 +140,12 @@ void create_triangle_task(int stage, int triangle_part, int box)
 		key_t* bottom = &keys[(bottom_in_offset % num_blocks) * block_size];
 
 		triangle_merge(top, bottom, block_size);
-
-		if(stage == 0 && num_par_stages > 1) {
-			create_triangle_task(1, box % 2, box / 2);
-		} else if(stage == 1) {
-			create_atomic_compare_half_task(stage, 1, box, triangle_part /*triangle_part * 2 + 0*/);
-			create_atomic_compare_half_task(stage, 1, box, 4 - triangle_part - 1 /*triangle_part * 2 + 1*/);
-		} else if(stage >= 2) {
-			int tt_bt_stride = (1 << (stage - 2));
-
-			if((triangle_part / tt_bt_stride) % 2 == 0) {
-				/* tt - dep */
-				create_compare_half_task(stage, 1, box, triangle_part / (2 * tt_bt_stride), triangle_part % tt_bt_stride);
-			} else {
-				/* bt - dep */
-				create_compare_half_task(stage, 1, box, 4 - (triangle_part / (2 * tt_bt_stride)) - 1, tt_bt_stride - (triangle_part % tt_bt_stride) - 1);
-			}
-		}
 	}
 }
 
 void create_atomic_compare_half_task(int stage, int ch_stage, int box, int level)
 {
 	int stage_offset = num_blocks * (stage + 1) * (stage + 2) / 2;
-	int num_ch_stages = stage + 1;
 	int num_blocks_in_box = (2 << stage);
 
 	key_t top_in[1];
@@ -193,20 +154,12 @@ void create_atomic_compare_half_task(int stage, int ch_stage, int box, int level
 	int left_in_offset = stage_offset + (ch_stage + 1) * num_blocks + box * num_blocks_in_box + level;
 	int right_out_offset = left_in_offset + num_blocks;
 
-	//printf("create_atomic_compare_half_task(stage: %d, ch_stage: %d, box: %d, level: %d)\n", stage, ch_stage, box, level);
-
 	#pragma omp task input(streams[left_in_offset]   >> top_in[1]) \
 			output(streams[right_out_offset] << top_out[1])
 	{
 		key_t* top = &keys[(left_in_offset % num_blocks) * block_size];
 
 		compare_halves_rec(top, &top[block_size/2], block_size / 2);
-
-		if(stage < num_par_stages - 1) {
-			if(level < num_blocks_in_box / 2) {
-				create_compare_half_task(stage + 1, 0, box / 2, box % 2, level);
-			}
-		}
 	}
 }
 
@@ -227,12 +180,8 @@ void create_compare_half_task(int stage, int ch_stage, int box, int level, int c
 	int bottom_in_offset = top_in_offset +  (1 << (num_ch_stages - ch_stage - 2));
 	int bottom_out_offset = bottom_in_offset + num_blocks;
 
-	int num_ch = (1 << (num_ch_stages - ch_stage - 2));
-
 	if(stage == 2 && ch_stage == 1 && level == 4)
 		assert(0);
-
-	//printf("create_compare_half_task(stage: %d, ch_stage: %d, box: %d, level: %d, compare_half: %d)\n", stage, ch_stage, box, level, compare_half);
 
 	#pragma omp task input(streams[top_in_offset]     >> top_in[1], \
 			       streams[bottom_in_offset]  >> bottom_in[1]) \
@@ -243,22 +192,6 @@ void create_compare_half_task(int stage, int ch_stage, int box, int level, int c
 		key_t* bottom = &keys[(bottom_in_offset % num_blocks) * block_size];
 
 		compare_halves(top, bottom, block_size);
-
-		if(num_par_stages > stage + 1 && ch_stage == num_ch_stages - 2) {
-			int newtp;
-
-			if(box % 2 == 0)
-				newtp = 2*level + 1;
-			else
-				newtp = num_blocks_in_box - 2*level - 2;
-
-			create_triangle_task(stage + 1, newtp, box / 2);
-		} else if (ch_stage == num_ch_stages - 3) {
-			create_atomic_compare_half_task(stage, ch_stage+2, box, 4 * level + compare_half);
-			create_atomic_compare_half_task(stage, ch_stage+2, box, 4 * level + compare_half + 2);
-		} else if (stage > 2 && num_ch_stages > ch_stage + 3) {
-			create_compare_half_task(stage, ch_stage + 2, box, level * 4 + compare_half / (num_ch / 4), compare_half % (num_ch / 4));
-		}
 	}
 }
 
@@ -354,14 +287,43 @@ int main(int argc, char** argv)
 	gettimeofday (&start, NULL);
 	openstream_start_hardware_counters();
 
-	int num_at_once = 8;
-	for(int ii = 0; ii < num_blocks/num_at_once; ii++) {
-		#pragma omp task
-		{
-			for(int i = 0; i < num_at_once; i++) {
-				create_init_task(ii*num_at_once+i);
-				create_init_sort_task(ii*num_at_once+i);
-				create_terminal_task(ii*num_at_once+i);
+	for(int stage = 0; stage < num_par_stages; stage++) {
+		if(stage == 0) {
+			for(int block = 0; block < num_blocks; block++) {
+				create_init_task(block);
+				create_init_sort_task(block);
+			}
+		}
+
+		for(int box = 0; box < (1 << (num_par_stages - stage - 1)); box++) {
+			for(int triangle_part = 0; triangle_part < (1 << stage); triangle_part++) {
+				create_triangle_task(stage, triangle_part, box);
+			}
+		}
+
+		if(stage > 0) {
+			for(int ch_stage = 0; ch_stage < stage; ch_stage++) {
+				for(int box = 0; box < (1 << (num_par_stages - stage - 1)); box++) {
+					for(int compare_half = 0; compare_half < (1 << (stage - ch_stage - 1)); compare_half++) {
+						for(int level = 0; level < (1 << (ch_stage + 1)); level++) {
+							create_compare_half_task(stage, ch_stage, box, level, compare_half);
+						}
+					}
+				}
+			}
+		}
+
+		for(int ch_stage = stage; ch_stage <= stage; ch_stage++) {
+			for(int box = 0; box < (1 << (num_par_stages - stage - 1)); box++) {
+				for(int level = 0; level < (1 << (ch_stage + 1)); level++) {
+					create_atomic_compare_half_task(stage, ch_stage, box, level);
+				}
+			}
+		}
+
+		if(stage == num_par_stages-1) {
+			for(int block = 0; block < num_blocks; block++) {
+				create_terminal_task(block);
 			}
 		}
 	}
@@ -369,7 +331,6 @@ int main(int argc, char** argv)
 	int tokens[num_blocks];
 	#pragma omp task input(dfbarrier_stream[0] >> tokens[num_blocks])
 	{
-		printf("END\n");
 	}
 
 	#pragma omp taskwait
