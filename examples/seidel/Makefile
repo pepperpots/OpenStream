@@ -1,8 +1,8 @@
 include ../Makefile.config
 
-TESTS = seidel stream_seidel topsort_deps_stream_seidel starss_to_stream_seidel openmp_task_seidel openmp_loop_seidel stream_df_seidel stream_df_seidel_reuse stream_seidel_from_df
-TESTS_ICC=icc_stream_df_seidel icc_stream_df_seidel_reuse icc_stream_seidel_from_df
-CFLAGS =  -Wall -g -std=c99 -O3  -ffast-math $(PROFILER_CFLAGS)  #-fdump-tree-all #-Werror
+TESTS = seidel stream_seidel topsort_deps_stream_seidel starss_to_stream_seidel openmp_task_seidel openmp_loop_seidel stream_df_seidel stream_df_seidel_reuse stream_seidel_from_df stream_seidel_seqctrl
+TESTS_ICC=icc_stream_df_seidel icc_stream_df_seidel_reuse icc_stream_seidel_from_df icc_stream_seidel_seqctrl
+CFLAGS =  -Wall -g -std=c99 -O3  -ffast-math $(PROFILER_CFLAGS) #-fdump-tree-all #-Werror
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc # Do not link all test cases with Wstream_Df as it launches worker threads even in seq. comp. for now.
 
 ifneq ($(MCC),)
@@ -27,6 +27,9 @@ stream_seidel: stream_seidel.c ../common/common.c ../common/sync.c
 stream_seidel_from_df: stream_seidel_from_df.c ../common/common.c ../common/sync.c stream_seidel_from_df_outline.o
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
+stream_seidel_seqctrl: stream_seidel_seqctrl.c ../common/common.c ../common/sync.c stream_seidel_seqctrl_outline.o
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+
 stream_df_seidel: stream_df_seidel.c ../common/common.c ../common/sync.c stream_df_seidel_outline.o
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
@@ -34,6 +37,9 @@ stream_df_seidel_reuse: stream_df_seidel_reuse.c ../common/common.c ../common/sy
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 icc_stream_seidel_from_df: stream_seidel_from_df.c ../common/common.c ../common/sync.c stream_seidel_from_df_outline_icc.o
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+
+icc_stream_seidel_seqctrl: stream_seidel_seqctrl.c ../common/common.c ../common/sync.c stream_seidel_seqctrl_outline_icc.o
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 icc_stream_df_seidel: stream_df_seidel.c ../common/common.c ../common/sync.c stream_df_seidel_outline_icc.o
