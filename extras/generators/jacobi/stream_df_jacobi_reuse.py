@@ -1137,21 +1137,30 @@ def dump_main_fun(config):
     sys.stdout.write("	gettimeofday(&start, NULL);\n")
     sys.stdout.write("	openstream_start_hardware_counters();\n")
     sys.stdout.write("\n")
-    sys.stdout.write("	int tasks_per_block = int_min(blocks_x, 4);\n")
+
+    for dim in range(config["num_dims"]):
+        sys.stdout.write("	int tasks_per_block_"+config["dim_names"][dim]+" = int_min(blocks_"+config["dim_names"][dim]+", 4);\n")
     sys.stdout.write("\n")
 
     indent = ""
-    for dim in range(config["num_dims"]-1):
+    for dim in range(config["num_dims"]):
         indent = indent + "\t"
-        sys.stdout.write(indent+"for(int id_"+config["dim_names"][dim]+" = 0; id_"+config["dim_names"][dim]+" < blocks_"+config["dim_names"][dim]+"; id_"+config["dim_names"][dim]+"++) {\n")
+        sys.stdout.write(indent+"for(int oid_"+config["dim_names"][dim]+" = 0; oid_"+config["dim_names"][dim]+" < blocks_"+config["dim_names"][dim]+"; oid_"+config["dim_names"][dim]+" += tasks_per_block_"+config["dim_names"][dim]+") {\n")
 
     indent = indent + "\t"
 
     sys.stdout.write(indent+"#pragma omp task\n")
     sys.stdout.write(indent+"{\n")
-    sys.stdout.write(indent+"\tfor(int oid_"+config["dim_names"][config["num_dims"]-1]+" = 0; oid_"+config["dim_names"][config["num_dims"]-1]+" < blocks_"+config["dim_names"][config["num_dims"]-1]+"; oid_"+config["dim_names"][config["num_dims"]-1]+" += tasks_per_block) {\n")
-    sys.stdout.write(indent+"\t\tfor(int id_"+config["dim_names"][config["num_dims"]-1]+" = oid_"+config["dim_names"][config["num_dims"]-1]+"; id_"+config["dim_names"][config["num_dims"]-1]+" < oid_"+config["dim_names"][config["num_dims"]-1]+" + tasks_per_block; id_"+config["dim_names"][config["num_dims"]-1]+"++) {\n")
-    sys.stdout.write(indent+"\t\t\tcreate_initial_task(matrix, numiters")
+    indent = indent + "\t"
+
+    for dim in range(config["num_dims"]):
+        sys.stdout.write(indent+"for(int id_"+config["dim_names"][dim]+" = oid_"+config["dim_names"][dim]+"; id_"+config["dim_names"][dim]+" < oid_"+config["dim_names"][dim]+" + tasks_per_block_"+config["dim_names"][dim]+"; id_"+config["dim_names"][dim]+"++) {\n")
+        indent = indent + "\t"
+
+    # sys.stdout.write(indent+"\tfor(int oid_"+config["dim_names"][config["num_dims"]-1]+" = 0; oid_"+config["dim_names"][config["num_dims"]-1]+" < blocks_"+config["dim_names"][config["num_dims"]-1]+"; oid_"+config["dim_names"][config["num_dims"]-1]+" += tasks_per_block) {\n")
+    # sys.stdout.write(indent+"\t\tfor(int id_"+config["dim_names"][config["num_dims"]-1]+" = oid_"+config["dim_names"][config["num_dims"]-1]+"; id_"+config["dim_names"][config["num_dims"]-1]+" < oid_"+config["dim_names"][config["num_dims"]-1]+" + tasks_per_block; id_"+config["dim_names"][config["num_dims"]-1]+"++) {\n")
+
+    sys.stdout.write(indent+"create_initial_task(matrix, numiters")
 
     for dim in range(config["num_dims"]):
         sys.stdout.write(", N_"+config["dim_names"][dim]);
@@ -1164,7 +1173,7 @@ def dump_main_fun(config):
 
     sys.stdout.write(");\n")
 
-    sys.stdout.write(indent+"\t\t\tcreate_next_iteration_task(matrix, numiters, 0")
+    sys.stdout.write(indent+"create_next_iteration_task(matrix, numiters, 0")
     for dim in range(config["num_dims"]):
         sys.stdout.write(", N_"+config["dim_names"][dim]);
 
@@ -1176,16 +1185,18 @@ def dump_main_fun(config):
 
     sys.stdout.write(");\n")
 
-    sys.stdout.write(indent+"\t\t}\n")
-    sys.stdout.write(indent+"\t}\n")
+    for dim in range(config["num_dims"]):
+        indent = indent[:len(indent)-1]
+        sys.stdout.write(indent+"}\n")
+
+    indent = indent[:len(indent)-1]
     sys.stdout.write(indent+"}\n")
 
-    for dim in range(config["num_dims"]-1):
+    for dim in range(config["num_dims"]):
         indent = indent[:len(indent)-1]
         sys.stdout.write(indent+"}\n");
 
     sys.stdout.write("\n")
-
     sys.stdout.write("	/* Wait for all the tasks to finish */\n")
     sys.stdout.write("	int dfbarrier_tokens[blocks];\n")
     sys.stdout.write("	#pragma omp task input(sdfbarrier_ref[0] >> dfbarrier_tokens[blocks])\n")
