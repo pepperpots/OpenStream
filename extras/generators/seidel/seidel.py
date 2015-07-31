@@ -37,11 +37,16 @@ config = {"num_dims" : None,
           "dim_names" : None,
           "dimref_names" : None,
           "init_positions" : None,
-          "debug_printf" : False}
+          "debug_printf" : False,
+          "openstream_only" : False,
+          "bodyfuncs_only" : False}
 
 parser = OptionParser()
 parser.add_option("-v", "--version", dest="version", type="string", help="Version (e.g., seq, stream_df, stream_df_reuse, stream_from_df)")
 parser.add_option("-d", "--dimensions", dest="dimensions", type="int", help="Number of dimensions")
+parser.add_option("--openstream-only", dest="openstream_only", action="store_true", help="Dump only the OpenStream glue code")
+parser.add_option("--body-funcs-only", dest="bodyfuncs_only", action="store_true", help="Dump only the functions used in task bodies not using OpenStream-specific code")
+
 (options, args) = parser.parse_args()
 
 if options.dimensions == None:
@@ -60,6 +65,8 @@ config["num_dims"] = options.dimensions
 config["dim_names"] = configs[options.dimensions-1]["dim_names"]
 config["dimref_names"] = configs[options.dimensions-1]["dimref_names"]
 config["init_positions"] = configs[options.dimensions-1]["init_positions"]
+config["bodyfuncs_only"] = options.bodyfuncs_only
+config["openstream_only"] = options.openstream_only
 
 if options.version == "stream_df":
     stream_df_seidel.dump_file(config)

@@ -2,6 +2,9 @@
 
 import sys
 
+def dump_bodyfuncs_global_defs(config):
+    sys.stdout.write("#include <stdio.h>\n\n")
+
 def dump_global_defs(config):
     sys.stdout.write("#include <stdio.h>\n")
     sys.stdout.write("#include <stdlib.h>\n")

@@ -802,8 +802,12 @@ def dump_main_fun(config):
     sys.stdout.write("\n")
 
 def dump_file(config):
-    seidel_par_common.dump_global_defs(config)
-    sys.stdout.write("\n");
+    if config["bodyfuncs_only"]:
+        seidel_par_common.dump_bodyfuncs_global_defs(config)
+
+    if not config["bodyfuncs_only"]:
+        seidel_par_common.dump_global_defs(config)
+        sys.stdout.write("\n");
 
     dump_seidel_fun_signature(config)
     sys.stdout.write(";\n");
@@ -814,50 +818,53 @@ def dump_file(config):
     seidel_df_common.dump_finish_fun_signature(config)
     sys.stdout.write(";\n");
 
-    dump_create_init_followup_task_fun_signature(config)
-    sys.stdout.write(";\n");
+    if not config["bodyfuncs_only"]:
+        dump_create_init_followup_task_fun_signature(config)
+        sys.stdout.write(";\n");
 
-    seidel_df_common.dump_create_followup_task_fun_signature(config)
-    sys.stdout.write(";\n");
+        seidel_df_common.dump_create_followup_task_fun_signature(config)
+        sys.stdout.write(";\n");
 
-    seidel_df_common.dump_create_initial_task_fun_signature(config)
-    sys.stdout.write(";\n");
+        seidel_df_common.dump_create_initial_task_fun_signature(config)
+        sys.stdout.write(";\n");
 
-    dump_create_next_iteration_task_fun_signature(config)
-    sys.stdout.write(";\n");
+        dump_create_next_iteration_task_fun_signature(config)
+        sys.stdout.write(";\n");
 
-    dump_create_terminal_task_fun_signature(config)
-    sys.stdout.write(";\n");
+        dump_create_terminal_task_fun_signature(config)
+        sys.stdout.write(";\n");
 
     seidel_par_common.dump_dump_matrix_fun_signature(config)
     sys.stdout.write(";\n\n");
 
-    seidel_par_common.dump_dump_matrix_fun(config)
-    sys.stdout.write("\n")
+    if not config["openstream_only"]:
+        seidel_par_common.dump_dump_matrix_fun(config)
+        sys.stdout.write("\n")
 
-    dump_seidel_fun(config)
-    sys.stdout.write("\n")
+        dump_seidel_fun(config)
+        sys.stdout.write("\n")
 
-    seidel_df_common.dump_init_fun(config)
-    sys.stdout.write("\n")
+        seidel_df_common.dump_init_fun(config)
+        sys.stdout.write("\n")
 
-    seidel_df_common.dump_finish_fun(config)
-    sys.stdout.write("\n")
+        seidel_df_common.dump_finish_fun(config)
+        sys.stdout.write("\n")
 
-    dump_create_terminal_task_fun(config)
-    sys.stdout.write("\n")
+    if not config["bodyfuncs_only"]:
+        dump_create_terminal_task_fun(config)
+        sys.stdout.write("\n")
 
-    dump_create_init_followup_task_fun(config)
-    sys.stdout.write("\n")
+        dump_create_init_followup_task_fun(config)
+        sys.stdout.write("\n")
 
-    seidel_df_common.dump_create_followup_task_fun(config)
-    sys.stdout.write("\n")
+        seidel_df_common.dump_create_followup_task_fun(config)
+        sys.stdout.write("\n")
 
-    seidel_df_common.dump_create_initial_task_fun(config)
-    sys.stdout.write("\n")
+        seidel_df_common.dump_create_initial_task_fun(config)
+        sys.stdout.write("\n")
 
-    dump_create_next_iteration_task_fun(config)
-    sys.stdout.write("\n")
+        dump_create_next_iteration_task_fun(config)
+        sys.stdout.write("\n")
 
-    dump_main_fun(config)
-    sys.stdout.write("\n")
+        dump_main_fun(config)
+        sys.stdout.write("\n")
