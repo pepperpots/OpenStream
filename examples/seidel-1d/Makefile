@@ -1,45 +1,110 @@
 include ../Makefile.config
 
 TESTS = stream_df_seidel_1d stream_df_seidel_1d_reuse stream_seidel_1d_from_df stream_seidel_1d_seqctrl seidel_1d
+ICC_TESTS = icc_stream_df_seidel_1d icc_stream_df_seidel_1d_reuse icc_stream_seidel_1d_from_df icc_stream_seidel_1d_seqctrl icc_seidel_1d
 CFLAGS =  -Wall -g -std=c99 -O3 -Wunused-parameter -ffast-math $(PROFILER_CFLAGS)
+ICC_CFLAGS = -g -std=c99 -fast
 LDFLAGS = -L${LIB_DIR} -rdynamic -lm -lc
 
 all: $(TESTS)
 
+all-icc: $(ICC_TESTS)
+
 seidel_1d: seidel_1d.c ../common/common.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline
 
-stream_seidel_1d_from_df: stream_seidel_1d_from_df.c ../common/common.c ../common/sync.c
+icc_seidel_1d: seidel_1d.c ../common/common.c
+	$(ICC) $(ICC_CFLAGS) $^ -o $@
+
+
+stream_seidel_1d_from_df: stream_seidel_1d_from_df.c stream_seidel_1d_from_df_outline.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-stream_seidel_1d_seqctrl: stream_seidel_1d_seqctrl.c ../common/common.c ../common/sync.c
+icc_stream_seidel_1d_from_df: stream_seidel_1d_from_df.c stream_seidel_1d_from_df_outline_icc.a ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
+
+
+stream_seidel_1d_seqctrl: stream_seidel_1d_seqctrl.c stream_seidel_1d_seqctrl_outline.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-stream_df_seidel_1d: stream_df_seidel_1d.c ../common/common.c ../common/sync.c
+icc_stream_seidel_1d_seqctrl: stream_seidel_1d_seqctrl.c stream_seidel_1d_seqctrl_outline_icc.a ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-stream_df_seidel_1d_reuse: stream_df_seidel_1d_reuse.c ../common/common.c ../common/sync.c
+
+stream_df_seidel_1d: stream_df_seidel_1d.c stream_df_seidel_1d_outline.c ../common/common.c ../common/sync.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-stream_df_seidel_1d.c: ../../extras/generators/seidel/seidel.py ../../extras/generators/seidel/stream_df_seidel.py
-	$< --dimensions=1 --version=stream_df > $@.tmp
-	mv $@.tmp $@
+icc_stream_df_seidel_1d: stream_df_seidel_1d.c stream_df_seidel_1d_outline_icc.a ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
 
-stream_df_seidel_1d_reuse.c: ../../extras/generators/seidel/seidel.py ../../extras/generators/seidel/stream_df_seidel_reuse.py
-	$< --dimensions=1 --version=stream_df_reuse > $@.tmp
-	mv $@.tmp $@
 
-stream_seidel_1d_from_df.c: ../../extras/generators/seidel/seidel.py ../../extras/generators/seidel/stream_seidel_from_df.py
-	$< --dimensions=1 --version=stream_from_df > $@.tmp
-	mv $@.tmp $@
+stream_df_seidel_1d_reuse: stream_df_seidel_1d_reuse.c stream_df_seidel_1d_reuse_outline.c ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
-stream_seidel_1d_seqctrl.c: ../../extras/generators/seidel/seidel.py ../../extras/generators/seidel/stream_seidel_seqctrl.py
-	$< --dimensions=1 --version=stream_seqctrl > $@.tmp
-	mv $@.tmp $@
+icc_stream_df_seidel_1d_reuse: stream_df_seidel_1d_reuse.c stream_df_seidel_1d_reuse_outline_icc.a ../common/common.c ../common/sync.c
+	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
 
-seidel_1d.c: ../../extras/generators/seidel/seidel.py ../../extras/generators/seidel/seidel_seq.py
-	$< --dimensions=1 --version=seq > $@.tmp
-	mv $@.tmp $@
+
+%_icc.a: %.c
+	@[ ! -z "$(ICC)" ] || (echo "Could not find ICC" ; exit 1)
+	@[ ! -z "$(XIAR)" ] || (echo "Could not find XIAR" ; exit 1)
+	$(ICC) $(ICC_CFLAGS) -o icc_$*.o -c $<
+	$(XIAR) cr $@ icc_$*.o
+
+DF_GEN_DEPS = ../../extras/generators/seidel/seidel.py \
+		../../extras/generators/seidel/stream_df_seidel.py \
+		../../extras/generators/seidel/seidel_df_common.py \
+		../../extras/generators/seidel/seidel_par_common.py \
+		../../extras/generators/seidel/seidel_common.py
+
+DF_REUSE_GEN_DEPS = ../../extras/generators/seidel/seidel.py \
+		../../extras/generators/seidel/stream_df_seidel_reuse.py \
+		../../extras/generators/seidel/seidel_df_common.py \
+		../../extras/generators/seidel/seidel_par_common.py \
+		../../extras/generators/seidel/seidel_common.py
+
+SHM_FROM_DF_GEN_DEPS = ../../extras/generators/seidel/seidel.py \
+		../../extras/generators/seidel/stream_seidel_from_df.py \
+		../../extras/generators/seidel/seidel_shm_common.py \
+		../../extras/generators/seidel/seidel_par_common.py \
+		../../extras/generators/seidel/seidel_common.py
+
+SHM_SEQCTRL_GEN_DEPS = ../../extras/generators/seidel/seidel.py \
+		../../extras/generators/seidel/stream_seidel_seqctrl.py \
+		../../extras/generators/seidel/seidel_shm_common.py \
+		../../extras/generators/seidel/seidel_par_common.py \
+		../../extras/generators/seidel/seidel_common.py
+
+SEQ_GEN_DEPS = ../../extras/generators/seidel/seidel.py \
+		../../extras/generators/seidel/seidel_seq.py \
+		../../extras/generators/seidel/seidel_common.py
+
+stream_df_seidel_1d.c: $(DF_GEN_DEPS)
+	$< --openstream-only --dimensions=1 --version=stream_df > $@
+
+stream_df_seidel_1d_outline.c: $(DF_GEN_DEPS)
+	$< --body-funcs-only --dimensions=1 --version=stream_df > $@
+
+stream_df_seidel_1d_reuse.c: $(DF_REUSE_GEN_DEPS)
+	$< --openstream-only --dimensions=1 --version=stream_df_reuse > $@
+
+stream_df_seidel_1d_reuse_outline.c: $(DF_REUSE_GEN_DEPS)
+	$< --body-funcs-only --dimensions=1 --version=stream_df_reuse > $@
+
+stream_seidel_1d_from_df.c: $(SHM_FROM_DF_GEN_DEPS)
+	$< --openstream-only --dimensions=1 --version=stream_from_df > $@
+
+stream_seidel_1d_from_df_outline.c: $(SHM_FROM_DF_GEN_DEPS)
+	$< --body-funcs-only --dimensions=1 --version=stream_from_df > $@
+
+stream_seidel_1d_seqctrl.c: $(SHM_SEQCTRL_GEN_DEPS)
+	$< --openstream-only --dimensions=1 --version=stream_seqctrl > $@
+
+stream_seidel_1d_seqctrl_outline.c: $(SHM_SEQCTRL_GEN_DEPS)
+	$< --body-funcs-only --dimensions=1 --version=stream_seqctrl > $@
+
+seidel_1d.c: $(SEQ_GEN_DEPS)
+	$< --dimensions=1 --version=seq > $@
 
 clean:
-	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt
+	rm -f $(ICC_TESTS) $(TESTS) *~ *.c.* *.s *.raw *.out *.txt *.o *.a *.c
