@@ -235,17 +235,19 @@ def dump_main_fun(config):
         indent = indent + "\t"
         sys.stdout.write(indent+"for(int "+config["dim_names"][dim]+" = "+config["dim_names"][dim]+config["dim_names"][dim]+"; "+config["dim_names"][dim]+" < "+config["dim_names"][dim]+config["dim_names"][dim]+" + block_size_"+config["dim_names"][dim]+"; "+config["dim_names"][dim]+"++) {\n")
 
-    sys.stdout.write(indent+"\tint index_center = 0")
+    center_expr = "0";
+
     for dim_other in range(config["num_dims"]):
-        sys.stdout.write(" + "+config["dim_names"][dim_other]+"")
+        center_expr += " + "+config["dim_names"][dim_other]
 
         for dim_other_t in range(dim_other+1, config["num_dims"]):
-                sys.stdout.write("*(N_"+config["dim_names"][dim_other_t]+"+2)")
-    sys.stdout.write(";\n")
+                center_expr += "*(N_"+config["dim_names"][dim_other_t]+"+2)"
+
+    sys.stdout.write(indent+"\tmatrix["+center_expr+"] = (matrix["+center_expr+"]")
 
     for dim in range(config["num_dims"]):
         for direction in range(2):
-            sys.stdout.write(indent+"\tint index_"+config["dimref_names"][dim][direction]+" = 0")
+            sys.stdout.write(" +\n"+indent+"\t\tmatrix[0")
             for dim_other in range(config["num_dims"]):
                 if dim_other == dim:
                     if direction == 0:
@@ -257,19 +259,7 @@ def dump_main_fun(config):
 
                 for dim_other_t in range(dim_other+1, config["num_dims"]):
                     sys.stdout.write("*(N_"+config["dim_names"][dim_other_t]+"+2)")
-            sys.stdout.write(";\n")
-
-    sys.stdout.write("\n")
-    sys.stdout.write(indent+"\tdouble center_val = matrix[index_center];\n")
-    for dim in range(config["num_dims"]):
-        sys.stdout.write(indent+"\tdouble "+config["dimref_names"][dim][0]+"_val = matrix[index_"+config["dimref_names"][dim][0]+"];\n")
-        sys.stdout.write(indent+"\tdouble "+config["dimref_names"][dim][1]+"_val = matrix[index_"+config["dimref_names"][dim][1]+"];\n")
-
-    sys.stdout.write("\n")
-    sys.stdout.write(indent+"\tmatrix[index_center] = (center_val")
-    for dim in range(config["num_dims"]):
-        for direction in range(2):
-            sys.stdout.write(" + "+config["dimref_names"][dim][direction]+"_val")
+            sys.stdout.write("]")
 
     sys.stdout.write(") / "+str(2*config["num_dims"]+1)+".0;\n")
 
