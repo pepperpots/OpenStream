@@ -108,3 +108,35 @@ seidel_3d.c: $(SEQ_GEN_DEPS)
 
 clean:
 	rm -f $(ICC_TESTS) $(TESTS) *~ *.c.* *.s *.raw *.out *.txt *.o *.a *.c
+
+CHECK_PARAMS=-sx4 -sy4 -sz5 -bx3 -by3 -bz3 -r100
+REF_PROG=./seidel_3d
+
+check: $(TESTS)
+	@echo "Verifying with parameters $(CHECK_PARAMS)"
+	@echo -n "Running reference program..."
+	@$(REF_PROG) $(CHECK_PARAMS) -o ref.check.out > /dev/null
+	@echo "done."
+	@REFSUM=`sha1sum ref.check.out | awk '{ print $$1; }'` ; \
+	for i in $(TESTS) ; \
+	do \
+		if [ `stat -c %i "./$$i"` != `stat -c %i "./$$REF_PROG"` ] ; \
+		then \
+			echo -n "Checking $$i... " ; \
+			./$$i $(CHECK_PARAMS) -o $$i.check.out  > /dev/null ; \
+			RETVAL=$$? ; \
+			if [ $$RETVAL -ne 0 ] ; \
+			then \
+				echo "FAILED." ; \
+				exit 1 ; \
+			fi ; \
+			SUM=`sha1sum $$i.check.out | awk '{ print $$1; }'` ; \
+			if [ "$$SUM" != "$$REFSUM" ] ; \
+			then \
+				echo "FAILED." ; \
+				exit 1 ; \
+			else \
+				echo "SUCCESSFUL." ; \
+			fi ; \
+		fi ; \
+	done
