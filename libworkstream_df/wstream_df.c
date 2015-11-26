@@ -1771,6 +1771,27 @@ __builtin_ia32_tick (void *s, size_t burst)
   wstream_df_resolve_dependences ((void *) cons_view, s, true);
 }
 
+void __built_in_update_numa_node_of_output_view(void* v)
+{
+  wstream_df_view_p view = v;
+  wstream_df_thread_p cthread = current_thread;
+
+  /* FIXME? */
+  if(view->data)
+	  slab_update_numa_node_of_if_fresh(view->data, cthread, 1);
+}
+
+void __built_in_update_numa_node_of_output_view_vec(size_t num, void* v)
+{
+  wstream_df_view_p view = v;
+
+  for (size_t i = 0; i < num; ++i)
+    {
+      wstream_df_view_p pview = &((wstream_df_view_p) view->next)[i];
+      __built_in_update_numa_node_of_output_view(pview);
+    }
+}
+
 void __built_in_wstream_df_trace_view_access(void* v, int is_write)
 {
   wstream_df_thread_p cthread = current_thread;

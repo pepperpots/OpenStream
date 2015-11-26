@@ -2556,18 +2556,20 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		      view_ref = build_receiver_ref (view, false, ctx);
 		      ref = build_addr(view_ref, current_function_decl);
 
-		      if(v->is_array_view) {
-			tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
-						view_ref, v->wstream_df_view_field_reached_pos, NULL);
+		      if(!no_openstream_prepare_data_calls) {
+			if(v->is_array_view) {
+			  tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+						  view_ref, v->wstream_df_view_field_reached_pos, NULL);
 
-			prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_DATA_VEC);
-			x = build_call_expr (prepare_data_fn, 2, size_ref, ref);
-		      } else {
-			prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_DATA);
-			x = build_call_expr (prepare_data_fn, 1, ref);
+			  prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_DATA_VEC);
+			  x = build_call_expr (prepare_data_fn, 2, size_ref, ref);
+			} else {
+			  prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_DATA);
+			  x = build_call_expr (prepare_data_fn, 1, ref);
+			}
+
+			gimplify_stmt (&x, ilist);
 		      }
-
-		      gimplify_stmt (&x, ilist);
 
 		      if (v->is_array_view == false)
 			{
@@ -2580,9 +2582,11 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 
 			  if(OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c) != NULL_TREE)
 			    {
-			      tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA);
-			      x = build_call_expr (reuse_update_data_fn, 1, ref);
-			      gimplify_stmt (&x, &tseq);
+			      if(!no_openstream_reuse_update_data_calls) {
+				tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA);
+				x = build_call_expr (reuse_update_data_fn, 1, ref);
+				gimplify_stmt (&x, &tseq);
+			      }
 			    }
 
 			  tree bcast_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_BROADCAST);
@@ -2596,10 +2600,19 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 			  x = build_call_expr (tdec_fn, 3, owner_ref, burst_ref, build_int_cst (integer_type_node, 1));
 			  gimplify_stmt (&x, &tseq);
 
-			  tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS);
-			  ref = build_fold_addr_expr(view_ref);
-			  x = build_call_expr (view_access_fn, 2, ref, build_int_cst (integer_type_node, 1));
-			  gimplify_stmt (&x, &tseq);
+			  if(!no_openstream_trace_view_access) {
+			    tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS);
+			    ref = build_fold_addr_expr(view_ref);
+			    x = build_call_expr (view_access_fn, 2, ref, build_int_cst (integer_type_node, 1));
+			    gimplify_stmt (&x, &tseq);
+			  }
+
+			  if(!no_openstream_update_numa_node_of_output_view_calls) {
+			    tree update_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_UPDATE_NUMA_NODE_OF_OPUTPUT_VIEW);
+			    ref = build_fold_addr_expr(view_ref);
+			    x = build_call_expr (update_fn, 1, ref);
+			    gimplify_stmt (&x, &tseq);
+			  }
 
 			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
 
@@ -2626,9 +2639,11 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 
 			  if(OMP_CLAUSE_REUSE_ASSOCIATED_CLAUSE (c) != NULL_TREE)
 			    {
-			      tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA_VEC);
-			      x = build_call_expr (reuse_update_data_fn, 2, size_ref, ref);
-			      gimplify_stmt (&x, &tseq);
+			      if(!no_openstream_reuse_update_data_calls) {
+				tree reuse_update_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_REUSE_UPDATE_DATA_VEC);
+				x = build_call_expr (reuse_update_data_fn, 2, size_ref, ref);
+				gimplify_stmt (&x, &tseq);
+			      }
 			    }
 
 			  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE_N_VEC);
@@ -2636,10 +2651,19 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 					       build_fold_addr_expr (view_ref), burst_ref, build_int_cst (integer_type_node, 1));
 			  gimplify_stmt (&x, &tseq);
 
-			  tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS_VEC);
-			  ref = build_fold_addr_expr(view_ref);
-			  x = build_call_expr (view_access_fn, 3, size_ref, ref, build_int_cst (integer_type_node, 1));
-			  gimplify_stmt (&x, &tseq);
+			  if(!no_openstream_trace_view_access) {
+			    tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS_VEC);
+			    ref = build_fold_addr_expr(view_ref);
+			    x = build_call_expr (view_access_fn, 3, size_ref, ref, build_int_cst (integer_type_node, 1));
+			    gimplify_stmt (&x, &tseq);
+			  }
+
+			  if(!no_openstream_update_numa_node_of_output_view_calls) {
+			    tree update_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_UPDATE_NUMA_NODE_OF_OPUTPUT_VIEW_VEC);
+			    ref = build_fold_addr_expr(view_ref);
+			    x = build_call_expr (update_fn, 2, size_ref, ref);
+			    gimplify_stmt (&x, &tseq);
+			  }
 
 			  gsi_insert_seq_before (&diter, tseq, GSI_SAME_STMT);
 			}
@@ -2654,40 +2678,48 @@ lower_rec_input_clauses (tree clauses, gimple_seq *ilist, gimple_seq *dlist,
 		      /* Peek View */
 		      if (OMP_CLAUSE_BURST_SIZE (c) == integer_zero_node)
 			{
-			  tree prepare_data_fn;
+			  if(!no_openstream_prepare_peek_data_calls) {
+			    tree prepare_data_fn;
 
-			  if(v->is_array_view) {
-			    tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
-						    view_ref, v->wstream_df_view_field_reached_pos, NULL);
+			    if(v->is_array_view) {
+			      tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
+						      view_ref, v->wstream_df_view_field_reached_pos, NULL);
 
-			    prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_PEEK_DATA_VEC);
-			    x = build_call_expr (prepare_data_fn, 2, size_ref, ref);
-			  } else {
-			    prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_PEEK_DATA);
-			    x = build_call_expr (prepare_data_fn, 1, ref);
+			      prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_PEEK_DATA_VEC);
+			      x = build_call_expr (prepare_data_fn, 2, size_ref, ref);
+			    } else {
+			      prepare_data_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_PREPARE_PEEK_DATA);
+			      x = build_call_expr (prepare_data_fn, 1, ref);
+			    }
+
+			    gimplify_stmt (&x, ilist);
 			  }
-
-			  gimplify_stmt (&x, ilist);
 			}
 
 		      if (v->is_array_view == false)
 			{
-			  tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS);
-			  x = build_call_expr (view_access_fn, 2, ref, build_int_cst (integer_type_node, 0));
-			  gimplify_stmt (&x, ilist);
+			  if(!no_openstream_trace_view_access) {
+			    tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS);
+			    x = build_call_expr (view_access_fn, 2, ref, build_int_cst (integer_type_node, 0));
+			    gimplify_stmt (&x, ilist);
+			  }
 
-			  tree dec_ref_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_DEC_VIEW_REF);
-			  x = build_call_expr (dec_ref_fn, 2, ref, size_one_node);
-			  gimplify_stmt (&x, &tseq);
+			  if(!no_openstream_dec_view_ref_calls) {
+			    tree dec_ref_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_DEC_VIEW_REF);
+			    x = build_call_expr (dec_ref_fn, 2, ref, size_one_node);
+			    gimplify_stmt (&x, &tseq);
+			  }
 			}
 		      else
 			{
 			  tree size_ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reached_pos),
 					     view_ref, v->wstream_df_view_field_reached_pos, NULL);
 
-			  tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS_VEC);
-			  x = build_call_expr (view_access_fn, 3, size_ref, ref, build_int_cst (integer_type_node, 1));
-			  gimplify_stmt (&x, ilist);
+			  if(!no_openstream_trace_view_access) {
+			    tree view_access_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_VIEW_ACCESS_VEC);
+			    x = build_call_expr (view_access_fn, 3, size_ref, ref, build_int_cst (integer_type_node, 1));
+			    gimplify_stmt (&x, ilist);
+			  }
 
 			  tree dec_ref_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_DEC_VIEW_REF_VEC);
 			  x = build_call_expr (dec_ref_fn, 3, ref, size_ref, size_one_node);
@@ -3471,16 +3503,18 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 
 	      if(OMP_CLAUSE_CODE (c) == OMP_CLAUSE_INPUT)
 		{
-		  ref = build_fold_addr_expr (view_ref_prematch);
-		  tmp = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon),
+		  if(!no_openstream_alloc_view_data_deferred) {
+		    ref = build_fold_addr_expr (view_ref_prematch);
+		    tmp = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_horizon),
 				  unshare_expr (view_ref_prematch), v->wstream_df_view_field_horizon, NULL);
 
-		  if(v->is_array_view)
-		    t = build_call_expr (alloc_data_fn_vec, 3, fold_convert (size_type_node, view_array_size), ref, tmp);
-		  else
-		    t = build_call_expr (alloc_data_fn, 2, ref, tmp);
+		    if(v->is_array_view)
+		      t = build_call_expr (alloc_data_fn_vec, 3, fold_convert (size_type_node, view_array_size), ref, tmp);
+		    else
+		      t = build_call_expr (alloc_data_fn, 2, ref, tmp);
 
-		  gimplify_and_add (t, &alloc_list);
+		    gimplify_and_add (t, &alloc_list);
+		  }
 		}
 	      else
 		{
