@@ -71,6 +71,8 @@ examples/syntax/016_lastprivate_clause
 examples/syntax/017_lastprivate_clause_nested
 examples/syntax/018_modular_taskwait
 examples/syntax/019_streams_of_streams
+examples/syntax/020_inout_reuse
+examples/syntax/021_variadic_inout_reuse
 examples/jacobi/x86_jacobi
 examples/jacobi/x86_jacobi_c11
 examples/jacobi/x86_jacobi_dumbc11
