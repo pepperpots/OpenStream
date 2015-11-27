@@ -67,6 +67,17 @@ LDFLAGS_MKL_PAR= -Wl,--start-group \
 	-L$(ICC_LIB_DIR) \
 	-liomp5 -ldl -lpthread -lm -lnuma
 
+CFLAGS_PLASMA=-I$(PLASMA_ROOT)/include/ -std=c99
+LDFLAGS_PLASMA=-L$(PLASMA_ROOT)/lib \
+		-lplasma \
+		-lcoreblas \
+		-lcoreblasqw \
+		-llapacke \
+		-lquark \
+		-lhwloc \
+		-lpthread \
+		$(LDFLAGS_MKL_SEQ)
+
 mkl_cholesky: cholesky.c ../common/common.c
 	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
 	$(GCC)  $(CFLAGS_MKL) $^ -o $@ -fno-inline $(LDFLAGS_MKL_SEQ)
@@ -82,3 +93,6 @@ mkl_block_seq_cholesky: block_seq_cholesky.c ../common/common.c
 mkl_stream_%: stream_%.c ../common/common.c ../common/sync.c
 	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
 	$(GCC) $(CFLAGS) $(LDFLAGS) $(CFLAGS_MKL) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LD_RPATH_FLAGS) $(LDFLAGS_MKL_SEQ)
+
+plasma_cholesky: plasma_cholesky.c ../common/common.c ../common/sync.c
+	$(GCC)  $(CFLAGS_PLASMA) $^ -o $@ -fno-inline $(LDFLAGS_PLASMA)
