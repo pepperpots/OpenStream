@@ -457,8 +457,8 @@ void new_stream_dpotrf(double* global_matrix, int block_size, int padding_elemen
 static inline void
 verify (int N, double *data, double* seq_data)
 {
-  for(int x = 0; x < N; x++) {
-    for(int y = 0; y <= x; y++) {
+  for(int y = 0; y < N; y++) {
+    for(int x = 0; x < N; x++) {
       if(!double_equal(data[y*N+x], seq_data[y*N+x])) {
 	fprintf(stderr, "Data differs at Y = %d, X = %d: expect %.20f, but was %.20f, diff is %.20f, reldiff = %.20f\n", y, x, seq_data[y*N+x], data[y*N+x], fabs(seq_data[y*N+x] - data[y*N+x]), fabs(seq_data[y*N+x] - data[y*N+x]) / fabs(seq_data[y*N+x]));
 	exit(1);
