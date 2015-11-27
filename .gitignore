@@ -33,6 +33,10 @@ examples/fibo/cilk_fibo
 examples/fibo/stream_fibo
 examples/fibo/stream_fibo_single_stream
 examples/fibo/stream_recursive_fibo
+examples/ring-roberts/ring_roberts
+examples/ring-roberts/stream_df_ring_roberts
+examples/ring-roberts/stream_ring_roberts_from_df
+examples/ring-roberts/stream_ring_roberts_seqctrl
 examples/fmradio/fmradio_seq
 examples/fmradio/stream_fmradio_df
 examples/seidel/cilk_seidel
