@@ -19,6 +19,11 @@ examples/cholesky/stream_cholesky
 examples/cholesky/stream_df_cholesky
 examples/cholesky/stream_starss_translation_cholesky
 examples/cholesky/block_seq_cholesky
+examples/cholesky/stream_cholesky_from_df
+examples/cholesky/stream_df_cholesky_hyb
+examples/cholesky/stream_df_cholesky_hyb_reuse
+examples/cholesky/stream_df_cholesky_peek_reuse
+examples/cholesky/stream_df_cholesky_reuse
 examples/fft_1d/barrier_fft
 examples/fft_1d/radix_fft_stream_pure
 examples/fft_1d/seq_fftw
@@ -109,6 +114,7 @@ examples/strassen/x86_strassen_dumbc11
 examples/strassen/x86_strassen_nofences
 examples/bitonic/bitonic
 examples/bitonic/stream_df_bitonic
+examples/bitonic/stream_bitonic_seqctrl
 *.out
 examples/fmradio/*.raw
 examples/fmradio/*.txt
