@@ -8,6 +8,7 @@ TESTS = cholesky \
 	stream_df_cholesky_reuse \
 	stream_starss_translation_cholesky \
 	stream_df_cholesky_hyb \
+	stream_df_cholesky_peek_reuse \
 	stream_df_cholesky_hyb_reuse
 
 CFLAGS =  -Wall -g -std=c99 -O2  -ffast-math -I$(CBLAS_INC_DIR) $(PROFILER_CFLAGS)
@@ -38,6 +39,7 @@ clean:
 		mkl_stream_cholesky_from_df \
 		mkl_stream_df_cholesky \
 		mkl_stream_df_cholesky_reuse \
+		mkl_stream_df_cholesky_peek_reuse \
 		mkl_stream_df_cholesky_hyb \
 		mkl_stream_df_cholesky_hyb_reuse
 
