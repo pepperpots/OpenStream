@@ -122,3 +122,4 @@ tmp/
 *.pdf
 *.svg
 *.pyc
+*.o
