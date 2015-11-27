@@ -253,8 +253,8 @@ void create_dgemm_task(double* global_matrix, int x, int blocks, int block_size,
 	  cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 		       block_size, block_size, block_size,
 		       -1.0,
-		       global_ul, N+padding_elements,
 		       global_l, N+padding_elements,
+		       global_ul, N+padding_elements,
 		       1.0,
 		       global, N+padding_elements);
 
@@ -270,8 +270,8 @@ void create_dgemm_task(double* global_matrix, int x, int blocks, int block_size,
 	cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 		       block_size, block_size, block_size,
 		       -1.0,
-		       global_ul, N+padding_elements,
 		       global_l, N+padding_elements,
+		       global_ul, N+padding_elements,
 		       1.0,
 		       global, N+padding_elements);
 
