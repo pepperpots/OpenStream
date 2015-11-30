@@ -1507,8 +1507,6 @@ broadcast (void *v)
     /* Init source entry in broadcast table */
     bt->src_node = slab_numa_node_of(first_cons_view->data);
 
-    assert(bt->src_node != -1);
-
     bt->refcount = 1;
     bt->node_src[bt->src_node] = first_cons_view->data;
   }
