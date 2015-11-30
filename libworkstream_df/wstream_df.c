@@ -1484,7 +1484,6 @@ broadcast (void *v)
 
   size_t offset = prod_view->reached_position;
   size_t burst = prod_view->burst;
-  void *base_addr = prod_view->data;
   int use_broadcast_table = 0;
 
   wstream_df_view_p first_cons_view = prod_view->consumer_view;
@@ -1536,7 +1535,7 @@ broadcast (void *v)
 	  if(!peek_view->data)
 	    __built_in_wstream_df_alloc_view_data(peek_view, peek_view->horizon);
 #endif
-	  memcpy (((char *)peek_view->data) + offset, base_addr, burst);
+	  memcpy (((char *)peek_view->data) + offset, first_cons_view->data, burst);
 	}
 
       tdecrease_n ((void *) peek_view->owner, burst, 1);
