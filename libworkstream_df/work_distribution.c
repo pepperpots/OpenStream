@@ -440,11 +440,8 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
     numa_node = numa_node_by_id(numa_node_id);
     rand_idx = prng_nextn(&cthread->rands, numa_node->num_workers);
     max_worker = numa_node->workers[rand_idx]->worker_id;
-  } else if(cthread->numa_node->id == numa_node_id) {
-      get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data, numa_node_id);
-
-      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[worker_id_to_cpu(max_worker)])
-	return 0;
+  } else {
+    return 0;
   }
 
   *target_worker = max_worker;
