@@ -20,6 +20,10 @@
 #include "prng.h"
 #include "interleave.h"
 
+#ifdef DEPENDENCE_AWARE_ALLOC
+	#error "Obsolete option 'dependence-aware allocation' enabled"
+#endif
+
 /***************************************************************************/
 /***************************************************************************/
 /* The current frame pointer, thread data, barrier and saved barrier
@@ -499,23 +503,7 @@ void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
 	  return;
 	}
 
-#ifdef DEPENDENCE_AWARE_ALLOC
-	wstream_df_frame_p fp = view->owner;
-
-	int curr_stolen = (cthread->current_frame &&
-			   ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL);
-
-	int dominant_node = fp->dominant_prematch_data_node_id;
-
-	if(!curr_stolen && dominant_node != -1 && dominant_node != cthread->numa_node->id) {
-		wstream_df_numa_node_p node = numa_node_by_id(dominant_node);
-		slab_cache = &node->slab_cache;
-	} else {
-		slab_cache = cthread->slab_cache;
-	}
-#else
 	slab_cache = cthread->slab_cache;
-#endif
 
 	__built_in_wstream_df_alloc_view_data_slab(view, size, slab_cache);
 }
