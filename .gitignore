@@ -109,6 +109,7 @@ examples/jacobi-3d/stream_jacobi_3d_seqctrl
 examples/jacobi-3d/stream_jacobi_3d_seqctrl.c
 examples/kmeans/kmeans
 examples/kmeans/openmp_loop_kmeans
+examples/kmeans/stream_df_kmeans
 examples/knapsack/x86_knapsack
 examples/knapsack/x86_knapsack_c11
 examples/knapsack/x86_knapsack_dumbc11
