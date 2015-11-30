@@ -454,55 +454,6 @@ __builtin_ia32_tend (void *fp)
 void
 wstream_df_prematch_dependences (void *v, void *s, bool is_read_view_p)
 {
-  wstream_df_stream_p stream = (wstream_df_stream_p) s;
-  wstream_df_view_p view = (wstream_df_view_p) v;
-  wstream_df_list_p prod_queue = &stream->producer_queue;
-  unsigned int reached_position = 0;
-  wstream_df_frame_p this_fp = (wstream_df_frame_p) view->owner;
-
-  pthread_mutex_lock (&stream->stream_lock);
-
-  if (is_read_view_p == true)
-    {
-      if (view->burst != 0)
-      {
-	      wstream_df_view_p prod_view;
-
-	      /* We should assume here that view->burst == view->horizon.  */
-	      while (reached_position < view->horizon
-		     && (prod_view = (wstream_df_view_p) wstream_df_list_head (prod_queue)) != NULL)
-	      {
-		      wstream_df_frame_p prod_fp = prod_view->owner;
-		      int numa_node = prod_fp->dominant_input_data_node_id;
-
-		      /* Ignore reuse views as we don't know yet
-			 whether data will be reused or not */
-		      if(!is_reuse_view(prod_view)) {
-			if(numa_node >= 0 && numa_node < MAX_NUMA_NODES)
-			  this_fp->bytes_prematch_nodes[numa_node] += prod_view->burst;
-		      }
-
-		      reached_position += prod_view->burst;
-	      }
-      }
-    }
-  else /* Write view.  */
-    {
-      /* wstream_df_view_p cons_view = (wstream_df_view_p) wstream_df_list_head (cons_queue); */
-
-      /* if (cons_view != NULL) */
-      /* { */
-      /* 	      wstream_df_frame_p cons_fp = cons_view->owner; */
-      /* 	      int numa_node = wstream_numa_node_of(cons_fp); */
-
-      /* 	      if(numa_node != -1) { */
-      /* 		      this_fp->bytes_prematch_nodes[numa_node] += view->burst; */
-      /* 		      this_fp->bytes_prematch_nodes[numa_node] += cons_fp->bytes_prematch_nodes[numa_node]; */
-      /* 	      } */
-      /* } */
-    }
-
-  pthread_mutex_unlock (&stream->stream_lock);
 }
 
 void* get_curr_fp(void)
@@ -511,88 +462,13 @@ void* get_curr_fp(void)
   return cthread->current_frame;
 }
 
-void determine_dominant_node_equal_random(wstream_df_frame_p fp, int *id, size_t* size, int this_node_id)
-{
-	int dominant_node = this_node_id;
-	int others[MAX_NUMA_NODES];
-	int num_others = 0;
-	int rand_idx;
-	size_t dominant_size = fp->bytes_prematch_nodes[this_node_id];
-	wstream_df_thread_p cthread = current_thread;
-
-	for(int i = 0; i < MAX_NUMA_NODES; i++) {
-		if((size_t)fp->bytes_prematch_nodes[i] == dominant_size) {
-			others[num_others++] = i;
-		}
-
-		if((size_t)fp->bytes_prematch_nodes[i] > dominant_size) {
-			dominant_node = i;
-			dominant_size = fp->bytes_prematch_nodes[i];
-			num_others = 0;
-		}
-	}
-
-	if(dominant_node != this_node_id && num_others) {
-		others[num_others++] = dominant_node;
-
-		rand_idx = prng_nextn(&cthread->rands, num_others);
-		*id = others[rand_idx];
-	} else {
-		*id = dominant_node;
-	}
-
-	*size = dominant_size;
-}
-
-void determine_dominant_node_equal_seq(wstream_df_frame_p fp, int *id, size_t* size, int this_node_id)
-{
-	int dominant_node = this_node_id;
-	size_t dominant_size = fp->bytes_prematch_nodes[this_node_id];
-
-	for(int i = 0; i < MAX_NUMA_NODES; i++) {
-		if((size_t)fp->bytes_prematch_nodes[i] > dominant_size) {
-			dominant_node = i;
-			dominant_size = fp->bytes_prematch_nodes[i];
-		}
-	}
-
-	*id = dominant_node;
-	*size = dominant_size;
-}
 
 void __built_in_wstream_df_determine_dominant_prematch_numa_node(void* f)
 {
-	wstream_df_frame_p fp = f;
-	wstream_df_thread_p cthread = current_thread;
-
-	#if defined(DEPENDENCE_AWARE_ALLOC_EQUAL_RANDOM)
-		determine_dominant_node_equal_random(fp, &fp->dominant_prematch_data_node_id,
-					&fp->dominant_prematch_data_size,
-					cthread->numa_node->id);
-	#elif defined(DEPENDENCE_AWARE_ALLOC_EQUAL_SEQ)
-		determine_dominant_node_equal_seq(fp, &fp->dominant_prematch_data_node_id,
-					&fp->dominant_prematch_data_size,
-					cthread->numa_node->id);
-	#else
-		determine_dominant_node_equal_seq(fp, &fp->dominant_prematch_data_node_id,
-					&fp->dominant_prematch_data_size,
-					cthread->numa_node->id);
-
-                #ifdef DEPENDENCE_AWARE_ALLOC
-		  #warning "No dependence aware allocation strategy defined! Using DEPENDENCE_AWARE_ALLOC_EQUAL_SEQ."
-		#endif
-	#endif
-
-	memset(fp->bytes_prematch_nodes, 0, sizeof(fp->bytes_prematch_nodes));
 }
 
 void __built_in_wstream_df_determine_dominant_input_numa_node(void* f)
 {
-	wstream_df_frame_p fp = f;
-	wstream_df_thread_p cthread = current_thread;
-
-	determine_dominant_node_equal_seq(fp, &fp->dominant_input_data_node_id,
-				&fp->dominant_input_data_size, cthread->numa_node->id);
 }
 
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache)
@@ -1564,20 +1440,6 @@ wstream_df_stream_reference (void *s, size_t num_streams)
 void
 wstream_df_prematch_n_dependences (size_t n, void *v, void *s, bool is_read_view_p)
 {
-  wstream_df_view_p dummy_view = (wstream_df_view_p) v;
-  unsigned int i;
-
-  for (i = 0; i < n; ++i)
-    {
-      wstream_df_stream_p stream = ((wstream_df_stream_p *) s)[i];
-      wstream_df_view_p view = &((wstream_df_view_p) dummy_view->next)[i];
-
-      /* Only connections with the same burst are allowed for now.  */
-      view->burst = dummy_view->burst;
-      view->horizon = dummy_view->horizon;
-      view->owner = dummy_view->owner;
-      wstream_df_prematch_dependences ((void *) view, (void *) stream, is_read_view_p);
-    }
 }
 
 /***************************************************************************/
