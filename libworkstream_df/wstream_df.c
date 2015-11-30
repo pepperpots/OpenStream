@@ -1647,6 +1647,11 @@ void __built_in_update_numa_node_of_output_view_vec(size_t num, void* v)
 
 void __built_in_wstream_df_trace_view_access(void* v, int is_write)
 {
+#if !ALLOW_WQEVENT_SAMPLING
+  wstream_df_fatal ("Event sampling not active, but trace_view_access called!");
+  assert(0);
+#endif
+
   wstream_df_thread_p cthread = current_thread;
   wstream_df_view_p view = v;
 
