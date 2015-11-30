@@ -408,6 +408,12 @@ void dump_numa_counters_single(wstream_df_numa_node_p numa_node)
 void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
 #ifdef WS_PAPI_PROFILE
+	#ifdef DUMP_NUMA_COUNTERS
+	for(int i = 0; i < MAX_NUMA_NODES; i++) {
+		dump_numa_counters_single(numa_node_by_id(i));
+	}
+	#endif
+
 	const char* events[] = WS_PAPI_EVENTS;
 	long long papi_counters_accum[WS_PAPI_NUM_EVENTS];
 	int evt;
