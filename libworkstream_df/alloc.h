@@ -386,6 +386,7 @@ slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, 
     {
       metainfo = slab_metainfo(s);
       slab_metainfo_init(slab_cache, metainfo);
+      metainfo->numa_node = node;
 
       if(i == num_slabs-1) {
 	s->next = slab_cache->slab_free_pool[idx];
