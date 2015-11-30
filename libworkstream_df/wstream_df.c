@@ -1292,7 +1292,7 @@ init_stream (void *s, size_t element_size)
 void
 wstream_df_stream_ctor (void **s, size_t element_size)
 {
-  s = slab_alloc(current_thread, current_thread->slab_cache, sizeof (wstream_df_stream_t));
+  *s = slab_alloc(current_thread, current_thread->slab_cache, sizeof (wstream_df_stream_t));
   init_stream (*s, element_size);
 }
 
