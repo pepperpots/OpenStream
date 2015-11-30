@@ -78,8 +78,12 @@ stop_wqueue_counters (void);
 void
 wqueue_counters_enter_runtime(struct wstream_df_thread* th);
 
-void
-wqueue_counters_profile_rusage(struct wstream_df_thread* th);
+#ifdef PROFILE_RUSAGE
+  void
+  wqueue_counters_profile_rusage(struct wstream_df_thread* th);
+#else
+  #define wqueue_counters_profile_rusage(th) do {} while(0)
+#endif
 
 void
 dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread** wstream_df_worker_threads);

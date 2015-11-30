@@ -234,6 +234,7 @@ wqueue_counters_enter_runtime(struct wstream_df_thread* th)
 {
 }
 
+#ifdef PROFILE_RUSAGE
 void
 wqueue_counters_profile_rusage(struct wstream_df_thread* th)
 {
@@ -250,6 +251,7 @@ wqueue_counters_profile_rusage(struct wstream_df_thread* th)
 	th->max_resident_size = usage.ru_maxrss;
 	th->inv_context_switches = usage.ru_nivcsw;
 }
+#endif
 
 void
 init_wqueue_counters (wstream_df_thread_p th)
