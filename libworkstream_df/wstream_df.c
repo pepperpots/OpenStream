@@ -172,7 +172,8 @@ wstream_df_taskwait ()
 	 the context that was swapped out (can only happen in TEND).  The
 	 stack-stored variable BAR should have been preserved even if the
 	 thread-local "current_barrier" has not.  */
-      slab_free (cthread->slab_cache, cthread->current_stack);
+      /* FIXME: WHY DOES THIS CAUSE SEGFAULTS? */
+      //wstream_free (cthread->slab_cache, cthread->current_stack);
     }
 
   slab_free (cthread->slab_cache, cbar);
@@ -1660,8 +1661,6 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
       trace_data_write(cthread, view->burst, (uint64_t)view->reuse_associated_view->data);
     else
       trace_data_write(cthread, view->burst, (uint64_t)view->data);
-
-    slab_update_numa_node_of_if_fresh(view->data, cthread, 1);
   } else {
       int node_id = slab_numa_node_of(view->data);
       wstream_df_thread_p leader = leader_of_numa_node_id(node_id);
