@@ -1489,6 +1489,12 @@ broadcast (void *v)
 
   wstream_df_view_p first_cons_view = prod_view->consumer_view;
 
+  /* Nothing to do if single peek or normal consumer */
+  if(!prod_view->sibling) {
+    trace_state_restore(cthread);
+    return;
+  }
+
 #ifdef USE_BROADCAST_TABLES
   /* If the producer's burst matches all of the the consumer's
    *  horizons then use a broadcast table */
