@@ -120,52 +120,8 @@ void __built_in_wstream_df_prepare_peek_data(void* v)
   if(peek_view->data)
     return;
 
-  assert(peek_view->broadcast_table);
-
-retry:
-  /* If local copy is available: just reuse */
-  if(bt->node_src[this_node_id] &&
-     bt->node_src[this_node_id] != wait_for_update_val)
-    {
-      peek_view->data = (void*)bt->node_src[this_node_id];
-      assert(slab_numa_node_of(peek_view->data) == this_node_id);
-    }
-  else
-    {
-      if(bt->node_src[this_node_id] == wait_for_update_val)
-	{
-	busy_wait:
-	  /* Fail, busy wait until completion and retry */
-	  while(bt->node_src[this_node_id] == wait_for_update_val)
-	    pthread_yield();
-
-	  goto retry;
-	}
-      else
-	{
-	  /* Try to be the worker that creates the local copy */
-	  if(__sync_bool_compare_and_swap (&bt->node_src[this_node_id], NULL, wait_for_update_val))
-	    {
-	      /* Otherwise, allocate own buffer, copy data and update table */
-	      __built_in_wstream_df_alloc_view_data_slab(peek_view, peek_view->horizon, cthread->slab_cache);
-	      memcpy(peek_view->data, (void*)bt->node_src[bt->src_node], peek_view->horizon);
-
-	      trace_data_read(cthread, 0, peek_view->horizon, 0, (void*)bt->node_src[bt->src_node]);
-
-	      /* Get NUMA node of source data */
-	      slab_update_numa_node_of_if_fresh(peek_view->data, cthread, 1);
-
-	      assert(slab_numa_node_of(peek_view->data) == this_node_id);
-
-	      /* Try to update broadcast table with local copy */
-	      __sync_bool_compare_and_swap (&bt->node_src[this_node_id], wait_for_update_val, peek_view->data);
-	    }
-	  else
-	    {
-	      goto busy_wait;
-	    }
-	}
-  }
+  peek_view->data = bt->node_src[bt->src_node];
+  return;
 #endif
 }
 
