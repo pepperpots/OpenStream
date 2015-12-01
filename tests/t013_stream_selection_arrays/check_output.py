@@ -1,0 +1,1 @@
+../t012_variadic_clauses_with_arrays_of_windows/check_output.py

@@ -11,7 +11,7 @@ papi_support:
 	$(MAKE) -f extras/Makefile.getdeps papi
 
 check:
-	echo "To be implemented"
+	cd tests ; ./check.sh
 
 run: run-A
 perf-test: run-A

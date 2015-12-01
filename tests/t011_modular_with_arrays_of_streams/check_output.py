@@ -1,0 +1,1 @@
+../t010_modular_compilation_2/check_output.py
