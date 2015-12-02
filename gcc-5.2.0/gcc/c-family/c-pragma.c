@@ -1221,7 +1221,8 @@ static const struct omp_pragma_def omp_pragmas[] = {
   { "taskgroup", PRAGMA_OMP_TASKGROUP },
   { "taskwait", PRAGMA_OMP_TASKWAIT },
   { "taskyield", PRAGMA_OMP_TASKYIELD },
-  { "threadprivate", PRAGMA_OMP_THREADPRIVATE }
+  { "threadprivate", PRAGMA_OMP_THREADPRIVATE },
+  { "tick", PRAGMA_OMP_TICK }
 };
 static const struct omp_pragma_def omp_pragmas_simd[] = {
   { "declare", PRAGMA_OMP_DECLARE_REDUCTION },

@@ -319,6 +319,10 @@ unsigned const char omp_clause_num_ops[] =
   1, /* OMP_CLAUSE_SHARED  */
   1, /* OMP_CLAUSE_FIRSTPRIVATE  */
   2, /* OMP_CLAUSE_LASTPRIVATE  */
+  8, /* OMP_CLAUSE_INPUT  */
+  7, /* OMP_CLAUSE_OUTPUT  */
+  8, /* OMP_CLAUSE_INOUT_REUSE  */
+  7, /* OMP_CLAUSE_PEEK  */
   4, /* OMP_CLAUSE_REDUCTION  */
   1, /* OMP_CLAUSE_COPYIN  */
   1, /* OMP_CLAUSE_COPYPRIVATE  */
@@ -348,6 +352,7 @@ unsigned const char omp_clause_num_ops[] =
   0, /* OMP_CLAUSE_UNTIED   */
   1, /* OMP_CLAUSE_FINAL  */
   0, /* OMP_CLAUSE_MERGEABLE  */
+  1, /* OMP_CLAUSE_TASK_NAME */
   1, /* OMP_CLAUSE_DEVICE  */
   1, /* OMP_CLAUSE_DIST_SCHEDULE  */
   0, /* OMP_CLAUSE_INBRANCH  */
@@ -378,6 +383,10 @@ const char * const omp_clause_code_name[] =
   "shared",
   "firstprivate",
   "lastprivate",
+  "input",
+  "output",
+  "inout_reuse",
+  "peek",
   "reduction",
   "copyin",
   "copyprivate",
@@ -407,6 +416,7 @@ const char * const omp_clause_code_name[] =
   "untied",
   "final",
   "mergeable",
+  "task_name",
   "device",
   "dist_schedule",
   "inbranch",
@@ -11218,6 +11228,10 @@ walk_tree_1 (tree *tp, walk_tree_fn func, void *data,
 	case OMP_CLAUSE_PRIVATE:
 	case OMP_CLAUSE_SHARED:
 	case OMP_CLAUSE_FIRSTPRIVATE:
+	case OMP_CLAUSE_INPUT:
+	case OMP_CLAUSE_OUTPUT:
+	case OMP_CLAUSE_INOUT_REUSE:
+	case OMP_CLAUSE_PEEK:
 	case OMP_CLAUSE_COPYIN:
 	case OMP_CLAUSE_COPYPRIVATE:
 	case OMP_CLAUSE_FINAL:
@@ -11244,6 +11258,7 @@ walk_tree_1 (tree *tp, walk_tree_fn func, void *data,
 	case OMP_CLAUSE_DEFAULT:
 	case OMP_CLAUSE_UNTIED:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_TASK_NAME:
 	case OMP_CLAUSE_PROC_BIND:
 	case OMP_CLAUSE_INBRANCH:
 	case OMP_CLAUSE_NOTINBRANCH:

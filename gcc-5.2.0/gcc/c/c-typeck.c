@@ -12449,6 +12449,30 @@ c_finish_omp_clauses (tree clauses)
 	  pc = &OMP_CLAUSE_CHAIN (c);
 	  continue;
 
+	case OMP_CLAUSE_INPUT:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_OUTPUT:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_PEEK:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_INOUT_REUSE:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
 	case OMP_CLAUSE_IF:
 	case OMP_CLAUSE_NUM_THREADS:
 	case OMP_CLAUSE_NUM_TEAMS:
@@ -12480,6 +12504,7 @@ c_finish_omp_clauses (tree clauses)
 	case OMP_CLAUSE_GANG:
 	case OMP_CLAUSE_WORKER:
 	case OMP_CLAUSE_VECTOR:
+	case OMP_CLAUSE_TASK_NAME:
 	  pc = &OMP_CLAUSE_CHAIN (c);
 	  continue;
 

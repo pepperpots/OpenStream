@@ -224,6 +224,18 @@ enum omp_clause_code {
   /* OpenMP clause: lastprivate (variable_list).  */
   OMP_CLAUSE_LASTPRIVATE,
 
+  /* OpenMP clause: input (variable_list).  */
+  OMP_CLAUSE_INPUT,
+
+  /* OpenMP clause: output (variable_list).  */
+  OMP_CLAUSE_OUTPUT,
+
+  /* OpenMP clause: inout_reuse (variable_list).  */
+  OMP_CLAUSE_INOUT_REUSE,
+
+  /* OpenMP clause: peek (variable_list).  */
+  OMP_CLAUSE_PEEK,
+
   /* OpenACC/OpenMP clause: reduction (operator:variable_list).
      OMP_CLAUSE_REDUCTION_CODE: The tree_code of the operator.
      Operand 1: OMP_CLAUSE_REDUCTION_INIT: Stmt-list to initialize the var.
@@ -327,6 +339,9 @@ enum omp_clause_code {
 
   /* OpenMP clause: mergeable.  */
   OMP_CLAUSE_MERGEABLE,
+
+  /* OpenMP clause: task_name */
+  OMP_CLAUSE_TASK_NAME,
 
   /* OpenMP clause: device (integer-expression).  */
   OMP_CLAUSE_DEVICE,
@@ -1464,7 +1479,12 @@ struct GTY(()) tree_decl_common {
   /* DECL_OFFSET_ALIGN, used only for FIELD_DECLs.  */
   unsigned int off_align : 8;
 
-  /* 24 bits unused.  */
+  unsigned streaming_flag_0 : 1;
+  unsigned streaming_flag_1 : 1;
+  unsigned streaming_flag_2 : 1;
+  unsigned streaming_flag_3 : 1;
+
+  /* 20-bits unused.  */
 
   /* DECL_ALIGN.  It should have the same size as TYPE_ALIGN.  */
   unsigned int align;
@@ -1476,6 +1496,7 @@ struct GTY(()) tree_decl_common {
   tree initial;
   tree attributes;
   tree abstract_origin;
+  tree initial_type;
 
   /* Points to a structure whose details depend on the language in use.  */
   struct lang_decl *lang_specific;

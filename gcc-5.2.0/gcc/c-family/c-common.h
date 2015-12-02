@@ -1045,7 +1045,7 @@ extern void warn_for_sign_compare (location_t,
 				   tree op0, tree op1,
 				   tree result_type,
 				   enum tree_code resultcode);
-extern void do_warn_double_promotion (tree, tree, tree, const char *, 
+extern void do_warn_double_promotion (tree, tree, tree, const char *,
 				      location_t);
 extern void set_underlying_type (tree);
 extern void record_types_used_by_current_var_decl (tree);
@@ -1062,6 +1062,8 @@ extern vec<tree, va_gc> *make_tree_vector_copy (const vec<tree, va_gc> *);
 /* Used for communication between c_common_type_for_mode and
    c_register_builtin_type.  */
 extern GTY(()) tree registered_builtin_types;
+
+extern void set_stream_type (tree, bool);
 
 /* In c-gimplify.c  */
 extern void c_genericize (tree);
@@ -1096,7 +1098,7 @@ extern void pp_dir_change (cpp_reader *, const char *);
 extern bool check_missing_format_attribute (tree, tree);
 
 /* In c-omp.c  */
-#if HOST_BITS_PER_WIDE_INT >= 64
+#if HOST_BITS_PER_WIDE_INT >= 128
 typedef unsigned HOST_WIDE_INT omp_clause_mask;
 # define OMP_CLAUSE_MASK_1 ((omp_clause_mask) 1)
 #else

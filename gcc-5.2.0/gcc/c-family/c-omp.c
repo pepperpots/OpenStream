@@ -152,7 +152,7 @@ c_finish_omp_taskwait (location_t loc)
 {
   tree x;
 
-  x = builtin_decl_explicit (BUILT_IN_GOMP_TASKWAIT);
+  x = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TASKWAIT);
   x = build_call_expr_loc (loc, x, 0);
   add_stmt (x);
 }
