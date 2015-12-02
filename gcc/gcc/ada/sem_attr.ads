@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -42,9 +42,9 @@ package Sem_Attr is
    -- Implementation Dependent Attributes --
    -----------------------------------------
 
-   --  This section describes the implementation dependent attributes
-   --  provided in GNAT, as well as constructing an array of flags
-   --  indicating which attributes these are.
+   --  This section describes the implementation dependent attributes provided
+   --  in GNAT, as well as constructing an array of flags indicating which
+   --  attributes these are.
 
    Attribute_Impl_Def : Attribute_Class_Array := Attribute_Class_Array'(
 
@@ -88,23 +88,6 @@ package Sem_Attr is
       --  Used only in conjunction with the Asm subprograms in package
       --  Machine_Code to construct machine instructions. See documentation
       --  in package Machine_Code in file s-maccod.ads.
-
-      ---------------
-      -- AST_Entry --
-      ---------------
-
-      Attribute_AST_Entry => True,
-      --  E'Ast_Entry, where E is a task entry, yields a value of the
-      --  predefined type System.DEC.AST_Handler, that enables the given
-      --  entry to be called when an AST occurs. If the name to which the
-      --  attribute applies has not been specified with the pragma AST_Entry,
-      --  the attribute returns the value No_Ast_Handler, and no AST occurs.
-      --  If the entry is for a task that is not callable (T'Callable False),
-      --  the exception program error is raised. If an AST occurs for an
-      --  entry of a task that is terminated, the program is erroneous.
-      --
-      --  The attribute AST_Entry is supported only in OpenVMS versions
-      --  of GNAT. It will be rejected as illegal in other GNAT versions.
 
       ---------
       -- Bit --
@@ -152,20 +135,42 @@ package Sem_Attr is
       -----------------------
 
       Attribute_Default_Bit_Order => True,
-      --  Standard'Default_Bit_Order (Standard is the only permissible prefix),
+      --  Standard'Default_Bit_Order (Standard is the only permissible prefix)
       --  provides the value System.Default_Bit_Order as a Pos value (0 for
       --  High_Order_First, 1 for Low_Order_First). This is used to construct
       --  the definition of Default_Bit_Order in package System. This is a
       --  static attribute.
+
+      ----------------------------------
+      -- Default_Scalar_Storage_Order --
+      ----------------------------------
+
+      Attribute_Default_Scalar_Storage_Order => True,
+      --  Standard'Default_Scalar_Storage_Order (Standard is the
+      --  only permissible prefix) provides the current value of the
+      --  default scalar storage order (as specified using pragma
+      --  Default_Scalar_Storage_Order, or equal to Default_Bit_Order if
+      --  unspecified) as a System.Bit_Order value. This is a static attribute.
+
+      -----------
+      -- Deref --
+      -----------
+
+      Attribute_Deref => True,
+      --  typ'Deref (expr) is valid only if expr is of type System'Address.
+      --  The result is an object of type typ that is obtained by treating the
+      --  address as an access-to-typ value that points to the result. It is
+      --  basically equivalent to (atyp!expr).all where atyp is an access type
+      --  for the type.
 
       ---------------
       -- Elab_Body --
       ---------------
 
       Attribute_Elab_Body => True,
-      --  This attribute can only be applied to a program unit name. It returns
-      --  the entity for the corresponding elaboration procedure for elabor-
-      --  ating the body of the referenced unit. This is used in the main
+      --  This attribute can only be applied to a program unit name. It
+      --  returns the entity for the corresponding elaboration procedure for
+      --  elaborating the body of the referenced unit. This is used in the main
       --  generated elaboration procedure by the binder, and is not normally
       --  used in any other context, but there may be specialized situations in
       --  which it is useful to be able to call this elaboration procedure from
@@ -189,13 +194,13 @@ package Sem_Attr is
 
       Attribute_Elab_Spec => True,
       --  This attribute can only be applied to a program unit name. It
-      --  returns the entity for the corresponding elaboration procedure
-      --  for elaborating the spec of the referenced unit. This is used
-      --  in the main generated elaboration procedure by the binder, and
-      --  is not normally used in any other context, but there may be
-      --  specialized situations in which it is useful to be able to
-      --  call this elaboration procedure from Ada code, e.g. if it
-      --  is necessary to do selective reelaboration to fix some error.
+      --  returns the entity for the corresponding elaboration procedure for
+      --  elaborating the spec of the referenced unit. This is used in the main
+      --  generated elaboration procedure by the binder, and is not normally
+      --  used in any other context, but there may be specialized situations in
+      --  which it is useful to be able to call this elaboration procedure from
+      --  Ada code, e.g. if it is necessary to do selective reelaboration to
+      --  fix some error.
 
       ----------------
       -- Elaborated --
@@ -226,8 +231,8 @@ package Sem_Attr is
       --------------
 
       Attribute_Enum_Val => True,
-      --  For every enumeration subtype S, S'Enum_Val denotes a function
-      --  with the following specification:
+      --  For every enumeration subtype S, S'Enum_Val denotes a function with
+      --  the following specification:
       --
       --    function S'Enum_Val (Arg : universal_integer) return S'Base;
       --
@@ -253,8 +258,8 @@ package Sem_Attr is
       --  The effect is thus equivalent to first converting the argument to
       --  the integer type used to represent S, and then doing an unchecked
       --  conversion to the fixed-point type. This attribute is primarily
-      --  intended for use in implementation of the input-output functions for
-      --  fixed-point values.
+      --  intended for use in implementation of the input-output functions
+      --  for fixed-point values.
 
       -----------------------
       -- Has_Discriminants --
@@ -307,10 +312,15 @@ package Sem_Attr is
       --  of the type. If possible this value is an invalid value, and in fact
       --  is identical to the value that would be set if Initialize_Scalars
       --  mode were in effect (including the behavior of its value on
-      --  environment variables or binder switches). The intended use is
-      --  to set a value where initialization is required (e.g. as a result of
-      --  the coding standards in use), but logically no initialization is
-      --  needed, and the value should never be accessed.
+      --  environment variables or binder switches). The intended use is to
+      --  set a value where initialization is required (e.g. as a result of the
+      --  coding standards in use), but logically no initialization is needed,
+      --  and the value should never be accessed.
+
+      Attribute_Loop_Entry => True,
+      --  For every object of a non-limited type, S'Loop_Entry [(Loop_Name)]
+      --  denotes the constant value of prefix S at the point of entry into the
+      --  related loop. The type of the attribute is the type of the prefix.
 
       ------------------
       -- Machine_Size --
@@ -326,11 +336,11 @@ package Sem_Attr is
 
       Attribute_Maximum_Alignment => True,
       --  Standard'Maximum_Alignment (Standard is the only permissible prefix)
-      --  provides the maximum useful alignment value for the target. This
-      --  is a static value that can be used to specify the alignment for an
-      --  object, guaranteeing that it is properly aligned in all cases. The
-      --  time this is useful is when an external object is imported and its
-      --  alignment requirements are unknown. This is a static attribute.
+      --  provides the maximum useful alignment value for the target. This is a
+      --  static value that can be used to specify the alignment for an object,
+      --  guaranteeing that it is properly aligned in all cases. The time this
+      --  is useful is when an external object is imported and its alignment
+      --  requirements are unknown. This is a static attribute.
 
       --------------------
       -- Mechanism_Code --
@@ -358,19 +368,19 @@ package Sem_Attr is
       --------------------
 
       Attribute_Null_Parameter => True,
-      --  A reference T'Null_Parameter denotes an (imaginary) object of type or
-      --  subtype T allocated at (machine) address zero. The attribute is
-      --  allowed only as the default expression of a formal parameter, or as
-      --  an actual expression of a subprogram call. In either case, the
+      --  A reference T'Null_Parameter denotes an (imaginary) object of type
+      --  or subtype T allocated at (machine) address zero. The attribute is
+      --  allowed only as the default expression of a formal parameter, or
+      --  as an actual expression of a subprogram call. In either case, the
       --  subprogram must be imported.
       --
-      --  The identity of the object is represented by the address zero in the
-      --  argument list, independent of the passing mechanism (explicit or
-      --  default).
+      --  The identity of the object is represented by the address zero in
+      --  the argument list, independent of the passing mechanism (explicit
+      --  or default).
       --
       --  The reason that this capability is needed is that for a record or
-      --  other composite object passed by reference, there is no other way of
-      --  specifying that a zero address should be passed.
+      --  other composite object passed by reference, there is no other way
+      --  of specifying that a zero address should be passed.
 
       -----------------
       -- Object_Size --
@@ -548,6 +558,39 @@ package Sem_Attr is
       --  the Object_Size rather than the Value_Size. For example, while
       --  Natural'Size is typically 31, the value of Natural'VADS_Size is 32.
       --  For all other types, Size and VADS_Size yield the same value.
+
+      -------------------
+      -- Valid_Scalars --
+      -------------------
+
+      Attribute_Valid_Scalars => True,
+      --  Obj'Valid_Scalars can be applied to any object. The result depends
+      --  on the type of the object:
+      --
+      --    For a scalar type, the result is the same as obj'Valid
+      --
+      --    For an array object, the result is True if the result of applying
+      --    Valid_Scalars to every component is True. For an empty array the
+      --    result is True.
+      --
+      --    For a record object, the result is True if the result of applying
+      --    Valid_Scalars to every component is True. For class-wide types,
+      --    only the components of the base type are checked. For variant
+      --    records, only the components actually present are checked. The
+      --    discriminants, if any, are also checked. If there are no components
+      --    or discriminants, the result is True.
+      --
+      --    For any other type that has discriminants, the result is True if
+      --    the result of applying Valid_Scalars to each discriminant is True.
+      --
+      --    For all other types, the result is always True
+      --
+      --  A warning is given for a trivially True result, when the attribute
+      --  is applied to an object that is not of scalar, array, or record
+      --  type, or in the composite case if no scalar subcomponents exist. For
+      --  a variant record, the warning is given only if none of the variants
+      --  have scalar subcomponents. In addition, the warning is suppressed
+      --  for private types, or generic formal types in an instance.
 
       ----------------
       -- Value_Size --

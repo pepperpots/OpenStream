@@ -100,7 +100,7 @@ func loadZoneDataPlan9(s string) (l *Location, err error) {
 	for i := range tx {
 		if tx[i].when <= sec && (i+1 == len(tx) || sec < tx[i+1].when) {
 			l.cacheStart = tx[i].when
-			l.cacheEnd = 1<<63 - 1
+			l.cacheEnd = omega
 			if i+1 < len(tx) {
 				l.cacheEnd = tx[i+1].when
 			}
@@ -153,4 +153,8 @@ func loadLocation(name string) (*Location, error) {
 		return z, nil
 	}
 	return nil, errors.New("unknown time zone " + name)
+}
+
+func forceZipFileForTesting(zipOnly bool) {
+	// We only use the zip file anyway.
 }

@@ -1,5 +1,5 @@
 ;; Constraint definitions for Renesas / SuperH SH.
-;; Copyright (C) 2007, 2008, 2011, 2012 Free Software Foundation, Inc.
+;; Copyright (C) 2007-2015 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -18,6 +18,9 @@
 ;; <http://www.gnu.org/licenses/>.
 
 ;; Overview of uppercase letter constraints:
+;; Axx: atomic memory operand constraints
+;;  Ara: Same as Sra but disallows r15
+;;  Add: Same as Sdd but disallows r15
 ;; Bxx: miscellaneous constraints
 ;;  Bsc: SCRATCH - for the scratch register in movsi_ie in the
 ;;       fldi0 / fldi0 cases
@@ -26,26 +29,36 @@
 ;;  Csu: unsigned 16-bit constant, literal or symbolic
 ;;  Csy: label or symbol
 ;;  Cpg: non-explicit constants that can be directly loaded into a general
-;;       purpose register in PIC code.  like 's' except we don't allow
+;;       purpose register in PIC code.  Like 's' except we don't allow
 ;;       PIC_ADDR_P
 ;; IJKLMNOP: CONT_INT constants
 ;;  Ixx: signed xx bit
 ;;  J16: 0xffffffff00000000 | 0x00000000ffffffff
+;;  Jmb: 0x000000FF
+;;  Jmw: 0x0000FFFF
+;;  Jhb: 0x80000000
 ;;  Kxx: unsigned xx bit
 ;;  M: 1
 ;;  N: 0
 ;;  P27: 1 | 2 | 8 | 16
 ;;  Pso: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128
 ;;  Psz: ~1 | ~2 | ~4 | ~8 | ~16 | ~32 | ~64 | ~128
+;; G: Floating point 0
+;; H: Floating point 1
 ;; Q: pc relative load operand
 ;; Rxx: reserved for exotic register classes.
-;; Sxx: extra memory (storage) constraints
-;;  Sua: unaligned memory operations
+;; Sxx: extra memory constraints
+;;  Sua: unaligned memory address
+;;  Sbv: QImode address without displacement
+;;  Sbw: QImode address with 12 bit displacement
+;;  Snd: address without displacement
+;;  Sdd: address with displacement
+;;  Sra: simple register address
 ;; W: vector
 ;; Z: zero in any mode
 ;;
 ;; unused CONST_INT constraint letters: LO
-;; unused EXTRA_CONSTRAINT letters: D T U Y
+;; unused "extra" constraint letters: D T U Y
 
 ;; Register constraints
 (define_register_constraint "a" "ALL_REGS"
@@ -123,15 +136,41 @@
        (match_test "ival >=  -134217728 && ival <= 134217727")
        (match_test "(ival & 255) == 0")
        (match_test "TARGET_SH2A")))
+
 (define_constraint "J16"
   "0xffffffff00000000 or 0x00000000ffffffff."
   (and (match_code "const_int")
        (match_test "CONST_OK_FOR_J16 (ival)")))
 
+(define_constraint "Jmb"
+  "Low byte mask constant 0x000000FF"
+  (and (match_code "const_int")
+       (match_test "ival == 0xFF")))
+
+(define_constraint "Jmw"
+  "Low word mask constant 0x0000FFFF"
+  (and (match_code "const_int")
+       (match_test "ival == 0xFFFF")))
+
+(define_constraint "Jhb"
+  "Highest bit constant"
+  (and (match_code "const_int")
+       (match_test "(ival & 0xFFFFFFFF) == 0x80000000")))
+
 (define_constraint "K03"
   "An unsigned 3-bit constant, as used in SH2A bclr, bset, etc."
   (and (match_code "const_int")
        (match_test "ival >= 0 && ival <= 7")))
+
+(define_constraint "K04"
+  "An unsigned 4-bit constant, as used in mov.b displacement addressing."
+  (and (match_code "const_int")
+       (match_test "ival >= 0 && ival <= 15")))
+
+(define_constraint "K05"
+  "An unsigned 5-bit constant, as used in mov.w displacement addressing."
+  (and (match_code "const_int")
+       (match_test "ival >= 0 && ival <= 31")))
 
 (define_constraint "K08"
   "An unsigned 8-bit constant, as used in and, or, etc."
@@ -139,9 +178,16 @@
        (match_test "ival >= 0 && ival <= 255")))
  
 (define_constraint "K12"
-  "An unsigned 12-bit constant, as used in SH2A 12-bit displacement addressing."
+  "An unsigned 12-bit constant, as used in SH2A 12-bit mov.b displacement
+   addressing."
   (and (match_code "const_int")
        (match_test "ival >= 0 && ival <= 4095")))
+
+(define_constraint "K13"
+  "An unsigned 13-bit constant, as used in SH2A 12-bit mov.w displacement
+   addressing."
+  (and (match_code "const_int")
+       (match_test "ival >= 0 && ival <= 8191")))
 
 (define_constraint "K16"
   "An unsigned 16-bit constant, as used in SHmedia shori."
@@ -167,17 +213,18 @@
 (define_constraint "G"
   "Double constant 0."
   (and (match_code "const_double")
-       (match_test "fp_zero_operand (op) && fldi_ok ()")))
+       (match_test "fp_zero_operand (op)")))
 
 (define_constraint "H"
   "Double constant 1."
   (and (match_code "const_double")
-       (match_test "fp_one_operand (op) && fldi_ok ()")))
+       (match_test "fp_one_operand (op)")))
 
 ;; Extra constraints
 (define_constraint "Q"
   "A pc relative load operand."
   (and (match_code "mem")
+       (match_test "GET_MODE (op) != QImode")
        (match_test "IS_PC_RELATIVE_LOAD_ADDR_P (XEXP (op, 0))")))
 
 (define_constraint "Bsc"
@@ -245,15 +292,22 @@
 	    (match_test "~ival == 64")
 	    (match_test "~ival == 128"))))
 
-(define_memory_constraint "Sr0"
-  "@internal"
-  (and (match_test "memory_operand (op, GET_MODE (op))")
-       (match_test "!refers_to_regno_p (R0_REG, R0_REG + 1, op, (rtx *) 0)")))
-
 (define_memory_constraint "Sua"
   "@internal"
   (and (match_test "memory_operand (op, GET_MODE (op))")
        (match_test "GET_CODE (XEXP (op, 0)) != PLUS")))
+
+(define_memory_constraint "Sdd"
+  "A memory reference that uses displacement addressing."
+  (and (match_code "mem")
+       (match_code "plus" "0")
+       (match_code "reg" "00")
+       (match_code "const_int" "01")))
+
+(define_memory_constraint "Snd"
+  "A memory reference that excludes displacement addressing."
+  (and (match_code "mem")
+       (match_test "! satisfies_constraint_Sdd (op)")))
 
 (define_memory_constraint "Sbv"
   "A memory reference, as used in SH2A bclr.b, bset.b, etc."
@@ -262,7 +316,28 @@
 
 (define_memory_constraint "Sbw"
   "A memory reference, as used in SH2A bclr.b, bset.b, etc."
-  (and (match_test "MEM_P (op) && GET_MODE (op) == QImode")
-       (match_test "GET_CODE (XEXP (op, 0)) == PLUS")
-       (match_test "REG_P (XEXP (XEXP (op, 0), 0))")
+  (and (match_test "satisfies_constraint_Sdd (op)")
+       (match_test "GET_MODE (op) == QImode")
        (match_test "satisfies_constraint_K12 (XEXP (XEXP (op, 0), 1))")))
+
+(define_memory_constraint "Sra"
+  "A memory reference that uses simple register addressing."
+  (and (match_code "mem")
+       (match_code "reg" "0")))
+
+(define_memory_constraint "Ara"
+  "A memory reference that uses simple register addressing suitable for
+   gusa atomic operations."
+  (and (match_code "mem")
+       (match_code "reg" "0")
+       (match_test "REGNO (XEXP (op, 0)) != SP_REG")))
+
+(define_memory_constraint "Add"
+  "A memory reference that uses displacement addressing suitable for
+   gusa atomic operations."
+  (and (match_code "mem")
+       (match_test "GET_MODE (op) == SImode")
+       (match_code "plus" "0")
+       (match_code "reg" "00")
+       (match_code "const_int" "01")
+       (match_test "REGNO (XEXP (XEXP (op, 0), 0)) != SP_REG")))

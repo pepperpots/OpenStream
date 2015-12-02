@@ -1,6 +1,5 @@
 /* Header for dependency analysis
-   Copyright (C) 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
    Contributed by Paul Brook
 
 This file is part of GCC.
@@ -41,3 +40,5 @@ int gfc_expr_is_one (gfc_expr *, int);
 
 int gfc_dep_resolver(gfc_ref *, gfc_ref *, gfc_reverse *);
 int gfc_are_equivalenced_arrays (gfc_expr *, gfc_expr *);
+
+gfc_expr * gfc_discard_nops (gfc_expr *);

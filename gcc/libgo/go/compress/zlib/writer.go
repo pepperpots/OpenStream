@@ -34,8 +34,8 @@ type Writer struct {
 	wroteHeader bool
 }
 
-// NewWriter creates a new Writer that satisfies writes by compressing data
-// written to w.
+// NewWriter creates a new Writer.
+// Writes to the returned Writer are compressed and written to w.
 //
 // It is the caller's responsibility to call Close on the WriteCloser when done.
 // Writes may be buffered and not flushed until Close.
@@ -68,6 +68,23 @@ func NewWriterLevelDict(w io.Writer, level int, dict []byte) (*Writer, error) {
 		level: level,
 		dict:  dict,
 	}, nil
+}
+
+// Reset clears the state of the Writer z such that it is equivalent to its
+// initial state from NewWriterLevel or NewWriterLevelDict, but instead writing
+// to w.
+func (z *Writer) Reset(w io.Writer) {
+	z.w = w
+	// z.level and z.dict left unchanged.
+	if z.compressor != nil {
+		z.compressor.Reset(w)
+	}
+	if z.digest != nil {
+		z.digest.Reset()
+	}
+	z.err = nil
+	z.scratch = [4]byte{}
+	z.wroteHeader = false
 }
 
 // writeHeader writes the ZLIB header.
@@ -111,11 +128,15 @@ func (z *Writer) writeHeader() (err error) {
 			return err
 		}
 	}
-	z.compressor, err = flate.NewWriterDict(z.w, z.level, z.dict)
-	if err != nil {
-		return err
+	if z.compressor == nil {
+		// Initialize deflater unless the Writer is being reused
+		// after a Reset call.
+		z.compressor, err = flate.NewWriterDict(z.w, z.level, z.dict)
+		if err != nil {
+			return err
+		}
+		z.digest = adler32.New()
 	}
-	z.digest = adler32.New()
 	return nil
 }
 
@@ -153,7 +174,8 @@ func (z *Writer) Flush() error {
 	return z.err
 }
 
-// Calling Close does not close the wrapped io.Writer originally passed to NewWriter.
+// Close closes the Writer, flushing any unwritten data to the underlying
+// io.Writer, but does not close the underlying io.Writer.
 func (z *Writer) Close() error {
 	if !z.wroteHeader {
 		z.err = z.writeHeader()

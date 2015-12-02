@@ -13,7 +13,7 @@ import (
 //
 // The zero value of type context is the start context for a template that
 // produces an HTML fragment as defined at
-// http://www.w3.org/TR/html5/the-end.html#parsing-html-fragments
+// http://www.w3.org/TR/html5/syntax.html#the-end
 // where the context element is null.
 type context struct {
 	state   state
@@ -29,7 +29,7 @@ func (c context) String() string {
 	return fmt.Sprintf("{%v %v %v %v %v %v %v}", c.state, c.delim, c.urlPart, c.jsCtx, c.attr, c.element, c.err)
 }
 
-// eq returns whether two contexts are equal.
+// eq reports whether two contexts are equal.
 func (c context) eq(d context) bool {
 	return c.state == d.state &&
 		c.delim == d.delim &&
@@ -96,7 +96,7 @@ const (
 	// stateHTMLCmt occurs inside an <!-- HTML comment -->.
 	stateHTMLCmt
 	// stateRCDATA occurs inside an RCDATA element (<textarea> or <title>)
-	// as described at http://dev.w3.org/html5/spec/syntax.html#elements-0
+	// as described at http://www.w3.org/TR/html5/syntax.html#elements-0
 	stateRCDATA
 	// stateAttr occurs inside an HTML attribute whose content is text.
 	stateAttr

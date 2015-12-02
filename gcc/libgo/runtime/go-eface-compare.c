@@ -5,22 +5,19 @@
    license that can be found in the LICENSE file.  */
 
 #include "runtime.h"
+#include "go-type.h"
 #include "interface.h"
 
 /* Compare two interface values.  Return 0 for equal, not zero for not
    equal (return value is like strcmp).  */
 
-int
+intgo
 __go_empty_interface_compare (struct __go_empty_interface left,
 			      struct __go_empty_interface right)
 {
   const struct __go_type_descriptor *left_descriptor;
 
   left_descriptor = left.__type_descriptor;
-
-  if (((uintptr_t) left_descriptor & reflectFlags) != 0
-      || ((uintptr_t) right.__type_descriptor & reflectFlags) != 0)
-    runtime_panicstring ("invalid interface value");
 
   if (left_descriptor == NULL && right.__type_descriptor == NULL)
     return 0;

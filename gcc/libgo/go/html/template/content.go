@@ -16,7 +16,8 @@ type (
 	//   2. The CSS3 rule production, such as `a[href=~"https:"].foo#bar`.
 	//   3. CSS3 declaration productions, such as `color: red; margin: 2px`.
 	//   4. The CSS3 value production, such as `rgba(0, 0, 255, 127)`.
-	// See http://www.w3.org/TR/css3-syntax/#style
+	// See http://www.w3.org/TR/css3-syntax/#parsing and
+	// https://web.archive.org/web/20090211114933/http://w3.org/TR/css3-syntax#style
 	CSS string
 
 	// HTML encapsulates a known safe HTML document fragment.
@@ -26,11 +27,11 @@ type (
 	HTML string
 
 	// HTMLAttr encapsulates an HTML attribute from a trusted source,
-	// for example: ` dir="ltr"`.
+	// for example, ` dir="ltr"`.
 	HTMLAttr string
 
-	// JS encapsulates a known safe EcmaScript5 Expression, or example,
-	// `(x + y * z())`. 
+	// JS encapsulates a known safe EcmaScript5 Expression, for example,
+	// `(x + y * z())`.
 	// Template authors are responsible for ensuring that typed expressions
 	// do not break the intended precedence and that there is no
 	// statement/expression ambiguity as when passing an expression like
@@ -47,7 +48,7 @@ type (
 	// JSStr("foo\\nbar") is fine, but JSStr("foo\\\nbar") is not.
 	JSStr string
 
-	// URL encapsulates a known safe URL as defined in RFC 3896.
+	// URL encapsulates a known safe URL or URL substring (see RFC 3986).
 	// A URL like `javascript:checkThatFormNotEditedBeforeLeavingPage()`
 	// from a trusted source should go in the page, but by default dynamic
 	// `javascript:` URLs are filtered out since they are a frequently
@@ -74,6 +75,9 @@ const (
 // indirect returns the value, after dereferencing as many times
 // as necessary to reach the base type (or nil).
 func indirect(a interface{}) interface{} {
+	if a == nil {
+		return nil
+	}
 	if t := reflect.TypeOf(a); t.Kind() != reflect.Ptr {
 		// Avoid creating a reflect.Value if it's not a pointer.
 		return a
@@ -94,6 +98,9 @@ var (
 // as necessary to reach the base type (or nil) or an implementation of fmt.Stringer
 // or error,
 func indirectToStringerOrError(a interface{}) interface{} {
+	if a == nil {
+		return nil
+	}
 	v := reflect.ValueOf(a)
 	for !v.Type().Implements(fmtStringerType) && !v.Type().Implements(errorType) && v.Kind() == reflect.Ptr && !v.IsNil() {
 		v = v.Elem()

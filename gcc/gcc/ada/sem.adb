@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -27,10 +27,8 @@ with Atree;    use Atree;
 with Debug;    use Debug;
 with Debug_A;  use Debug_A;
 with Elists;   use Elists;
-with Errout;   use Errout;
 with Expander; use Expander;
 with Fname;    use Fname;
-with HLO;      use HLO;
 with Lib;      use Lib;
 with Lib.Load; use Lib.Load;
 with Nlists;   use Nlists;
@@ -92,20 +90,15 @@ package body Sem is
    --  of this unit, since they count as dependences on their parent library
    --  item. CU must be an N_Compilation_Unit whose Unit is not an N_Subunit.
 
-   procedure Write_Unit_Info
-     (Unit_Num : Unit_Number_Type;
-      Item     : Node_Id;
-      Prefix   : String := "";
-      Withs    : Boolean := False);
-   --  Print out debugging information about the unit. Prefix precedes the rest
-   --  of the printout. If Withs is True, we print out units with'ed by this
-   --  unit (not counting limited withs).
-
    -------------
    -- Analyze --
    -------------
 
    procedure Analyze (N : Node_Id) is
+      GM : constant Ghost_Mode_Type := Ghost_Mode;
+      --  Save the current Ghost mode in effect in case the construct sets a
+      --  different mode.
+
    begin
       Debug_A_Entry ("analyzing  ", N);
 
@@ -119,7 +112,6 @@ package body Sem is
       --  Otherwise processing depends on the node kind
 
       case Nkind (N) is
-
          when N_Abort_Statement =>
             Analyze_Abort_Statement (N);
 
@@ -177,8 +169,8 @@ package body Sem is
          when N_Component_Declaration =>
             Analyze_Component_Declaration (N);
 
-         when N_Conditional_Expression =>
-            Analyze_Conditional_Expression (N);
+         when N_Compound_Statement =>
+            Analyze_Compound_Statement (N);
 
          when N_Conditional_Entry_Call =>
             Analyze_Conditional_Entry_Call (N);
@@ -255,6 +247,9 @@ package body Sem is
          when N_Freeze_Entity =>
             Analyze_Freeze_Entity (N);
 
+         when N_Freeze_Generic_Entity =>
+            Analyze_Freeze_Generic_Entity (N);
+
          when N_Full_Type_Declaration =>
             Analyze_Full_Type_Declaration (N);
 
@@ -288,6 +283,9 @@ package body Sem is
          when N_Identifier =>
             Analyze_Identifier (N);
 
+         when N_If_Expression =>
+            Analyze_If_Expression (N);
+
          when N_If_Statement =>
             Analyze_If_Statement (N);
 
@@ -314,6 +312,9 @@ package body Sem is
 
          when N_Label =>
             Analyze_Label (N);
+
+         when N_Loop_Parameter_Specification =>
+            Analyze_Loop_Parameter_Specification (N);
 
          when N_Loop_Statement =>
             Analyze_Loop_Statement (N);
@@ -477,6 +478,9 @@ package body Sem is
          when N_Quantified_Expression =>
             Analyze_Quantified_Expression (N);
 
+         when N_Raise_Expression =>
+            Analyze_Raise_Expression (N);
+
          when N_Raise_Statement =>
             Analyze_Raise_Statement (N);
 
@@ -531,9 +535,6 @@ package body Sem is
 
          when N_Subprogram_Declaration =>
             Analyze_Subprogram_Declaration (N);
-
-         when N_Subprogram_Info =>
-            Analyze_Subprogram_Info (N);
 
          when N_Subprogram_Renaming_Declaration =>
             Analyze_Subprogram_Renaming (N);
@@ -624,10 +625,9 @@ package body Sem is
          --  the call to analyze them is generated when the full list is
          --  analyzed.
 
-         when
-           N_SCIL_Dispatch_Table_Tag_Init |
-           N_SCIL_Dispatching_Call        |
-           N_SCIL_Membership_Test         =>
+         when N_SCIL_Dispatch_Table_Tag_Init |
+              N_SCIL_Dispatching_Call        |
+              N_SCIL_Membership_Test         =>
             null;
 
          --  For the remaining node types, we generate compiler abort, because
@@ -637,66 +637,63 @@ package body Sem is
          --  node appears only in the context of a type declaration, and is
          --  processed by the analyze routine for type declarations.
 
-         when
-           N_Abortable_Part                         |
-           N_Access_Definition                      |
-           N_Access_Function_Definition             |
-           N_Access_Procedure_Definition            |
-           N_Access_To_Object_Definition            |
-           N_Aspect_Specification                   |
-           N_Case_Expression_Alternative            |
-           N_Case_Statement_Alternative             |
-           N_Compilation_Unit_Aux                   |
-           N_Component_Association                  |
-           N_Component_Clause                       |
-           N_Component_Definition                   |
-           N_Component_List                         |
-           N_Constrained_Array_Definition           |
-           N_Contract                               |
-           N_Decimal_Fixed_Point_Definition         |
-           N_Defining_Character_Literal             |
-           N_Defining_Identifier                    |
-           N_Defining_Operator_Symbol               |
-           N_Defining_Program_Unit_Name             |
-           N_Delta_Constraint                       |
-           N_Derived_Type_Definition                |
-           N_Designator                             |
-           N_Digits_Constraint                      |
-           N_Discriminant_Association               |
-           N_Discriminant_Specification             |
-           N_Elsif_Part                             |
-           N_Entry_Call_Statement                   |
-           N_Enumeration_Type_Definition            |
-           N_Exception_Handler                      |
-           N_Floating_Point_Definition              |
-           N_Formal_Decimal_Fixed_Point_Definition  |
-           N_Formal_Derived_Type_Definition         |
-           N_Formal_Discrete_Type_Definition        |
-           N_Formal_Floating_Point_Definition       |
-           N_Formal_Modular_Type_Definition         |
-           N_Formal_Ordinary_Fixed_Point_Definition |
-           N_Formal_Private_Type_Definition         |
-           N_Formal_Incomplete_Type_Definition      |
-           N_Formal_Signed_Integer_Type_Definition  |
-           N_Function_Specification                 |
-           N_Generic_Association                    |
-           N_Index_Or_Discriminant_Constraint       |
-           N_Iteration_Scheme                       |
-           N_Loop_Parameter_Specification           |
-           N_Mod_Clause                             |
-           N_Modular_Type_Definition                |
-           N_Ordinary_Fixed_Point_Definition        |
-           N_Parameter_Specification                |
-           N_Pragma_Argument_Association            |
-           N_Procedure_Specification                |
-           N_Real_Range_Specification               |
-           N_Record_Definition                      |
-           N_Signed_Integer_Type_Definition         |
-           N_Unconstrained_Array_Definition         |
-           N_Unused_At_Start                        |
-           N_Unused_At_End                          |
-           N_Variant                                =>
-
+         when N_Abortable_Part                         |
+              N_Access_Definition                      |
+              N_Access_Function_Definition             |
+              N_Access_Procedure_Definition            |
+              N_Access_To_Object_Definition            |
+              N_Aspect_Specification                   |
+              N_Case_Expression_Alternative            |
+              N_Case_Statement_Alternative             |
+              N_Compilation_Unit_Aux                   |
+              N_Component_Association                  |
+              N_Component_Clause                       |
+              N_Component_Definition                   |
+              N_Component_List                         |
+              N_Constrained_Array_Definition           |
+              N_Contract                               |
+              N_Decimal_Fixed_Point_Definition         |
+              N_Defining_Character_Literal             |
+              N_Defining_Identifier                    |
+              N_Defining_Operator_Symbol               |
+              N_Defining_Program_Unit_Name             |
+              N_Delta_Constraint                       |
+              N_Derived_Type_Definition                |
+              N_Designator                             |
+              N_Digits_Constraint                      |
+              N_Discriminant_Association               |
+              N_Discriminant_Specification             |
+              N_Elsif_Part                             |
+              N_Entry_Call_Statement                   |
+              N_Enumeration_Type_Definition            |
+              N_Exception_Handler                      |
+              N_Floating_Point_Definition              |
+              N_Formal_Decimal_Fixed_Point_Definition  |
+              N_Formal_Derived_Type_Definition         |
+              N_Formal_Discrete_Type_Definition        |
+              N_Formal_Floating_Point_Definition       |
+              N_Formal_Modular_Type_Definition         |
+              N_Formal_Ordinary_Fixed_Point_Definition |
+              N_Formal_Private_Type_Definition         |
+              N_Formal_Incomplete_Type_Definition      |
+              N_Formal_Signed_Integer_Type_Definition  |
+              N_Function_Specification                 |
+              N_Generic_Association                    |
+              N_Index_Or_Discriminant_Constraint       |
+              N_Iteration_Scheme                       |
+              N_Mod_Clause                             |
+              N_Modular_Type_Definition                |
+              N_Ordinary_Fixed_Point_Definition        |
+              N_Parameter_Specification                |
+              N_Pragma_Argument_Association            |
+              N_Procedure_Specification                |
+              N_Real_Range_Specification               |
+              N_Record_Definition                      |
+              N_Signed_Integer_Type_Definition         |
+              N_Unconstrained_Array_Definition         |
+              N_Unused_At_Start                        |
+              N_Unused_At_End                          |
+              N_Variant                                =>
             raise Program_Error;
       end case;
 
@@ -722,6 +719,11 @@ package body Sem is
       then
          Expand (N);
       end if;
+
+      --  Restore the original Ghost mode once analysis and expansion have
+      --  taken place.
+
+      Ghost_Mode := GM;
    end Analyze;
 
    --  Version with check(s) suppressed
@@ -730,20 +732,20 @@ package body Sem is
    begin
       if Suppress = All_Checks then
          declare
-            Svg : constant Suppress_Array := Scope_Suppress;
+            Svs : constant Suppress_Array := Scope_Suppress.Suppress;
          begin
-            Scope_Suppress := (others => True);
+            Scope_Suppress.Suppress := (others => True);
             Analyze (N);
-            Scope_Suppress := Svg;
+            Scope_Suppress.Suppress := Svs;
          end;
 
-      else
+      elsif Suppress = Overflow_Check then
          declare
-            Svg : constant Boolean := Scope_Suppress (Suppress);
+            Svg : constant Boolean := Scope_Suppress.Suppress (Suppress);
          begin
-            Scope_Suppress (Suppress) := True;
+            Scope_Suppress.Suppress (Suppress) := True;
             Analyze (N);
-            Scope_Suppress (Suppress) := Svg;
+            Scope_Suppress.Suppress (Suppress) := Svg;
          end;
       end if;
    end Analyze;
@@ -769,20 +771,20 @@ package body Sem is
    begin
       if Suppress = All_Checks then
          declare
-            Svg : constant Suppress_Array := Scope_Suppress;
+            Svs : constant Suppress_Array := Scope_Suppress.Suppress;
          begin
-            Scope_Suppress := (others => True);
+            Scope_Suppress.Suppress := (others => True);
             Analyze_List (L);
-            Scope_Suppress := Svg;
+            Scope_Suppress.Suppress := Svs;
          end;
 
       else
          declare
-            Svg : constant Boolean := Scope_Suppress (Suppress);
+            Svg : constant Boolean := Scope_Suppress.Suppress (Suppress);
          begin
-            Scope_Suppress (Suppress) := True;
+            Scope_Suppress.Suppress (Suppress) := True;
             Analyze_List (L);
-            Scope_Suppress (Suppress) := Svg;
+            Scope_Suppress.Suppress (Suppress) := Svg;
          end;
       end if;
    end Analyze_List;
@@ -1030,20 +1032,20 @@ package body Sem is
    begin
       if Suppress = All_Checks then
          declare
-            Svg : constant Suppress_Array := Scope_Suppress;
+            Svs : constant Suppress_Array := Scope_Suppress.Suppress;
          begin
-            Scope_Suppress := (others => True);
+            Scope_Suppress.Suppress := (others => True);
             Insert_After_And_Analyze (N, M);
-            Scope_Suppress := Svg;
+            Scope_Suppress.Suppress := Svs;
          end;
 
       else
          declare
-            Svg : constant Boolean := Scope_Suppress (Suppress);
+            Svg : constant Boolean := Scope_Suppress.Suppress (Suppress);
          begin
-            Scope_Suppress (Suppress) := True;
+            Scope_Suppress.Suppress (Suppress) := True;
             Insert_After_And_Analyze (N, M);
-            Scope_Suppress (Suppress) := Svg;
+            Scope_Suppress.Suppress (Suppress) := Svg;
          end;
       end if;
    end Insert_After_And_Analyze;
@@ -1090,20 +1092,20 @@ package body Sem is
    begin
       if Suppress = All_Checks then
          declare
-            Svg : constant Suppress_Array := Scope_Suppress;
+            Svs : constant Suppress_Array := Scope_Suppress.Suppress;
          begin
-            Scope_Suppress := (others => True);
+            Scope_Suppress.Suppress := (others => True);
             Insert_Before_And_Analyze (N, M);
-            Scope_Suppress := Svg;
+            Scope_Suppress.Suppress := Svs;
          end;
 
       else
          declare
-            Svg : constant Boolean := Scope_Suppress (Suppress);
+            Svg : constant Boolean := Scope_Suppress.Suppress (Suppress);
          begin
-            Scope_Suppress (Suppress) := True;
+            Scope_Suppress.Suppress (Suppress) := True;
             Insert_Before_And_Analyze (N, M);
-            Scope_Suppress (Suppress) := Svg;
+            Scope_Suppress.Suppress (Suppress) := Svg;
          end;
       end if;
    end Insert_Before_And_Analyze;
@@ -1149,20 +1151,20 @@ package body Sem is
    begin
       if Suppress = All_Checks then
          declare
-            Svg : constant Suppress_Array := Scope_Suppress;
+            Svs : constant Suppress_Array := Scope_Suppress.Suppress;
          begin
-            Scope_Suppress := (others => True);
+            Scope_Suppress.Suppress := (others => True);
             Insert_List_After_And_Analyze (N, L);
-            Scope_Suppress := Svg;
+            Scope_Suppress.Suppress := Svs;
          end;
 
       else
          declare
-            Svg : constant Boolean := Scope_Suppress (Suppress);
+            Svg : constant Boolean := Scope_Suppress.Suppress (Suppress);
          begin
-            Scope_Suppress (Suppress) := True;
+            Scope_Suppress.Suppress (Suppress) := True;
             Insert_List_After_And_Analyze (N, L);
-            Scope_Suppress (Suppress) := Svg;
+            Scope_Suppress.Suppress (Suppress) := Svg;
          end;
       end if;
    end Insert_List_After_And_Analyze;
@@ -1207,76 +1209,23 @@ package body Sem is
    begin
       if Suppress = All_Checks then
          declare
-            Svg : constant Suppress_Array := Scope_Suppress;
+            Svs : constant Suppress_Array := Scope_Suppress.Suppress;
          begin
-            Scope_Suppress := (others => True);
+            Scope_Suppress.Suppress := (others => True);
             Insert_List_Before_And_Analyze (N, L);
-            Scope_Suppress := Svg;
+            Scope_Suppress.Suppress := Svs;
          end;
 
       else
          declare
-            Svg : constant Boolean := Scope_Suppress (Suppress);
+            Svg : constant Boolean := Scope_Suppress.Suppress (Suppress);
          begin
-            Scope_Suppress (Suppress) := True;
+            Scope_Suppress.Suppress (Suppress) := True;
             Insert_List_Before_And_Analyze (N, L);
-            Scope_Suppress (Suppress) := Svg;
+            Scope_Suppress.Suppress (Suppress) := Svg;
          end;
       end if;
    end Insert_List_Before_And_Analyze;
-
-   -------------------------
-   -- Is_Check_Suppressed --
-   -------------------------
-
-   function Is_Check_Suppressed (E : Entity_Id; C : Check_Id) return Boolean is
-
-      Ptr : Suppress_Stack_Entry_Ptr;
-
-   begin
-      --  First search the local entity suppress stack. We search this from the
-      --  top of the stack down so that we get the innermost entry that applies
-      --  to this case if there are nested entries.
-
-      Ptr := Local_Suppress_Stack_Top;
-      while Ptr /= null loop
-         if (Ptr.Entity = Empty or else Ptr.Entity = E)
-           and then (Ptr.Check = All_Checks or else Ptr.Check = C)
-         then
-            return Ptr.Suppress;
-         end if;
-
-         Ptr := Ptr.Prev;
-      end loop;
-
-      --  Now search the global entity suppress table for a matching entry.
-      --  We also search this from the top down so that if there are multiple
-      --  pragmas for the same entity, the last one applies (not clear what
-      --  or whether the RM specifies this handling, but it seems reasonable).
-
-      Ptr := Global_Suppress_Stack_Top;
-      while Ptr /= null loop
-         if (Ptr.Entity = Empty or else Ptr.Entity = E)
-           and then (Ptr.Check = All_Checks or else Ptr.Check = C)
-         then
-            return Ptr.Suppress;
-         end if;
-
-         Ptr := Ptr.Prev;
-      end loop;
-
-      --  If we did not find a matching entry, then use the normal scope
-      --  suppress value after all (actually this will be the global setting
-      --  since it clearly was not overridden at any point). For a predefined
-      --  check, we test the specific flag. For a user defined check, we check
-      --  the All_Checks flag.
-
-      if C in Predefined_Check_Id then
-         return Scope_Suppress (C);
-      else
-         return Scope_Suppress (All_Checks);
-      end if;
-   end Is_Check_Suppressed;
 
    ----------
    -- Lock --
@@ -1287,6 +1236,23 @@ package body Sem is
       Scope_Stack.Locked := True;
       Scope_Stack.Release;
    end Lock;
+
+   ----------------
+   -- Preanalyze --
+   ----------------
+
+   procedure Preanalyze (N : Node_Id) is
+      Save_Full_Analysis : constant Boolean := Full_Analysis;
+
+   begin
+      Full_Analysis := False;
+      Expander_Mode_Save_And_Set (False);
+
+      Analyze (N);
+
+      Expander_Mode_Restore;
+      Full_Analysis := Save_Full_Analysis;
+   end Preanalyze;
 
    --------------------------------------
    -- Push_Global_Suppress_Stack_Entry --
@@ -1307,7 +1273,6 @@ package body Sem is
            Next     => Suppress_Stack_Entries);
       Suppress_Stack_Entries := Global_Suppress_Stack_Top;
       return;
-
    end Push_Global_Suppress_Stack_Entry;
 
    -------------------------------------
@@ -1337,55 +1302,33 @@ package body Sem is
    ---------------
 
    procedure Semantics (Comp_Unit : Node_Id) is
-
-      --  The following locations save the corresponding global flags and
-      --  variables so that they can be restored on completion. This is needed
-      --  so that calls to Rtsfind start with the proper default values for
-      --  these variables, and also that such calls do not disturb the settings
-      --  for units being analyzed at a higher level.
-
-      S_Current_Sem_Unit : constant Unit_Number_Type := Current_Sem_Unit;
-      S_Full_Analysis    : constant Boolean          := Full_Analysis;
-      S_GNAT_Mode        : constant Boolean          := GNAT_Mode;
-      S_Global_Dis_Names : constant Boolean          := Global_Discard_Names;
-      S_In_Spec_Expr     : constant Boolean          := In_Spec_Expression;
-      S_Inside_A_Generic : constant Boolean          := Inside_A_Generic;
-      S_New_Nodes_OK     : constant Int              := New_Nodes_OK;
-      S_Outer_Gen_Scope  : constant Entity_Id        := Outer_Generic_Scope;
-
-      Generic_Main : constant Boolean :=
-                       Nkind (Unit (Cunit (Main_Unit)))
-                         in N_Generic_Declaration;
-      --  If the main unit is generic, every compiled unit, including its
-      --  context, is compiled with expansion disabled.
-
-      Save_Config_Switches : Config_Switches_Type;
-      --  Variable used to save values of config switches while we analyze the
-      --  new unit, to be restored on exit for proper recursive behavior.
-
-      Save_Cunit_Restrictions : Save_Cunit_Boolean_Restrictions;
-      --  Used to save non-partition wide restrictions before processing new
-      --  unit. All with'ed units are analyzed with config restrictions reset
-      --  and we need to restore these saved values at the end.
-
       procedure Do_Analyze;
-      --  Procedure to analyze the compilation unit. This is called more than
-      --  once when the high level optimizer is activated.
+      --  Perform the analysis of the compilation unit
 
       ----------------
       -- Do_Analyze --
       ----------------
 
       procedure Do_Analyze is
+         GM : constant Ghost_Mode_Type := Ghost_Mode;
+         --  Save the current Ghost mode in effect in case the compilation unit
+         --  is withed from a unit with a different Ghost mode.
+
+         List : Elist_Id;
+
       begin
-         Save_Scope_Stack;
+         List := Save_Scope_Stack;
          Push_Scope (Standard_Standard);
-         Scope_Suppress := Suppress_Options;
+
+         --  Set up a clean environment before analyzing
+
+         Ghost_Mode          := None;
+         Outer_Generic_Scope := Empty;
+         Scope_Suppress      := Suppress_Options;
          Scope_Stack.Table
            (Scope_Stack.Last).Component_Alignment_Default := Calign_Default;
          Scope_Stack.Table
            (Scope_Stack.Last).Is_Active_Stack_Base := True;
-         Outer_Generic_Scope := Empty;
 
          --  Now analyze the top level compilation unit node
 
@@ -1399,10 +1342,59 @@ package body Sem is
          --  Then pop entry for Standard, and pop implicit types
 
          Pop_Scope;
-         Restore_Scope_Stack;
+         Restore_Scope_Stack (List);
+         Ghost_Mode := GM;
       end Do_Analyze;
 
+      --  Local variables
+
+      --  The following locations save the corresponding global flags and
+      --  variables so that they can be restored on completion. This is needed
+      --  so that calls to Rtsfind start with the proper default values for
+      --  these variables, and also that such calls do not disturb the settings
+      --  for units being analyzed at a higher level.
+
+      S_Current_Sem_Unit  : constant Unit_Number_Type := Current_Sem_Unit;
+      S_Full_Analysis     : constant Boolean          := Full_Analysis;
+      S_GNAT_Mode         : constant Boolean          := GNAT_Mode;
+      S_Global_Dis_Names  : constant Boolean          := Global_Discard_Names;
+      S_In_Assertion_Expr : constant Nat              := In_Assertion_Expr;
+      S_In_Default_Expr   : constant Boolean          := In_Default_Expr;
+      S_In_Spec_Expr      : constant Boolean          := In_Spec_Expression;
+      S_Inside_A_Generic  : constant Boolean          := Inside_A_Generic;
+      S_Outer_Gen_Scope   : constant Entity_Id        := Outer_Generic_Scope;
+      S_Style_Check       : constant Boolean          := Style_Check;
+
       Already_Analyzed : constant Boolean := Analyzed (Comp_Unit);
+
+      Curunit : constant Unit_Number_Type := Get_Cunit_Unit_Number (Comp_Unit);
+      --  New value of Current_Sem_Unit
+
+      Generic_Main : constant Boolean :=
+        Nkind (Unit (Cunit (Main_Unit))) in N_Generic_Declaration;
+      --  If the main unit is generic, every compiled unit, including its
+      --  context, is compiled with expansion disabled.
+
+      Is_Main_Unit_Or_Main_Unit_Spec : constant Boolean :=
+         Curunit = Main_Unit
+           or else
+             (Nkind (Unit (Cunit (Main_Unit))) = N_Package_Body
+               and then Library_Unit (Cunit (Main_Unit)) = Cunit (Curunit));
+      --  Configuration flags have special settings when compiling a predefined
+      --  file as a main unit. This applies to its spec as well.
+
+      Ext_Main_Source_Unit : constant Boolean :=
+                               In_Extended_Main_Source_Unit (Comp_Unit);
+      --  Determine if unit is in extended main source unit
+
+      Save_Config_Switches : Config_Switches_Type;
+      --  Variable used to save values of config switches while we analyze the
+      --  new unit, to be restored on exit for proper recursive behavior.
+
+      Save_Cunit_Restrictions : Save_Cunit_Boolean_Restrictions;
+      --  Used to save non-partition wide restrictions before processing new
+      --  unit. All with'ed units are analyzed with config restrictions reset
+      --  and we need to restore these saved values at the end.
 
    --  Start of processing for Semantics
 
@@ -1420,7 +1412,7 @@ package body Sem is
       end if;
 
       Compiler_State   := Analyzing;
-      Current_Sem_Unit := Get_Cunit_Unit_Number (Comp_Unit);
+      Current_Sem_Unit := Curunit;
 
       --  Compile predefined units with GNAT_Mode set to True, to properly
       --  process the categorization stuff. However, do not set GNAT_Mode
@@ -1428,26 +1420,48 @@ package body Sem is
       --  Sequential_IO) as this would prevent pragma Extend_System from being
       --  taken into account, for example when Text_IO is renaming DEC.Text_IO.
 
-      --  Cleaner might be to do the kludge at the point of excluding the
-      --  pragma (do not exclude for renamings ???)
-
       if Is_Predefined_File_Name
            (Unit_File_Name (Current_Sem_Unit), Renamings_Included => False)
       then
          GNAT_Mode := True;
       end if;
 
+      --  For generic main, never do expansion
+
       if Generic_Main then
          Expander_Mode_Save_And_Set (False);
+
+      --  Non generic case
+
       else
          Expander_Mode_Save_And_Set
-           (Operating_Mode = Generate_Code or Debug_Flag_X);
+
+           --  Turn on expansion if generating code
+
+           (Operating_Mode = Generate_Code
+
+             --  or if special debug flag -gnatdx is set
+
+             or else Debug_Flag_X
+
+             --  Or if in configuration run-time mode. We do this so we get
+             --  error messages about missing entities in the run-time even
+             --  if we are compiling in -gnatc (no code generation) mode.
+             --  Similar processing applies to No_Run_Time_Mode. However,
+             --  don't do this if debug flag -gnatd.Z is set or when we are
+             --  compiling a separate unit (this is to handle a situation
+             --  where this new processing causes trouble).
+
+             or else ((Configurable_Run_Time_Mode or No_Run_Time_Mode)
+                       and not Debug_Flag_Dot_ZZ
+                       and Nkind (Unit (Cunit (Main_Unit))) /= N_Subunit));
       end if;
 
       Full_Analysis      := True;
       Inside_A_Generic   := False;
+      In_Assertion_Expr  := 0;
+      In_Default_Expr    := False;
       In_Spec_Expression := False;
-
       Set_Comes_From_Source_Default (False);
 
       --  Save current config switches and reset then appropriately
@@ -1455,7 +1469,7 @@ package body Sem is
       Save_Opt_Config_Switches (Save_Config_Switches);
       Set_Opt_Config_Switches
         (Is_Internal_File_Name (Unit_File_Name (Current_Sem_Unit)),
-         Current_Sem_Unit = Main_Unit);
+         Is_Main_Unit_Or_Main_Unit_Spec);
 
       --  Save current non-partition-wide restrictions
 
@@ -1464,25 +1478,32 @@ package body Sem is
       --  For unit in main extended unit, we reset the configuration values
       --  for the non-partition-wide restrictions. For other units reset them.
 
-      if In_Extended_Main_Source_Unit (Comp_Unit) then
+      if Ext_Main_Source_Unit then
          Restore_Config_Cunit_Boolean_Restrictions;
       else
          Reset_Cunit_Boolean_Restrictions;
+      end if;
+
+      --  Turn off style checks for unit that is not in the extended main
+      --  source unit. This improves processing efficiency for such units
+      --  (for which we don't want style checks anyway, and where they will
+      --  get suppressed), and is definitely needed to stop some style checks
+      --  from invading the run-time units (e.g. overriding checks).
+
+      if not Ext_Main_Source_Unit then
+         Style_Check := False;
+
+      --  If this is part of the extended main source unit, set style check
+      --  mode to match the style check mode of the main source unit itself.
+
+      else
+         Style_Check := Style_Check_Main;
       end if;
 
       --  Only do analysis of unit that has not already been analyzed
 
       if not Analyzed (Comp_Unit) then
          Initialize_Version (Current_Sem_Unit);
-         if HLO_Active then
-            Expander_Mode_Save_And_Set (False);
-            New_Nodes_OK := 1;
-            Do_Analyze;
-            Reset_Analyzed_Flags (Comp_Unit);
-            Expander_Mode_Restore;
-            High_Level_Optimize (Comp_Unit);
-            New_Nodes_OK := 0;
-         end if;
 
          --  Do analysis, and then append the compilation unit onto the
          --  Comp_Unit_List, if appropriate. This is done after analysis,
@@ -1502,13 +1523,7 @@ package body Sem is
             null;
 
          else
-            --  Initialize if first time
-
-            if No (Comp_Unit_List) then
-               Comp_Unit_List := New_Elmt_List;
-            end if;
-
-            Append_Elmt (Comp_Unit, Comp_Unit_List);
+            Append_New_Elmt (Comp_Unit, To => Comp_Unit_List);
 
             if Debug_Unit_Walk then
                Write_Str ("Appending ");
@@ -1528,10 +1543,12 @@ package body Sem is
       Full_Analysis        := S_Full_Analysis;
       Global_Discard_Names := S_Global_Dis_Names;
       GNAT_Mode            := S_GNAT_Mode;
+      In_Assertion_Expr    := S_In_Assertion_Expr;
+      In_Default_Expr      := S_In_Default_Expr;
       In_Spec_Expression   := S_In_Spec_Expr;
       Inside_A_Generic     := S_Inside_A_Generic;
-      New_Nodes_OK         := S_New_Nodes_OK;
       Outer_Generic_Scope  := S_Outer_Gen_Scope;
+      Style_Check          := S_Style_Check;
 
       Restore_Opt_Config_Switches (Save_Config_Switches);
 
@@ -2283,83 +2300,5 @@ package body Sem is
          Context_Item := Next (Context_Item);
       end loop;
    end Walk_Withs_Immediate;
-
-   ---------------------
-   -- Write_Unit_Info --
-   ---------------------
-
-   procedure Write_Unit_Info
-     (Unit_Num : Unit_Number_Type;
-      Item     : Node_Id;
-      Prefix   : String := "";
-      Withs    : Boolean := False)
-   is
-   begin
-      Write_Str (Prefix);
-      Write_Unit_Name (Unit_Name (Unit_Num));
-      Write_Str (", unit ");
-      Write_Int (Int (Unit_Num));
-      Write_Str (", ");
-      Write_Int (Int (Item));
-      Write_Str ("=");
-      Write_Str (Node_Kind'Image (Nkind (Item)));
-
-      if Item /= Original_Node (Item) then
-         Write_Str (", orig = ");
-         Write_Int (Int (Original_Node (Item)));
-         Write_Str ("=");
-         Write_Str (Node_Kind'Image (Nkind (Original_Node (Item))));
-      end if;
-
-      Write_Eol;
-
-      --  Skip the rest if we're not supposed to print the withs
-
-      if not Withs then
-         return;
-      end if;
-
-      declare
-         Context_Item : Node_Id;
-
-      begin
-         Context_Item := First (Context_Items (Cunit (Unit_Num)));
-         while Present (Context_Item)
-           and then (Nkind (Context_Item) /= N_With_Clause
-                      or else Limited_Present (Context_Item))
-         loop
-            Context_Item := Next (Context_Item);
-         end loop;
-
-         if Present (Context_Item) then
-            Indent;
-            Write_Line ("withs:");
-            Indent;
-
-            while Present (Context_Item) loop
-               if Nkind (Context_Item) = N_With_Clause
-                 and then not Limited_Present (Context_Item)
-               then
-                  pragma Assert (Present (Library_Unit (Context_Item)));
-                  Write_Unit_Name
-                    (Unit_Name
-                       (Get_Cunit_Unit_Number (Library_Unit (Context_Item))));
-
-                  if Implicit_With (Context_Item) then
-                     Write_Str (" -- implicit");
-                  end if;
-
-                  Write_Eol;
-               end if;
-
-               Context_Item := Next (Context_Item);
-            end loop;
-
-            Outdent;
-            Write_Line ("end withs");
-            Outdent;
-         end if;
-      end;
-   end Write_Unit_Info;
 
 end Sem;

@@ -5,12 +5,13 @@
 // Package scanner provides a scanner and tokenizer for UTF-8-encoded text.
 // It takes an io.Reader providing the source, which then can be tokenized
 // through repeated calls to the Scan function.  For compatibility with
-// existing tools, the NUL character is not allowed.
+// existing tools, the NUL character is not allowed. If the first character
+// in the source is a UTF-8 encoded byte order mark (BOM), it is discarded.
 //
 // By default, a Scanner skips white space and Go comments and recognizes all
 // literals as defined by the Go language specification.  It may be
 // customized to recognize only a subset of those literals and to recognize
-// different white space characters.
+// different identifier and white space characters.
 //
 // Basic usage pattern:
 //
@@ -32,8 +33,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 )
-
-// TODO(gri): Consider changing this to use the new (token) Position package.
 
 // A source position is represented by a Position value.
 // A position is valid if Line > 0.
@@ -66,6 +65,12 @@ func (pos Position) String() string {
 // integers, and skips comments, set the Scanner's Mode field to:
 //
 //	ScanIdents | ScanInts | SkipComments
+//
+// With the exceptions of comments, which are skipped if SkipComments is
+// set, unrecognized tokens are not ignored. Instead, the scanner simply
+// returns the respective individual characters (or possibly sub-tokens).
+// For instance, if the mode is ScanIdents (not ScanStrings), the string
+// "foo" is scanned as the token sequence '"' Ident '"'.
 //
 const (
 	ScanIdents     = 1 << -Ident
@@ -163,6 +168,13 @@ type Scanner struct {
 	// for values ch > ' '). The field may be changed at any time.
 	Whitespace uint64
 
+	// IsIdentRune is a predicate controlling the characters accepted
+	// as the ith rune in an identifier. The set of valid characters
+	// must not intersect with the set of white space characters.
+	// If no IsIdentRune function is set, regular Go identifiers are
+	// accepted instead. The field may be changed at any time.
+	IsIdentRune func(ch rune, i int) bool
+
 	// Start position of most recently scanned token; set by Scan.
 	// Calling Init or Next invalidates the position (Line == 0).
 	// The Filename field is always left untouched by the Scanner.
@@ -208,11 +220,6 @@ func (s *Scanner) Init(src io.Reader) *Scanner {
 	return s
 }
 
-// TODO(gri): The code for next() and the internal scanner state could benefit
-//            from a rethink. While next() is optimized for the common ASCII
-//            case, the "corrections" needed for proper position tracking undo
-//            some of the attempts for fast-path optimization.
-
 // next reads and returns the next Unicode character. It is designed such
 // that only a minimal amount of work needs to be done in the common ASCII
 // case (one test to check for both ASCII and end-of-buffer, and one test
@@ -244,6 +251,9 @@ func (s *Scanner) next() rune {
 			s.srcEnd = i + n
 			s.srcBuf[s.srcEnd] = utf8.RuneSelf // sentinel
 			if err != nil {
+				if err != io.EOF {
+					s.error(err.Error())
+				}
 				if s.srcEnd == 0 {
 					if s.lastCharLen > 0 {
 						// previous character was not EOF
@@ -251,9 +261,6 @@ func (s *Scanner) next() rune {
 					}
 					s.lastCharLen = 0
 					return EOF
-				}
-				if err != io.EOF {
-					s.error(err.Error())
 				}
 				// If err == EOF, we won't be getting more
 				// bytes; break to avoid infinite loop. If
@@ -316,7 +323,11 @@ func (s *Scanner) Next() rune {
 // character of the source.
 func (s *Scanner) Peek() rune {
 	if s.ch < 0 {
+		// this code is only run for the very first character
 		s.ch = s.next()
+		if s.ch == '\uFEFF' {
+			s.ch = s.next() // ignore BOM
+		}
 	}
 	return s.ch
 }
@@ -334,9 +345,17 @@ func (s *Scanner) error(msg string) {
 	fmt.Fprintf(os.Stderr, "%s: %s\n", pos, msg)
 }
 
+func (s *Scanner) isIdentRune(ch rune, i int) bool {
+	if s.IsIdentRune != nil {
+		return s.IsIdentRune(ch, i)
+	}
+	return ch == '_' || unicode.IsLetter(ch) || unicode.IsDigit(ch) && i > 0
+}
+
 func (s *Scanner) scanIdentifier() rune {
-	ch := s.next() // read character after first '_' or letter
-	for ch == '_' || unicode.IsLetter(ch) || unicode.IsDigit(ch) {
+	// we know the zero'th rune is OK; start scanning at the next one
+	ch := s.next()
+	for i := 1; s.isIdentRune(ch, i); i++ {
 		ch = s.next()
 	}
 	return ch
@@ -389,15 +408,20 @@ func (s *Scanner) scanNumber(ch rune) (rune, rune) {
 		if ch == 'x' || ch == 'X' {
 			// hexadecimal int
 			ch = s.next()
+			hasMantissa := false
 			for digitVal(ch) < 16 {
 				ch = s.next()
+				hasMantissa = true
+			}
+			if !hasMantissa {
+				s.error("illegal hexadecimal number")
 			}
 		} else {
 			// octal int or float
-			seenDecimalDigit := false
+			has8or9 := false
 			for isDecimal(ch) {
 				if ch > '7' {
-					seenDecimalDigit = true
+					has8or9 = true
 				}
 				ch = s.next()
 			}
@@ -408,7 +432,7 @@ func (s *Scanner) scanNumber(ch rune) (rune, rune) {
 				return Float, ch
 			}
 			// octal int
-			if seenDecimalDigit {
+			if has8or9 {
 				s.error("illegal octal number")
 			}
 		}
@@ -558,7 +582,7 @@ redo:
 	// determine token value
 	tok := ch
 	switch {
-	case unicode.IsLetter(ch) || ch == '_':
+	case s.isIdentRune(ch, 0):
 		if s.Mode&ScanIdents != 0 {
 			tok = Ident
 			ch = s.scanIdentifier()

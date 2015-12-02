@@ -1,9 +1,9 @@
-// { dg-options "-std=c++0x" }
+// { dg-options "-std=gnu++11" }
 // { dg-require-cstdint "" }
 //
 // 2008-11-24  Edward M. Smith-Rowland <3dw4rd@verizon.net>
 //
-// Copyright (C) 2008, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2008-2015 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -34,7 +34,7 @@ test01()
   std::exponential_distribution<> u(0.5);
   VERIFY( u.lambda() == 0.5 );
   typedef std::exponential_distribution<>::result_type result_type;
-  VERIFY( u.min() == 0 );
+  VERIFY( u.min() == 0.0 );
   VERIFY( u.max() == std::numeric_limits<result_type>::max() );
 }
 

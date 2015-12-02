@@ -19,7 +19,9 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -47,7 +49,7 @@ var (
 	ErrUnexpectedTrailer    = &ProtocolError{"trailer header without chunked transfer encoding"}
 	ErrMissingContentLength = &ProtocolError{"missing ContentLength in HEAD response"}
 	ErrNotMultipart         = &ProtocolError{"request Content-Type isn't multipart/form-data"}
-	ErrMissingBoundary      = &ProtocolError{"no multipart boundary param Content-Type"}
+	ErrMissingBoundary      = &ProtocolError{"no multipart boundary param in Content-Type"}
 )
 
 type badStringError struct {
@@ -68,12 +70,31 @@ var reqWriteExcludeHeader = map[string]bool{
 
 // A Request represents an HTTP request received by a server
 // or to be sent by a client.
+//
+// The field semantics differ slightly between client and server
+// usage. In addition to the notes on the fields below, see the
+// documentation for Request.Write and RoundTripper.
 type Request struct {
-	Method string // GET, POST, PUT, etc.
-	URL    *url.URL
+	// Method specifies the HTTP method (GET, POST, PUT, etc.).
+	// For client requests an empty string means GET.
+	Method string
+
+	// URL specifies either the URI being requested (for server
+	// requests) or the URL to access (for client requests).
+	//
+	// For server requests the URL is parsed from the URI
+	// supplied on the Request-Line as stored in RequestURI.  For
+	// most requests, fields other than Path and RawQuery will be
+	// empty. (See RFC 2616, Section 5.1.2)
+	//
+	// For client requests, the URL's Host specifies the server to
+	// connect to, while the Request's Host field optionally
+	// specifies the Host header value to send in the HTTP
+	// request.
+	URL *url.URL
 
 	// The protocol version for incoming requests.
-	// Outgoing requests always use HTTP/1.1.
+	// Client requests always use HTTP/1.1.
 	Proto      string // "HTTP/1.0"
 	ProtoMajor int    // 1
 	ProtoMinor int    // 0
@@ -97,16 +118,30 @@ type Request struct {
 	// The request parser implements this by canonicalizing the
 	// name, making the first character and any characters
 	// following a hyphen uppercase and the rest lowercase.
+	//
+	// For client requests certain headers are automatically
+	// added and may override values in Header.
+	//
+	// See the documentation for the Request.Write method.
 	Header Header
 
-	// The message body.
+	// Body is the request's body.
+	//
+	// For client requests a nil body means the request has no
+	// body, such as a GET request. The HTTP Client's Transport
+	// is responsible for calling the Close method.
+	//
+	// For server requests the Request Body is always non-nil
+	// but will return EOF immediately when no body is present.
+	// The Server will close the request body. The ServeHTTP
+	// Handler does not need to.
 	Body io.ReadCloser
 
 	// ContentLength records the length of the associated content.
 	// The value -1 indicates that the length is unknown.
 	// Values >= 0 indicate that the given number of bytes may
 	// be read from Body.
-	// For outgoing requests, a value of 0 means unknown if Body is not nil.
+	// For client requests, a value of 0 means unknown if Body is not nil.
 	ContentLength int64
 
 	// TransferEncoding lists the transfer encodings from outermost to
@@ -117,12 +152,18 @@ type Request struct {
 	TransferEncoding []string
 
 	// Close indicates whether to close the connection after
-	// replying to this request.
+	// replying to this request (for servers) or after sending
+	// the request (for clients).
 	Close bool
 
-	// The host on which the URL is sought.
-	// Per RFC 2616, this is either the value of the Host: header
-	// or the host name given in the URL itself.
+	// For server requests Host specifies the host on which the
+	// URL is sought. Per RFC 2616, this is either the value of
+	// the "Host" header or the host name given in the URL itself.
+	// It may be of the form "host:port".
+	//
+	// For client requests Host optionally overrides the Host
+	// header to send. If empty, the Request.Write method uses
+	// the value of URL.Host.
 	Host string
 
 	// Form contains the parsed form data, including both the URL
@@ -131,17 +172,35 @@ type Request struct {
 	// The HTTP client ignores Form and uses Body instead.
 	Form url.Values
 
+	// PostForm contains the parsed form data from POST or PUT
+	// body parameters.
+	// This field is only available after ParseForm is called.
+	// The HTTP client ignores PostForm and uses Body instead.
+	PostForm url.Values
+
 	// MultipartForm is the parsed multipart form, including file uploads.
 	// This field is only available after ParseMultipartForm is called.
 	// The HTTP client ignores MultipartForm and uses Body instead.
 	MultipartForm *multipart.Form
 
-	// Trailer maps trailer keys to values.  Like for Header, if the
-	// response has multiple trailer lines with the same key, they will be
-	// concatenated, delimited by commas.
-	// For server requests, Trailer is only populated after Body has been
-	// closed or fully consumed.
-	// Trailer support is only partially complete.
+	// Trailer specifies additional headers that are sent after the request
+	// body.
+	//
+	// For server requests the Trailer map initially contains only the
+	// trailer keys, with nil values. (The client declares which trailers it
+	// will later send.)  While the handler is reading from Body, it must
+	// not reference Trailer. After reading from Body returns EOF, Trailer
+	// can be read again and will contain non-nil values, if they were sent
+	// by the client.
+	//
+	// For client requests Trailer must be initialized to a map containing
+	// the trailer keys to later send. The values may be nil or their final
+	// values. The ContentLength must be 0 or -1, to send a chunked request.
+	// After the HTTP request is sent the map values can be updated while
+	// the request body is read. Once the body returns EOF, the caller must
+	// not mutate Trailer.
+	//
+	// Few HTTP clients, servers, or proxies support HTTP trailers.
 	Trailer Header
 
 	// RemoteAddr allows HTTP servers and other software to record
@@ -169,7 +228,7 @@ type Request struct {
 	TLS *tls.ConnectionState
 }
 
-// ProtoAtLeast returns whether the HTTP protocol used
+// ProtoAtLeast reports whether the HTTP protocol used
 // in the request is at least major.minor.
 func (r *Request) ProtoAtLeast(major, minor int) bool {
 	return r.ProtoMajor > major ||
@@ -202,7 +261,7 @@ func (r *Request) Cookie(name string) (*Cookie, error) {
 // means all cookies, if any, are written into the same line,
 // separated by semicolon.
 func (r *Request) AddCookie(c *Cookie) {
-	s := fmt.Sprintf("%s=%s", sanitizeName(c.Name), sanitizeValue(c.Value))
+	s := fmt.Sprintf("%s=%s", sanitizeCookieName(c.Name), sanitizeCookieValue(c.Value))
 	if c := r.Header.Get("Cookie"); c != "" {
 		r.Header.Set("Cookie", c+"; "+s)
 	} else {
@@ -269,7 +328,12 @@ func valueOrDefault(value, def string) string {
 	return def
 }
 
-const defaultUserAgent = "Go http package"
+// NOTE: This is not intended to reflect the actual Go version being used.
+// It was changed from "Go http package" to "Go 1.1 package http" at the
+// time of the Go 1.1 release because the former User-Agent had ended up
+// on a blacklist for some intrusion detection systems.
+// See https://codereview.appspot.com/7532043.
+const defaultUserAgent = "Go 1.1 package http"
 
 // Write writes an HTTP/1.1 request -- header and body -- in wire format.
 // This method consults the following fields of the request:
@@ -317,11 +381,26 @@ func (req *Request) write(w io.Writer, usingProxy bool, extraHeaders Header) err
 	}
 	// TODO(bradfitz): escape at least newlines in ruri?
 
-	bw := bufio.NewWriter(w)
-	fmt.Fprintf(bw, "%s %s HTTP/1.1\r\n", valueOrDefault(req.Method, "GET"), ruri)
+	// Wrap the writer in a bufio Writer if it's not already buffered.
+	// Don't always call NewWriter, as that forces a bytes.Buffer
+	// and other small bufio Writers to have a minimum 4k buffer
+	// size.
+	var bw *bufio.Writer
+	if _, ok := w.(io.ByteWriter); !ok {
+		bw = bufio.NewWriter(w)
+		w = bw
+	}
+
+	_, err := fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", valueOrDefault(req.Method, "GET"), ruri)
+	if err != nil {
+		return err
+	}
 
 	// Header lines
-	fmt.Fprintf(bw, "Host: %s\r\n", host)
+	_, err = fmt.Fprintf(w, "Host: %s\r\n", host)
+	if err != nil {
+		return err
+	}
 
 	// Use the defaultUserAgent unless the Header contains one, which
 	// may be blank to not send the header.
@@ -332,7 +411,10 @@ func (req *Request) write(w io.Writer, usingProxy bool, extraHeaders Header) err
 		}
 	}
 	if userAgent != "" {
-		fmt.Fprintf(bw, "User-Agent: %s\r\n", userAgent)
+		_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Process Body,ContentLength,Close,Trailer
@@ -340,71 +422,73 @@ func (req *Request) write(w io.Writer, usingProxy bool, extraHeaders Header) err
 	if err != nil {
 		return err
 	}
-	err = tw.WriteHeader(bw)
+	err = tw.WriteHeader(w)
 	if err != nil {
 		return err
 	}
 
-	// TODO: split long values?  (If so, should share code with Conn.Write)
-	err = req.Header.WriteSubset(bw, reqWriteExcludeHeader)
+	err = req.Header.WriteSubset(w, reqWriteExcludeHeader)
 	if err != nil {
 		return err
 	}
 
 	if extraHeaders != nil {
-		err = extraHeaders.Write(bw)
+		err = extraHeaders.Write(w)
 		if err != nil {
 			return err
 		}
 	}
 
-	io.WriteString(bw, "\r\n")
-
-	// Write body and trailer
-	err = tw.WriteBody(bw)
+	_, err = io.WriteString(w, "\r\n")
 	if err != nil {
 		return err
 	}
 
-	return bw.Flush()
-}
+	// Write body and trailer
+	err = tw.WriteBody(w)
+	if err != nil {
+		return err
+	}
 
-// Convert decimal at s[i:len(s)] to integer,
-// returning value, string position where the digits stopped,
-// and whether there was a valid number (digits, not too big).
-func atoi(s string, i int) (n, i1 int, ok bool) {
-	const Big = 1000000
-	if i >= len(s) || s[i] < '0' || s[i] > '9' {
-		return 0, 0, false
+	if bw != nil {
+		return bw.Flush()
 	}
-	n = 0
-	for ; i < len(s) && '0' <= s[i] && s[i] <= '9'; i++ {
-		n = n*10 + int(s[i]-'0')
-		if n > Big {
-			return 0, 0, false
-		}
-	}
-	return n, i, true
+	return nil
 }
 
 // ParseHTTPVersion parses a HTTP version string.
 // "HTTP/1.0" returns (1, 0, true).
 func ParseHTTPVersion(vers string) (major, minor int, ok bool) {
-	if len(vers) < 5 || vers[0:5] != "HTTP/" {
+	const Big = 1000000 // arbitrary upper bound
+	switch vers {
+	case "HTTP/1.1":
+		return 1, 1, true
+	case "HTTP/1.0":
+		return 1, 0, true
+	}
+	if !strings.HasPrefix(vers, "HTTP/") {
 		return 0, 0, false
 	}
-	major, i, ok := atoi(vers, 5)
-	if !ok || i >= len(vers) || vers[i] != '.' {
+	dot := strings.Index(vers, ".")
+	if dot < 0 {
 		return 0, 0, false
 	}
-	minor, i, ok = atoi(vers, i+1)
-	if !ok || i != len(vers) {
+	major, err := strconv.Atoi(vers[5:dot])
+	if err != nil || major < 0 || major > Big {
+		return 0, 0, false
+	}
+	minor, err = strconv.Atoi(vers[dot+1:])
+	if err != nil || minor < 0 || minor > Big {
 		return 0, 0, false
 	}
 	return major, minor, true
 }
 
 // NewRequest returns a new Request given a method, URL, and optional body.
+//
+// If the provided body is also an io.Closer, the returned
+// Request.Body is set to body and will be closed by the Client
+// methods Do, Post, and PostForm, and Transport.RoundTrip.
 func NewRequest(method, urlStr string, body io.Reader) (*Request, error) {
 	u, err := url.Parse(urlStr)
 	if err != nil {
@@ -426,14 +510,45 @@ func NewRequest(method, urlStr string, body io.Reader) (*Request, error) {
 	}
 	if body != nil {
 		switch v := body.(type) {
-		case *strings.Reader:
-			req.ContentLength = int64(v.Len())
 		case *bytes.Buffer:
+			req.ContentLength = int64(v.Len())
+		case *bytes.Reader:
+			req.ContentLength = int64(v.Len())
+		case *strings.Reader:
 			req.ContentLength = int64(v.Len())
 		}
 	}
 
 	return req, nil
+}
+
+// BasicAuth returns the username and password provided in the request's
+// Authorization header, if the request uses HTTP Basic Authentication.
+// See RFC 2617, Section 2.
+func (r *Request) BasicAuth() (username, password string, ok bool) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return
+	}
+	return parseBasicAuth(auth)
+}
+
+// parseBasicAuth parses an HTTP Basic Authentication string.
+// "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" returns ("Aladdin", "open sesame", true).
+func parseBasicAuth(auth string) (username, password string, ok bool) {
+	if !strings.HasPrefix(auth, "Basic ") {
+		return
+	}
+	c, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+	if err != nil {
+		return
+	}
+	cs := string(c)
+	s := strings.IndexByte(cs, ':')
+	if s < 0 {
+		return
+	}
+	return cs[:s], cs[s+1:], true
 }
 
 // SetBasicAuth sets the request's Authorization header to use HTTP
@@ -442,32 +557,60 @@ func NewRequest(method, urlStr string, body io.Reader) (*Request, error) {
 // With HTTP Basic Authentication the provided username and password
 // are not encrypted.
 func (r *Request) SetBasicAuth(username, password string) {
-	s := username + ":" + password
-	r.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(s)))
+	r.Header.Set("Authorization", "Basic "+basicAuth(username, password))
+}
+
+// parseRequestLine parses "GET /foo HTTP/1.1" into its three parts.
+func parseRequestLine(line string) (method, requestURI, proto string, ok bool) {
+	s1 := strings.Index(line, " ")
+	s2 := strings.Index(line[s1+1:], " ")
+	if s1 < 0 || s2 < 0 {
+		return
+	}
+	s2 += s1 + 1
+	return line[:s1], line[s1+1 : s2], line[s2+1:], true
+}
+
+var textprotoReaderPool sync.Pool
+
+func newTextprotoReader(br *bufio.Reader) *textproto.Reader {
+	if v := textprotoReaderPool.Get(); v != nil {
+		tr := v.(*textproto.Reader)
+		tr.R = br
+		return tr
+	}
+	return textproto.NewReader(br)
+}
+
+func putTextprotoReader(r *textproto.Reader) {
+	r.R = nil
+	textprotoReaderPool.Put(r)
 }
 
 // ReadRequest reads and parses a request from b.
 func ReadRequest(b *bufio.Reader) (req *Request, err error) {
 
-	tp := textproto.NewReader(b)
+	tp := newTextprotoReader(b)
 	req = new(Request)
 
 	// First line: GET /index.html HTTP/1.0
 	var s string
 	if s, err = tp.ReadLine(); err != nil {
+		return nil, err
+	}
+	defer func() {
+		putTextprotoReader(tp)
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
-		return nil, err
-	}
+	}()
 
-	var f []string
-	if f = strings.SplitN(s, " ", 3); len(f) < 3 {
+	var ok bool
+	req.Method, req.RequestURI, req.Proto, ok = parseRequestLine(s)
+	if !ok {
 		return nil, &badStringError{"malformed HTTP request", s}
 	}
-	req.Method, req.RequestURI, req.Proto = f[0], f[1], f[2]
 	rawurl := req.RequestURI
-	var ok bool
 	if req.ProtoMajor, req.ProtoMinor, ok = ParseHTTPVersion(req.Proto); !ok {
 		return nil, &badStringError{"malformed HTTP version", req.Proto}
 	}
@@ -511,43 +654,18 @@ func ReadRequest(b *bufio.Reader) (req *Request, err error) {
 	// the same.  In the second case, any Host line is ignored.
 	req.Host = req.URL.Host
 	if req.Host == "" {
-		req.Host = req.Header.Get("Host")
+		req.Host = req.Header.get("Host")
 	}
-	req.Header.Del("Host")
+	delete(req.Header, "Host")
 
 	fixPragmaCacheControl(req.Header)
-
-	// TODO: Parse specific header values:
-	//	Accept
-	//	Accept-Encoding
-	//	Accept-Language
-	//	Authorization
-	//	Cache-Control
-	//	Connection
-	//	Date
-	//	Expect
-	//	From
-	//	If-Match
-	//	If-Modified-Since
-	//	If-None-Match
-	//	If-Range
-	//	If-Unmodified-Since
-	//	Max-Forwards
-	//	Proxy-Authorization
-	//	Referer [sic]
-	//	TE (transfer-codings)
-	//	Trailer
-	//	Transfer-Encoding
-	//	Upgrade
-	//	User-Agent
-	//	Via
-	//	Warning
 
 	err = readTransfer(req, b)
 	if err != nil {
 		return nil, err
 	}
 
+	req.Close = shouldClose(req.ProtoMajor, req.ProtoMinor, req.Header, false)
 	return req, nil
 }
 
@@ -592,66 +710,102 @@ func (l *maxBytesReader) Close() error {
 	return l.r.Close()
 }
 
-// ParseForm parses the raw query from the URL.
+func copyValues(dst, src url.Values) {
+	for k, vs := range src {
+		for _, value := range vs {
+			dst.Add(k, value)
+		}
+	}
+}
+
+func parsePostForm(r *Request) (vs url.Values, err error) {
+	if r.Body == nil {
+		err = errors.New("missing form body")
+		return
+	}
+	ct := r.Header.Get("Content-Type")
+	// RFC 2616, section 7.2.1 - empty type
+	//   SHOULD be treated as application/octet-stream
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	ct, _, err = mime.ParseMediaType(ct)
+	switch {
+	case ct == "application/x-www-form-urlencoded":
+		var reader io.Reader = r.Body
+		maxFormSize := int64(1<<63 - 1)
+		if _, ok := r.Body.(*maxBytesReader); !ok {
+			maxFormSize = int64(10 << 20) // 10 MB is a lot of text.
+			reader = io.LimitReader(r.Body, maxFormSize+1)
+		}
+		b, e := ioutil.ReadAll(reader)
+		if e != nil {
+			if err == nil {
+				err = e
+			}
+			break
+		}
+		if int64(len(b)) > maxFormSize {
+			err = errors.New("http: POST too large")
+			return
+		}
+		vs, e = url.ParseQuery(string(b))
+		if err == nil {
+			err = e
+		}
+	case ct == "multipart/form-data":
+		// handled by ParseMultipartForm (which is calling us, or should be)
+		// TODO(bradfitz): there are too many possible
+		// orders to call too many functions here.
+		// Clean this up and write more tests.
+		// request_test.go contains the start of this,
+		// in TestParseMultipartFormOrder and others.
+	}
+	return
+}
+
+// ParseForm parses the raw query from the URL and updates r.Form.
 //
-// For POST or PUT requests, it also parses the request body as a form.
+// For POST or PUT requests, it also parses the request body as a form and
+// put the results into both r.PostForm and r.Form.
+// POST and PUT body parameters take precedence over URL query string values
+// in r.Form.
+//
 // If the request Body's size has not already been limited by MaxBytesReader,
 // the size is capped at 10MB.
 //
 // ParseMultipartForm calls ParseForm automatically.
 // It is idempotent.
-func (r *Request) ParseForm() (err error) {
-	if r.Form != nil {
-		return
-	}
-	if r.URL != nil {
-		r.Form, err = url.ParseQuery(r.URL.RawQuery)
-	}
-	if r.Method == "POST" || r.Method == "PUT" {
-		if r.Body == nil {
-			return errors.New("missing form body")
+func (r *Request) ParseForm() error {
+	var err error
+	if r.PostForm == nil {
+		if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
+			r.PostForm, err = parsePostForm(r)
 		}
-		ct := r.Header.Get("Content-Type")
-		ct, _, err = mime.ParseMediaType(ct)
-		switch {
-		case ct == "application/x-www-form-urlencoded":
-			var reader io.Reader = r.Body
-			maxFormSize := int64(1<<63 - 1)
-			if _, ok := r.Body.(*maxBytesReader); !ok {
-				maxFormSize = int64(10 << 20) // 10 MB is a lot of text.
-				reader = io.LimitReader(r.Body, maxFormSize+1)
-			}
-			b, e := ioutil.ReadAll(reader)
-			if e != nil {
-				if err == nil {
-					err = e
-				}
-				break
-			}
-			if int64(len(b)) > maxFormSize {
-				return errors.New("http: POST too large")
-			}
-			var newValues url.Values
-			newValues, e = url.ParseQuery(string(b))
+		if r.PostForm == nil {
+			r.PostForm = make(url.Values)
+		}
+	}
+	if r.Form == nil {
+		if len(r.PostForm) > 0 {
+			r.Form = make(url.Values)
+			copyValues(r.Form, r.PostForm)
+		}
+		var newValues url.Values
+		if r.URL != nil {
+			var e error
+			newValues, e = url.ParseQuery(r.URL.RawQuery)
 			if err == nil {
 				err = e
 			}
-			if r.Form == nil {
-				r.Form = make(url.Values)
-			}
-			// Copy values into r.Form. TODO: make this smoother.
-			for k, vs := range newValues {
-				for _, value := range vs {
-					r.Form.Add(k, value)
-				}
-			}
-		case ct == "multipart/form-data":
-			// handled by ParseMultipartForm (which is calling us, or should be)
-			// TODO(bradfitz): there are too many possible
-			// orders to call too many functions here.
-			// Clean this up and write more tests.
-			// request_test.go contains the start of this,
-			// in TestRequestMultipartCallOrder.
+		}
+		if newValues == nil {
+			newValues = make(url.Values)
+		}
+		if r.Form == nil {
+			r.Form = newValues
+		} else {
+			copyValues(r.Form, newValues)
 		}
 	}
 	return err
@@ -678,9 +832,7 @@ func (r *Request) ParseMultipartForm(maxMemory int64) error {
 	}
 
 	mr, err := r.multipartReader()
-	if err == ErrNotMultipart {
-		return nil
-	} else if err != nil {
+	if err != nil {
 		return err
 	}
 
@@ -697,12 +849,30 @@ func (r *Request) ParseMultipartForm(maxMemory int64) error {
 }
 
 // FormValue returns the first value for the named component of the query.
-// FormValue calls ParseMultipartForm and ParseForm if necessary.
+// POST and PUT body parameters take precedence over URL query string values.
+// FormValue calls ParseMultipartForm and ParseForm if necessary and ignores
+// any errors returned by these functions.
+// To access multiple values of the same key, call ParseForm and
+// then inspect Request.Form directly.
 func (r *Request) FormValue(key string) string {
 	if r.Form == nil {
 		r.ParseMultipartForm(defaultMaxMemory)
 	}
 	if vs := r.Form[key]; len(vs) > 0 {
+		return vs[0]
+	}
+	return ""
+}
+
+// PostFormValue returns the first value for the named component of the POST
+// or PUT request body. URL query parameters are ignored.
+// PostFormValue calls ParseMultipartForm and ParseForm if necessary and ignores
+// any errors returned by these functions.
+func (r *Request) PostFormValue(key string) string {
+	if r.PostForm == nil {
+		r.ParseMultipartForm(defaultMaxMemory)
+	}
+	if vs := r.PostForm[key]; len(vs) > 0 {
 		return vs[0]
 	}
 	return ""
@@ -730,12 +900,22 @@ func (r *Request) FormFile(key string) (multipart.File, *multipart.FileHeader, e
 }
 
 func (r *Request) expectsContinue() bool {
-	return strings.ToLower(r.Header.Get("Expect")) == "100-continue"
+	return hasToken(r.Header.get("Expect"), "100-continue")
 }
 
 func (r *Request) wantsHttp10KeepAlive() bool {
 	if r.ProtoMajor != 1 || r.ProtoMinor != 0 {
 		return false
 	}
-	return strings.Contains(strings.ToLower(r.Header.Get("Connection")), "keep-alive")
+	return hasToken(r.Header.get("Connection"), "keep-alive")
+}
+
+func (r *Request) wantsClose() bool {
+	return hasToken(r.Header.get("Connection"), "close")
+}
+
+func (r *Request) closeBody() {
+	if r.Body != nil {
+		r.Body.Close()
+	}
 }

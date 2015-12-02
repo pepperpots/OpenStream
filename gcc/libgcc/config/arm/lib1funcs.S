@@ -1,8 +1,7 @@
 @ libgcc routines for ARM cpu.
 @ Division routines, written by Richard Earnshaw, (rearnsha@armltd.co.uk)
 
-/* Copyright 1995, 1996, 1998, 1999, 2000, 2003, 2004, 2005, 2007, 2008,
-   2009, 2010 Free Software Foundation, Inc.
+/* Copyright (C) 1995-2015 Free Software Foundation, Inc.
 
 This file is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the
@@ -107,6 +106,10 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 	|| defined(__ARM_ARCH_7R__) || defined(__ARM_ARCH_7M__) \
 	|| defined(__ARM_ARCH_7EM__)
 # define __ARM_ARCH__ 7
+#endif
+
+#if defined(__ARM_ARCH_8A__)
+# define __ARM_ARCH__ 8
 #endif
 
 #ifndef __ARM_ARCH__
@@ -415,8 +418,12 @@ SYM (\name):
 #define THUMB_SYNTAX
 #endif
 
-.macro FUNC_START name
+.macro FUNC_START name sp_section=
+  .ifc \sp_section, function_section
+	.section	.text.__\name,"ax",%progbits
+  .else
 	.text
+  .endif
 	.globl SYM (__\name)
 	TYPE (__\name)
 	.align 0
@@ -426,14 +433,24 @@ SYM (\name):
 SYM (__\name):
 .endm
 
+.macro ARM_SYM_START name
+       TYPE (\name)
+       .align 0
+SYM (\name):
+.endm
+
+.macro SYM_END name
+       SIZE (\name)
+.endm
+
 /* Special function that will always be coded in ARM assembly, even if
    in Thumb-only compilation.  */
 
 #if defined(__thumb2__)
 
 /* For Thumb-2 we build everything in thumb mode.  */
-.macro ARM_FUNC_START name
-       FUNC_START \name
+.macro ARM_FUNC_START name sp_section=
+       FUNC_START \name \sp_section
        .syntax unified
 .endm
 #define EQUIV .thumb_set
@@ -464,8 +481,12 @@ _L__\name:
 #ifdef __ARM_ARCH_6M__
 #define EQUIV .thumb_set
 #else
-.macro	ARM_FUNC_START name
+.macro	ARM_FUNC_START name sp_section=
+  .ifc \sp_section, function_section
+	.section	.text.__\name,"ax",%progbits
+  .else
 	.text
+  .endif
 	.globl SYM (__\name)
 	TYPE (__\name)
 	.align 0
@@ -1593,6 +1614,70 @@ ARM_FUNC_START clzdi2
 
 #endif
 #endif /* L_clzdi2 */
+
+#ifdef L_ctzsi2
+#if defined(__ARM_ARCH_6M__)
+FUNC_START ctzsi2
+	neg	r1, r0
+	and	r0, r0, r1
+	mov	r1, #28
+	mov	r3, #1
+	lsl	r3, r3, #16
+	cmp	r0, r3 /* 0x10000 */
+	bcc	2f
+	lsr	r0, r0, #16
+	sub	r1, r1, #16
+2:	lsr	r3, r3, #8
+	cmp	r0, r3 /* #0x100 */
+	bcc	2f
+	lsr	r0, r0, #8
+	sub	r1, r1, #8
+2:	lsr	r3, r3, #4
+	cmp	r0, r3 /* #0x10 */
+	bcc	2f
+	lsr	r0, r0, #4
+	sub	r1, r1, #4
+2:	adr	r2, 1f
+	ldrb	r0, [r2, r0]
+	sub	r0, r0, r1
+	bx lr
+.align 2
+1:
+.byte	27, 28, 29, 29, 30, 30, 30, 30, 31, 31, 31, 31, 31, 31, 31, 31
+	FUNC_END ctzsi2
+#else
+ARM_FUNC_START ctzsi2
+	rsb	r1, r0, #0
+	and	r0, r0, r1
+# if defined(HAVE_ARM_CLZ)
+	clz	r0, r0
+	rsb	r0, r0, #31
+	RET
+# else
+	mov	r1, #28
+	cmp	r0, #0x10000
+	do_it	cs, t
+	movcs	r0, r0, lsr #16
+	subcs	r1, r1, #16
+	cmp	r0, #0x100
+	do_it	cs, t
+	movcs	r0, r0, lsr #8
+	subcs	r1, r1, #8
+	cmp	r0, #0x10
+	do_it	cs, t
+	movcs	r0, r0, lsr #4
+	subcs	r1, r1, #4
+	adr	r2, 1f
+	ldrb	r0, [r2, r0]
+	sub	r0, r0, r1
+	RET
+.align 2
+1:
+.byte	27, 28, 29, 29, 30, 30, 30, 30, 31, 31, 31, 31, 31, 31, 31, 31
+# endif /* !HAVE_ARM_CLZ */
+	FUNC_END ctzsi2
+#endif
+#endif /* L_clzsi2 */
 
 /* ------------------------------------------------------------------------ */
 /* These next two sections are here despite the fact that they contain Thumb 

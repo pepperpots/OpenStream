@@ -7,7 +7,6 @@ package net
 import (
 	"errors"
 	"os"
-	"syscall"
 )
 
 func query(filename, query string, bufSize int) (res []string, err error) {
@@ -17,6 +16,10 @@ func query(filename, query string, bufSize int) (res []string, err error) {
 	}
 	defer file.Close()
 
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return
+	}
 	_, err = file.WriteString(query)
 	if err != nil {
 		return
@@ -46,7 +49,7 @@ func queryCS(net, host, service string) (res []string, err error) {
 	if host == "" {
 		host = "*"
 	}
-	return query("/net/cs", net+"!"+host+"!"+service, 128)
+	return query(netdir+"/cs", net+"!"+host+"!"+service, 128)
 }
 
 func queryCS1(net string, ip IP, port int) (clone, dest string, err error) {
@@ -60,28 +63,67 @@ func queryCS1(net string, ip IP, port int) (clone, dest string, err error) {
 	}
 	f := getFields(lines[0])
 	if len(f) < 2 {
-		return "", "", errors.New("net: bad response from ndb/cs")
+		return "", "", errors.New("bad response from ndb/cs")
 	}
 	clone, dest = f[0], f[1]
 	return
 }
 
 func queryDNS(addr string, typ string) (res []string, err error) {
-	return query("/net/dns", addr+" "+typ, 1024)
+	return query(netdir+"/dns", addr+" "+typ, 1024)
 }
 
+// toLower returns a lower-case version of in. Restricting us to
+// ASCII is sufficient to handle the IP protocol names and allow
+// us to not depend on the strings and unicode packages.
+func toLower(in string) string {
+	for _, c := range in {
+		if 'A' <= c && c <= 'Z' {
+			// Has upper case; need to fix.
+			out := []byte(in)
+			for i := 0; i < len(in); i++ {
+				c := in[i]
+				if 'A' <= c && c <= 'Z' {
+					c += 'a' - 'A'
+				}
+				out[i] = c
+			}
+			return string(out)
+		}
+	}
+	return in
+}
+
+// lookupProtocol looks up IP protocol name and returns
+// the corresponding protocol number.
 func lookupProtocol(name string) (proto int, err error) {
-	// TODO: Implement this
-	return 0, syscall.EPLAN9
+	lines, err := query(netdir+"/cs", "!protocol="+toLower(name), 128)
+	if err != nil {
+		return 0, err
+	}
+	unknownProtoError := errors.New("unknown IP protocol specified: " + name)
+	if len(lines) == 0 {
+		return 0, unknownProtoError
+	}
+	f := getFields(lines[0])
+	if len(f) < 2 {
+		return 0, unknownProtoError
+	}
+	s := f[1]
+	if n, _, ok := dtoi(s, byteIndex(s, '=')+1); ok {
+		return n, nil
+	}
+	return 0, unknownProtoError
 }
 
 func lookupHost(host string) (addrs []string, err error) {
-	// Use /net/cs instead of /net/dns because cs knows about
+	// Use netdir/cs instead of netdir/dns because cs knows about
 	// host names in local network (e.g. from /lib/ndb/local)
-	lines, err := queryCS("tcp", host, "1")
+	lines, err := queryCS("net", host, "1")
 	if err != nil {
 		return
 	}
+loop:
 	for _, line := range lines {
 		f := getFields(line)
 		if len(f) < 2 {
@@ -93,6 +135,12 @@ func lookupHost(host string) (addrs []string, err error) {
 		}
 		if ParseIP(addr) == nil {
 			continue
+		}
+		// only return unique addresses
+		for _, a := range addrs {
+			if a == addr {
+				continue loop
+			}
 		}
 		addrs = append(addrs, addr)
 	}
@@ -151,7 +199,7 @@ func lookupCNAME(name string) (cname string, err error) {
 			return f[2] + ".", nil
 		}
 	}
-	return "", errors.New("net: bad response from ndb/dns")
+	return "", errors.New("bad response from ndb/dns")
 }
 
 func lookupSRV(service, proto, name string) (cname string, addrs []*SRV, err error) {
@@ -170,9 +218,9 @@ func lookupSRV(service, proto, name string) (cname string, addrs []*SRV, err err
 		if len(f) < 6 {
 			continue
 		}
-		port, _, portOk := dtoi(f[2], 0)
+		port, _, portOk := dtoi(f[4], 0)
 		priority, _, priorityOk := dtoi(f[3], 0)
-		weight, _, weightOk := dtoi(f[4], 0)
+		weight, _, weightOk := dtoi(f[2], 0)
 		if !(portOk && priorityOk && weightOk) {
 			continue
 		}
@@ -198,6 +246,21 @@ func lookupMX(name string) (mx []*MX, err error) {
 		}
 	}
 	byPref(mx).sort()
+	return
+}
+
+func lookupNS(name string) (ns []*NS, err error) {
+	lines, err := queryDNS(name, "ns")
+	if err != nil {
+		return
+	}
+	for _, line := range lines {
+		f := getFields(line)
+		if len(f) < 3 {
+			continue
+		}
+		ns = append(ns, &NS{f[2]})
+	}
 	return
 }
 

@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd
+// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris
 
 package os
 
 import (
 	"runtime"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -24,10 +25,11 @@ type file struct {
 	fd      int
 	name    string
 	dirinfo *dirInfo // nil unless directory being read
-	nepipe  int      // number of consecutive EPIPE in Write
+	nepipe  int32    // number of consecutive EPIPE in Write
 }
 
 // Fd returns the integer Unix file descriptor referencing the open file.
+// The file descriptor is valid only until f.Close is called or f is garbage collected.
 func (f *File) Fd() uintptr {
 	if f == nil {
 		return ^(uintptr(0))
@@ -52,6 +54,16 @@ type dirInfo struct {
 	dir *syscall.DIR // from opendir
 }
 
+func epipecheck(file *File, e error) {
+	if e == syscall.EPIPE {
+		if atomic.AddInt32(&file.nepipe, 1) >= 10 {
+			sigpipe()
+		}
+	} else {
+		atomic.StoreInt32(&file.nepipe, 0)
+	}
+}
+
 // DevNull is the name of the operating system's ``null device.''
 // On Unix-like systems, it is "/dev/null"; on Windows, "NUL".
 const DevNull = "/dev/null"
@@ -69,12 +81,7 @@ func OpenFile(name string, flag int, perm FileMode) (file *File, err error) {
 
 	// There's a race here with fork/exec, which we are
 	// content to live with.  See ../syscall/exec_unix.go.
-	// On OS X 10.6, the O_CLOEXEC flag is not respected.
-	// On OS X 10.7, the O_CLOEXEC flag works.
-	// Without a cheap & reliable way to detect 10.6 vs 10.7 at
-	// runtime, we just always call syscall.CloseOnExec on Darwin.
-	// Once >=10.7 is prevalent, this extra call can removed.
-	if syscall.O_CLOEXEC == 0 || runtime.GOOS == "darwin" { // O_CLOEXEC not supported
+	if !supportsCloseOnExec {
 		syscall.CloseOnExec(r)
 	}
 
@@ -84,6 +91,9 @@ func OpenFile(name string, flag int, perm FileMode) (file *File, err error) {
 // Close closes the File, rendering it unusable for I/O.
 // It returns an error, if any.
 func (f *File) Close() error {
+	if f == nil {
+		return ErrInvalid
+	}
 	return f.file.close()
 }
 
@@ -97,8 +107,13 @@ func (file *file) close() error {
 	}
 
 	if file.dirinfo != nil {
-		if libc_closedir(file.dirinfo.dir) < 0 && err == nil {
-			err = &PathError{"closedir", file.name, syscall.GetErrno()}
+		syscall.Entersyscall()
+		i := libc_closedir(file.dirinfo.dir)
+		errno := syscall.GetErrno()
+		syscall.Exitsyscall()
+		file.dirinfo = nil
+		if i < 0 && err == nil {
+			err = &PathError{"closedir", file.name, errno}
 		}
 	}
 
@@ -112,6 +127,9 @@ func (file *file) close() error {
 // Stat returns the FileInfo structure describing file.
 // If there is an error, it will be of type *PathError.
 func (f *File) Stat() (fi FileInfo, err error) {
+	if f == nil {
+		return nil, ErrInvalid
+	}
 	var stat syscall.Stat_t
 	err = syscall.Fstat(f.fd, &stat)
 	if err != nil {
@@ -149,43 +167,86 @@ func (f *File) readdir(n int) (fi []FileInfo, err error) {
 	if dirname == "" {
 		dirname = "."
 	}
-	dirname += "/"
 	names, err := f.Readdirnames(n)
-	fi = make([]FileInfo, len(names))
-	for i, filename := range names {
-		fip, err := Lstat(dirname + filename)
-		if err == nil {
-			fi[i] = fip
-		} else {
-			fi[i] = &fileStat{name: filename}
+	fi = make([]FileInfo, 0, len(names))
+	for _, filename := range names {
+		fip, lerr := lstat(dirname + "/" + filename)
+		if IsNotExist(lerr) {
+			// File disappeared between readdir + stat.
+			// Just treat it as if it didn't exist.
+			continue
 		}
+		if lerr != nil {
+			return fi, lerr
+		}
+		fi = append(fi, fip)
 	}
 	return fi, err
 }
 
+// Darwin and FreeBSD can't read or write 2GB+ at a time,
+// even on 64-bit systems. See golang.org/issue/7812.
+// Use 1GB instead of, say, 2GB-1, to keep subsequent
+// reads aligned.
+const (
+	needsMaxRW = runtime.GOOS == "darwin" || runtime.GOOS == "freebsd"
+	maxRW      = 1 << 30
+)
+
 // read reads up to len(b) bytes from the File.
 // It returns the number of bytes read and an error, if any.
 func (f *File) read(b []byte) (n int, err error) {
-	return syscall.Read(f.fd, b)
+	if needsMaxRW && len(b) > maxRW {
+		b = b[:maxRW]
+	}
+	return fixCount(syscall.Read(f.fd, b))
 }
 
 // pread reads len(b) bytes from the File starting at byte offset off.
 // It returns the number of bytes read and the error, if any.
-// EOF is signaled by a zero count with err set to 0.
+// EOF is signaled by a zero count with err set to nil.
 func (f *File) pread(b []byte, off int64) (n int, err error) {
-	return syscall.Pread(f.fd, b, off)
+	if needsMaxRW && len(b) > maxRW {
+		b = b[:maxRW]
+	}
+	return fixCount(syscall.Pread(f.fd, b, off))
 }
 
 // write writes len(b) bytes to the File.
 // It returns the number of bytes written and an error, if any.
 func (f *File) write(b []byte) (n int, err error) {
-	return syscall.Write(f.fd, b)
+	for {
+		bcap := b
+		if needsMaxRW && len(bcap) > maxRW {
+			bcap = bcap[:maxRW]
+		}
+		m, err := fixCount(syscall.Write(f.fd, bcap))
+		n += m
+
+		// If the syscall wrote some data but not all (short write)
+		// or it returned EINTR, then assume it stopped early for
+		// reasons that are uninteresting to the caller, and try again.
+		if 0 < m && m < len(bcap) || err == syscall.EINTR {
+			b = b[m:]
+			continue
+		}
+
+		if needsMaxRW && len(bcap) != len(b) && err == nil {
+			b = b[m:]
+			continue
+		}
+
+		return n, err
+	}
 }
 
 // pwrite writes len(b) bytes to the File starting at byte offset off.
 // It returns the number of bytes written and an error, if any.
 func (f *File) pwrite(b []byte, off int64) (n int, err error) {
-	return syscall.Pwrite(f.fd, b, off)
+	if needsMaxRW && len(b) > maxRW {
+		b = b[:maxRW]
+	}
+	return fixCount(syscall.Pwrite(f.fd, b, off))
 }
 
 // seek sets the offset for the next Read or Write on file to offset, interpreted
@@ -255,30 +316,35 @@ func basename(name string) string {
 	return name
 }
 
-// Pipe returns a connected pair of Files; reads from r return bytes written to w.
-// It returns the files and an error, if any.
-func Pipe() (r *File, w *File, err error) {
-	var p [2]int
-
-	// See ../syscall/exec.go for description of lock.
-	syscall.ForkLock.RLock()
-	e := syscall.Pipe(p[0:])
-	if e != nil {
-		syscall.ForkLock.RUnlock()
-		return nil, nil, NewSyscallError("pipe", e)
-	}
-	syscall.CloseOnExec(p[0])
-	syscall.CloseOnExec(p[1])
-	syscall.ForkLock.RUnlock()
-
-	return NewFile(uintptr(p[0]), "|0"), NewFile(uintptr(p[1]), "|1"), nil
-}
-
 // TempDir returns the default directory to use for temporary files.
 func TempDir() string {
 	dir := Getenv("TMPDIR")
 	if dir == "" {
-		dir = "/tmp"
+		if runtime.GOOS == "android" {
+			dir = "/data/local/tmp"
+		} else {
+			dir = "/tmp"
+		}
 	}
 	return dir
+}
+
+// Link creates newname as a hard link to the oldname file.
+// If there is an error, it will be of type *LinkError.
+func Link(oldname, newname string) error {
+	e := syscall.Link(oldname, newname)
+	if e != nil {
+		return &LinkError{"link", oldname, newname, e}
+	}
+	return nil
+}
+
+// Symlink creates newname as a symbolic link to oldname.
+// If there is an error, it will be of type *LinkError.
+func Symlink(oldname, newname string) error {
+	e := syscall.Symlink(oldname, newname)
+	if e != nil {
+		return &LinkError{"symlink", oldname, newname, e}
+	}
+	return nil
 }

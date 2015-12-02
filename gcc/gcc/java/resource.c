@@ -1,6 +1,5 @@
 /* Functions related to building resource files.
-   Copyright (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1996-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -25,26 +24,45 @@ The Free Software Foundation is independent of Sun Microsystems, Inc.  */
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "options.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "fold-const.h"
+#include "stringpool.h"
+#include "stor-layout.h"
 #include "java-tree.h"
 #include "jcf.h"
 #include "diagnostic-core.h"
 #include "toplev.h"
-#include "output.h"
 #include "parse.h"
+#include "tm.h"
+#include "hard-reg-set.h"
+#include "input.h"
 #include "function.h"
 #include "ggc.h"
 #include "tree-iterator.h"
+#include "hash-map.h"
+#include "is-a.h"
+#include "plugin-api.h"
+#include "ipa-ref.h"
 #include "cgraph.h"
 
 /* A list of all the resources files.  */
-static GTY(()) VEC(tree,gc) *resources;
+static GTY(()) vec<tree, va_gc> *resources;
 
 void
 compile_resource_data (const char *name, const char *buffer, int length)
 {
   tree rtype, field = NULL_TREE, data_type, rinit, data, decl;
-  VEC(constructor_elt,gc) *v = NULL;
+  vec<constructor_elt, va_gc> *v = NULL;
 
   data_type = build_prim_array_type (unsigned_byte_type_node,
 				     strlen (name) + length);
@@ -79,9 +97,9 @@ compile_resource_data (const char *name, const char *buffer, int length)
   layout_decl (decl, 0);
   pushdecl (decl);
   rest_of_decl_compilation (decl, global_bindings_p (), 0);
-  varpool_finalize_decl (decl);
+  varpool_node::finalize_decl (decl);
 
-  VEC_safe_push (tree, gc, resources, decl);
+  vec_safe_push (resources, decl);
 }
 
 void
@@ -101,7 +119,7 @@ write_resource_constructor (tree *list_p)
   register_resource_fn = t;
 
   /* Write out entries in the same order in which they were defined.  */
-  FOR_EACH_VEC_ELT (tree, resources, ix, decl)
+  FOR_EACH_VEC_ELT (*resources, ix, decl)
     {
       t = build_fold_addr_expr (decl);
       t = build_call_expr (register_resource_fn, 1, t);

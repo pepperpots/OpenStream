@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package os_test
 
@@ -28,7 +28,7 @@ func checkUidGid(t *testing.T, path string, uid, gid int) {
 }
 
 func TestChown(t *testing.T) {
-	// Chown is not supported under windows or Plan 9.
+	// Chown is not supported under windows os Plan 9.
 	// Plan9 provides a native ChownPlan9 version instead.
 	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
 		return

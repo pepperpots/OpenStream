@@ -4,7 +4,8 @@
 
 // Package fnv implements FNV-1 and FNV-1a, non-cryptographic hash functions
 // created by Glenn Fowler, Landon Curt Noll, and Phong Vo.
-// See http://isthe.com/chongo/tech/comp/fnv/.
+// See
+// http://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function.
 package fnv
 
 import (
@@ -111,44 +112,20 @@ func (s *sum64a) BlockSize() int { return 1 }
 
 func (s *sum32) Sum(in []byte) []byte {
 	v := uint32(*s)
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 func (s *sum32a) Sum(in []byte) []byte {
 	v := uint32(*s)
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 func (s *sum64) Sum(in []byte) []byte {
 	v := uint64(*s)
-	in = append(in, byte(v>>56))
-	in = append(in, byte(v>>48))
-	in = append(in, byte(v>>40))
-	in = append(in, byte(v>>32))
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>56), byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 func (s *sum64a) Sum(in []byte) []byte {
 	v := uint64(*s)
-	in = append(in, byte(v>>56))
-	in = append(in, byte(v>>48))
-	in = append(in, byte(v>>40))
-	in = append(in, byte(v>>32))
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>56), byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }

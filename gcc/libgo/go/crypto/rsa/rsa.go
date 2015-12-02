@@ -5,9 +5,8 @@
 // Package rsa implements RSA encryption as specified in PKCS#1.
 package rsa
 
-// TODO(agl): Add support for PSS padding.
-
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
@@ -25,6 +24,30 @@ type PublicKey struct {
 	E int      // public exponent
 }
 
+var (
+	errPublicModulus       = errors.New("crypto/rsa: missing public modulus")
+	errPublicExponentSmall = errors.New("crypto/rsa: public exponent too small")
+	errPublicExponentLarge = errors.New("crypto/rsa: public exponent too large")
+)
+
+// checkPub sanity checks the public key before we use it.
+// We require pub.E to fit into a 32-bit integer so that we
+// do not have different behavior depending on whether
+// int is 32 or 64 bits. See also
+// http://www.imperialviolet.org/2012/03/16/rsae.html.
+func checkPub(pub *PublicKey) error {
+	if pub.N == nil {
+		return errPublicModulus
+	}
+	if pub.E < 2 {
+		return errPublicExponentSmall
+	}
+	if pub.E > 1<<31-1 {
+		return errPublicExponentLarge
+	}
+	return nil
+}
+
 // A PrivateKey represents an RSA key
 type PrivateKey struct {
 	PublicKey            // public part.
@@ -36,9 +59,27 @@ type PrivateKey struct {
 	Precomputed PrecomputedValues
 }
 
+// Public returns the public key corresponding to priv.
+func (priv *PrivateKey) Public() crypto.PublicKey {
+	return &priv.PublicKey
+}
+
+// Sign signs msg with priv, reading randomness from rand. If opts is a
+// *PSSOptions then the PSS algorithm will be used, otherwise PKCS#1 v1.5 will
+// be used. This method is intended to support keys where the private part is
+// kept in, for example, a hardware module. Common uses should use the Sign*
+// functions in this package.
+func (priv *PrivateKey) Sign(rand io.Reader, msg []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if pssOpts, ok := opts.(*PSSOptions); ok {
+		return SignPSS(rand, priv, pssOpts.Hash, msg, pssOpts)
+	}
+
+	return SignPKCS1v15(rand, priv, opts.HashFunc(), msg)
+}
+
 type PrecomputedValues struct {
-	Dp, Dq *big.Int // D mod (P-1) (or mod Q-1) 
-	Qinv   *big.Int // Q^-1 mod Q
+	Dp, Dq *big.Int // D mod (P-1) (or mod Q-1)
+	Qinv   *big.Int // Q^-1 mod P
 
 	// CRTValues is used for the 3rd and subsequent primes. Due to a
 	// historical accident, the CRT for the first two primes is handled
@@ -57,13 +98,17 @@ type CRTValue struct {
 // Validate performs basic sanity checks on the key.
 // It returns nil if the key is valid, or else an error describing a problem.
 func (priv *PrivateKey) Validate() error {
+	if err := checkPub(&priv.PublicKey); err != nil {
+		return err
+	}
+
 	// Check that the prime factors are actually prime. Note that this is
 	// just a sanity check. Since the random witnesses chosen by
 	// ProbablyPrime are deterministic, given the candidate number, it's
 	// easy for an attack to generate composites that pass this test.
 	for _, prime := range priv.Primes {
 		if !prime.ProbablyPrime(20) {
-			return errors.New("prime factor is composite")
+			return errors.New("crypto/rsa: prime factor is composite")
 		}
 	}
 
@@ -73,41 +118,39 @@ func (priv *PrivateKey) Validate() error {
 		modulus.Mul(modulus, prime)
 	}
 	if modulus.Cmp(priv.N) != 0 {
-		return errors.New("invalid modulus")
+		return errors.New("crypto/rsa: invalid modulus")
 	}
-	// Check that e and totient(Πprimes) are coprime.
-	totient := new(big.Int).Set(bigOne)
+
+	// Check that de ≡ 1 mod p-1, for each prime.
+	// This implies that e is coprime to each p-1 as e has a multiplicative
+	// inverse. Therefore e is coprime to lcm(p-1,q-1,r-1,...) =
+	// exponent(ℤ/nℤ). It also implies that a^de ≡ a mod p as a^(p-1) ≡ 1
+	// mod p. Thus a^de ≡ a mod n for all a coprime to n, as required.
+	congruence := new(big.Int)
+	de := new(big.Int).SetInt64(int64(priv.E))
+	de.Mul(de, priv.D)
 	for _, prime := range priv.Primes {
 		pminus1 := new(big.Int).Sub(prime, bigOne)
-		totient.Mul(totient, pminus1)
-	}
-	e := big.NewInt(int64(priv.E))
-	gcd := new(big.Int)
-	x := new(big.Int)
-	y := new(big.Int)
-	gcd.GCD(x, y, totient, e)
-	if gcd.Cmp(bigOne) != 0 {
-		return errors.New("invalid public exponent E")
-	}
-	// Check that de ≡ 1 (mod totient(Πprimes))
-	de := new(big.Int).Mul(priv.D, e)
-	de.Mod(de, totient)
-	if de.Cmp(bigOne) != 0 {
-		return errors.New("invalid private exponent D")
+		congruence.Mod(de, pminus1)
+		if congruence.Cmp(bigOne) != 0 {
+			return errors.New("crypto/rsa: invalid exponents")
+		}
 	}
 	return nil
 }
 
-// GenerateKey generates an RSA keypair of the given bit size.
+// GenerateKey generates an RSA keypair of the given bit size using the
+// random source random (for example, crypto/rand.Reader).
 func GenerateKey(random io.Reader, bits int) (priv *PrivateKey, err error) {
 	return GenerateMultiPrimeKey(random, 2, bits)
 }
 
 // GenerateMultiPrimeKey generates a multi-prime RSA keypair of the given bit
-// size, as suggested in [1]. Although the public keys are compatible
-// (actually, indistinguishable) from the 2-prime case, the private keys are
-// not. Thus it may not be possible to export multi-prime private keys in
-// certain formats or to subsequently import them into other code.
+// size and the given random source, as suggested in [1]. Although the public
+// keys are compatible (actually, indistinguishable) from the 2-prime case,
+// the private keys are not. Thus it may not be possible to export multi-prime
+// private keys in certain formats or to subsequently import them into other
+// code.
 //
 // Table 1 in [2] suggests maximum numbers of primes for a given size.
 //
@@ -118,7 +161,7 @@ func GenerateMultiPrimeKey(random io.Reader, nprimes int, bits int) (priv *Priva
 	priv.E = 65537
 
 	if nprimes < 2 {
-		return nil, errors.New("rsa.GenerateMultiPrimeKey: nprimes must be >= 2")
+		return nil, errors.New("crypto/rsa: GenerateMultiPrimeKey: nprimes must be >= 2")
 	}
 
 	primes := make([]*big.Int, nprimes)
@@ -126,6 +169,20 @@ func GenerateMultiPrimeKey(random io.Reader, nprimes int, bits int) (priv *Priva
 NextSetOfPrimes:
 	for {
 		todo := bits
+		// crypto/rand should set the top two bits in each prime.
+		// Thus each prime has the form
+		//   p_i = 2^bitlen(p_i) × 0.11... (in base 2).
+		// And the product is:
+		//   P = 2^todo × α
+		// where α is the product of nprimes numbers of the form 0.11...
+		//
+		// If α < 1/2 (which can happen for nprimes > 2), we need to
+		// shift todo to compensate for lost bits: the mean value of 0.11...
+		// is 7/8, so todo + shift - nprimes * log2(7/8) ~= bits - 1/2
+		// will give good results.
+		if nprimes >= 7 {
+			todo += (nprimes - 2) / 5
+		}
 		for i := 0; i < nprimes; i++ {
 			primes[i], err = rand.Prime(random, todo/(nprimes-i))
 			if err != nil {
@@ -151,6 +208,12 @@ NextSetOfPrimes:
 			pminus1.Sub(prime, bigOne)
 			totient.Mul(totient, pminus1)
 		}
+		if n.BitLen() != bits {
+			// This should never happen for nprimes == 2 because
+			// crypto/rand should set the top two bits in each prime.
+			// For nprimes > 2 we hope it does not happen often.
+			continue NextSetOfPrimes
+		}
 
 		g := new(big.Int)
 		priv.D = new(big.Int)
@@ -159,7 +222,9 @@ NextSetOfPrimes:
 		g.GCD(priv.D, y, e, totient)
 
 		if g.Cmp(bigOne) == 0 {
-			priv.D.Add(priv.D, totient)
+			if priv.D.Sign() < 0 {
+				priv.D.Add(priv.D, totient)
+			}
 			priv.Primes = primes
 			priv.N = n
 
@@ -220,6 +285,9 @@ func encrypt(c *big.Int, pub *PublicKey, m *big.Int) *big.Int {
 // The message must be no longer than the length of the public modulus less
 // twice the hash length plus 2.
 func EncryptOAEP(hash hash.Hash, random io.Reader, pub *PublicKey, msg []byte, label []byte) (out []byte, err error) {
+	if err := checkPub(pub); err != nil {
+		return nil, err
+	}
 	hash.Reset()
 	k := (pub.N.BitLen() + 7) / 8
 	if len(msg) > k-2*hash.Size()-2 {
@@ -406,6 +474,9 @@ func decrypt(random io.Reader, priv *PrivateKey, c *big.Int) (m *big.Int, err er
 // DecryptOAEP decrypts ciphertext using RSA-OAEP.
 // If random != nil, DecryptOAEP uses RSA blinding to avoid timing side-channel attacks.
 func DecryptOAEP(hash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext []byte, label []byte) (msg []byte, err error) {
+	if err := checkPub(&priv.PublicKey); err != nil {
+		return nil, err
+	}
 	k := (priv.N.BitLen() + 7) / 8
 	if len(ciphertext) > k ||
 		k < hash.Size()*2+2 {

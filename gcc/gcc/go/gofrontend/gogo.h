@@ -37,8 +37,6 @@ class Channel_type;
 class Interface_type;
 class Named_type;
 class Forward_declaration_type;
-class Method;
-class Methods;
 class Named_object;
 class Label;
 class Translate_context;
@@ -46,10 +44,12 @@ class Backend;
 class Export;
 class Import;
 class Bexpression;
+class Btype;
 class Bstatement;
 class Bblock;
 class Bvariable;
 class Blabel;
+class Bfunction;
 
 // This file declares the basic classes used to hold the internal
 // representation of Go which is built by the parser.
@@ -138,16 +138,14 @@ class Gogo
   is_main_package() const;
 
   // If necessary, adjust the name to use for a hidden symbol.  We add
-  // a prefix of the package name, so that hidden symbols in different
-  // packages do not collide.
+  // the package name, so that hidden symbols in different packages do
+  // not collide.
   std::string
   pack_hidden_name(const std::string& name, bool is_exported) const
   {
     return (is_exported
 	    ? name
-	    : ('.' + this->unique_prefix()
-	       + '.' + this->package_name()
-	       + '.' + name));
+	    : '.' + this->pkgpath() + '.' + name);
   }
 
   // Unpack a name which may have been hidden.  Returns the
@@ -161,9 +159,9 @@ class Gogo
   is_hidden_name(const std::string& name)
   { return name[0] == '.'; }
 
-  // Return the package prefix of a hidden name.
+  // Return the package path of a hidden name.
   static std::string
-  hidden_name_prefix(const std::string& name)
+  hidden_name_pkgpath(const std::string& name)
   {
     go_assert(Gogo::is_hidden_name(name));
     return name.substr(1, name.rfind('.') - 1);
@@ -183,13 +181,61 @@ class Gogo
 	    && name[name.length() - 2] == '.');
   }
 
-  // Return the unique prefix to use for all exported symbols.
-  const std::string&
-  unique_prefix() const;
+  // Convert a pkgpath into a string suitable for a symbol
+  static std::string
+  pkgpath_for_symbol(const std::string& pkgpath);
 
-  // Set the unique prefix.
+  // Return the package path to use for reflect.Type.PkgPath.
+  const std::string&
+  pkgpath() const;
+
+  // Return the package path to use for a symbol name.
+  const std::string&
+  pkgpath_symbol() const;
+
+  // Set the package path from a command line option.
   void
-  set_unique_prefix(const std::string&);
+  set_pkgpath(const std::string&);
+
+  // Set the prefix from a command line option.
+  void
+  set_prefix(const std::string&);
+
+  // Return whether pkgpath was set from a command line option.
+  bool
+  pkgpath_from_option() const
+  { return this->pkgpath_from_option_; }
+
+  // Return the relative import path as set from the command line.
+  // Returns an empty string if it was not set.
+  const std::string&
+  relative_import_path() const
+  { return this->relative_import_path_; }
+
+  // Set the relative import path from a command line option.
+  void
+  set_relative_import_path(const std::string& s)
+  { this->relative_import_path_ = s; }
+
+  // Return whether to check for division by zero in binary operations.
+  bool
+  check_divide_by_zero() const
+  { return this->check_divide_by_zero_; }
+
+  // Set the option to check division by zero from a command line option.
+  void
+  set_check_divide_by_zero(bool b)
+  { this->check_divide_by_zero_ = b; }
+
+  // Return whether to check for division overflow in binary operations.
+  bool
+  check_divide_overflow() const
+  { return this->check_divide_overflow_; }
+
+  // Set the option to check division overflow from a command line option.
+  void
+  set_check_divide_overflow(bool b)
+  { this->check_divide_overflow_ = b; }
 
   // Return the priority to use for the package we are compiling.
   // This is two more than the largest priority of any package we
@@ -229,7 +275,8 @@ class Gogo
   Package*
   add_imported_package(const std::string& real_name, const std::string& alias,
 		       bool is_alias_exported,
-		       const std::string& unique_prefix,
+		       const std::string& pkgpath,
+		       const std::string& pkgpath_symbol,
 		       Location location,
 		       bool* padd_to_globals);
 
@@ -237,8 +284,8 @@ class Gogo
   // This returns the Package structure for the package, creating if
   // it necessary.
   Package*
-  register_package(const std::string& name, const std::string& unique_prefix,
-		   Location);
+  register_package(const std::string& pkgpath,
+		   const std::string& pkgpath_symbol, Location);
 
   // Start compiling a function.  ADD_METHOD_TO_TYPE is true if a
   // method function should be added to the type of its receiver.
@@ -352,12 +399,27 @@ class Gogo
   // Add a named object to the current namespace.  This is used for
   // import . "package".
   void
-  add_named_object(Named_object*);
+  add_dot_import_object(Named_object*);
+
+  // Add an identifier to the list of names seen in the file block.
+  void
+  add_file_block_name(const std::string& name, Location location)
+  { this->file_block_names_[name] = location; }
 
   // Mark all local variables in current bindings as used.  This is
   // used when there is a parse error to avoid useless errors.
   void
   mark_locals_used();
+
+  // Return a name to use for an error case.  This should only be used
+  // after reporting an error, and is used to avoid useless knockon
+  // errors.
+  static std::string
+  erroneous_name();
+
+  // Return whether the name indicates an error.
+  static bool
+  is_erroneous_name(const std::string&);
 
   // Return a name to use for a thunk function.  A thunk function is
   // one we create during the compilation, for a go statement or a
@@ -383,6 +445,23 @@ class Gogo
   // parsing a new file.
   void
   clear_file_scope();
+
+  // Record that VAR1 must be initialized after VAR2.  This is used
+  // when VAR2 does not appear in VAR1's INIT or PREINIT.
+  void
+  record_var_depends_on(Variable* var1, Named_object* var2)
+  {
+    go_assert(this->var_deps_.find(var1) == this->var_deps_.end());
+    this->var_deps_[var1] = var2;
+  }
+
+  // Return the variable that VAR depends on, or NULL if none.
+  Named_object*
+  var_depends_on(Variable* var) const
+  {
+    Var_deps::const_iterator p = this->var_deps_.find(var);
+    return p != this->var_deps_.end() ? p->second : NULL;
+  }
 
   // Queue up a type-specific function to be written out.  This is
   // used when a type-specific function is needed when not at the top
@@ -431,6 +510,18 @@ class Gogo
   void
   lower_constant(Named_object*);
 
+  // Flatten all the statements in a block.
+  void
+  flatten_block(Named_object* function, Block*);
+
+  // Flatten an expression.
+  void
+  flatten_expression(Named_object* function, Statement_inserter*, Expression**);
+
+  // Create all necessary function descriptors.
+  void
+  create_function_descriptors();
+
   // Finalize the method lists and build stub methods for named types.
   void
   finalize_methods();
@@ -471,6 +562,10 @@ class Gogo
   void
   order_evaluations();
 
+  // Flatten parse tree.
+  void
+  flatten();
+
   // Build thunks for functions which call recover.
   void
   build_recover_thunks();
@@ -498,80 +593,39 @@ class Gogo
   named_types_are_converted() const
   { return this->named_types_are_converted_; }
 
+  // Return the variable to use for the zero value of TYPE.  All types
+  // shared the same zero value, and we make sure that it is large
+  // enough.
+  Named_object*
+  zero_value(Type *type);
+
+  // Return whether a variable is the zero value variable.
+  bool
+  is_zero_value(Variable* v) const;
+
+  // Create the zero value variable.
+  Bvariable*
+  backend_zero_value();
+
   // Write out the global values.
   void
   write_globals();
 
-  // Create trees for implicit builtin functions.
-  void
-  define_builtin_function_trees();
-
-  // Build a call to a builtin function.  PDECL should point to a NULL
-  // initialized static pointer which will hold the fndecl.  NAME is
-  // the name of the function.  NARGS is the number of arguments.
-  // RETTYPE is the return type.  It is followed by NARGS pairs of
-  // type and argument (both trees).
-  static tree
-  call_builtin(tree* pdecl, Location, const char* name, int nargs,
-	       tree rettype, ...);
-
   // Build a call to the runtime error function.
-  static tree
+  Expression*
   runtime_error(int code, Location);
-
-  // Build a builtin struct with a list of fields.
-  static tree
-  builtin_struct(tree* ptype, const char* struct_name, tree struct_type,
-		 int nfields, ...);
-
-  // Mark a function declaration as a builtin library function.
-  static void
-  mark_fndecl_as_builtin_library(tree fndecl);
-
-  // Build a constructor for a slice.  SLICE_TYPE_TREE is the type of
-  // the slice.  VALUES points to the values.  COUNT is the size,
-  // CAPACITY is the capacity.  If CAPACITY is NULL, it is set to
-  // COUNT.
-  static tree
-  slice_constructor(tree slice_type_tree, tree values, tree count,
-		    tree capacity);
 
   // Build required interface method tables.
   void
   build_interface_method_tables();
 
-  // Build an interface method table for a type: a list of function
-  // pointers, one for each interface method.  This returns a decl.
-  tree
-  interface_method_table_for_type(const Interface_type*, Named_type*,
-				  bool is_pointer);
+  // Return an expression which allocates memory to hold values of type TYPE.
+  Expression*
+  allocate_memory(Type *type, Location);
 
-  // Return a tree which allocate SIZE bytes to hold values of type
-  // TYPE.
-  tree
-  allocate_memory(Type *type, tree size, Location);
-
-  // Return a type to use for pointer to const char.
-  static tree
-  const_char_pointer_type_tree();
-
-  // Build a string constant with the right type.
-  static tree
-  string_constant_tree(const std::string&);
-
-  // Build a Go string constant.  This returns a pointer to the
-  // constant.
-  tree
-  go_string_constant_tree(const std::string&);
-
-  // Receive a value from a channel.
-  static tree
-  receive_from_channel(tree type_tree, tree type_descriptor_tree, tree channel,
-		       Location);
-
-  // Make a trampoline which calls FNADDR passing CLOSURE.
-  tree
-  make_trampoline(tree fnaddr, tree closure, Location);
+  // Get the name of the magic initialization function.
+  const std::string&
+  get_init_fn_name();
 
  private:
   // During parsing, we keep a stack of functions.  Each function on
@@ -592,11 +646,6 @@ class Gogo
   void
   import_unsafe(const std::string&, bool is_exported, Location);
 
-  // Add a new imported package.
-  Named_object*
-  add_package(const std::string& real_name, const std::string& alias,
-	      const std::string& unique_prefix, Location location);
-
   // Return the current binding contour.
   Bindings*
   current_bindings();
@@ -604,34 +653,22 @@ class Gogo
   const Bindings*
   current_bindings() const;
 
-  // Get the name of the magic initialization function.
-  const std::string&
-  get_init_fn_name();
-
   // Get the decl for the magic initialization function.
-  tree
+  Named_object*
   initialization_function_decl();
 
-  // Write the magic initialization function.
-  void
-  write_initialization_function(tree fndecl, tree init_stmt_list);
+  // Create the magic initialization function.
+  Named_object*
+  create_initialization_function(Named_object* fndecl, Bstatement* code_stmt);
 
   // Initialize imported packages.
   void
-  init_imports(tree*);
+  init_imports(std::vector<Bstatement*>&);
 
   // Register variables with the garbage collector.
   void
-  register_gc_vars(const std::vector<Named_object*>&, tree*);
-
-  // Build a pointer to a Go string constant.  This returns a pointer
-  // to the pointer.
-  tree
-  ptr_go_string_constant_tree(const std::string&);
-
-  // Return the type of a trampoline.
-  static tree
-  trampoline_type_tree();
+  register_gc_vars(const std::vector<Named_object*>&,
+                   std::vector<Bstatement*>&);
 
   // Type used to map import names to packages.
   typedef std::map<std::string, Package*> Imports;
@@ -639,8 +676,13 @@ class Gogo
   // Type used to map package names to packages.
   typedef std::map<std::string, Package*> Packages;
 
-  // Type used to map special names in the sys package.
-  typedef std::map<std::string, std::string> Sys_names;
+  // Type used to map variables to the function calls that set them.
+  // This is used for initialization dependency analysis.
+  typedef std::map<Variable*, Named_object*> Var_deps;
+
+  // Type used to map identifiers in the file block to the location
+  // where they were defined.
+  typedef Unordered_map(std::string, Location) File_block_names;
 
   // Type used to queue writing a type specific function.
   struct Specific_type_function
@@ -674,6 +716,8 @@ class Gogo
   // The global binding contour.  This includes the builtin functions
   // and the package we are compiling.
   Bindings* globals_;
+  // The list of names we have seen in the file block.
+  File_block_names file_block_names_;
   // Mapping from import file names to packages.
   Imports imports_;
   // Whether the magic unsafe package was imported.
@@ -683,16 +727,43 @@ class Gogo
   Packages packages_;
   // The functions named "init", if there are any.
   std::vector<Named_object*> init_functions_;
+  // A mapping from variables to the function calls that initialize
+  // them, if it is not stored in the variable's init or preinit.
+  // This is used for dependency analysis.
+  Var_deps var_deps_;
   // Whether we need a magic initialization function.
   bool need_init_fn_;
   // The name of the magic initialization function.
   std::string init_fn_name_;
   // A list of import control variables for packages that we import.
   std::set<Import_init> imported_init_fns_;
-  // The unique prefix used for all global symbols.
-  std::string unique_prefix_;
-  // Whether an explicit unique prefix was set by -fgo-prefix.
-  bool unique_prefix_specified_;
+  // The package path used for reflection data.
+  std::string pkgpath_;
+  // The package path to use for a symbol name.
+  std::string pkgpath_symbol_;
+  // The prefix to use for symbols, from the -fgo-prefix option.
+  std::string prefix_;
+  // The special zero value variable.
+  Named_object* zero_value_;
+  // The size of the zero value variable.
+  int64_t zero_value_size_;
+  // The alignment of the zero value variable, in bytes.
+  int64_t zero_value_align_;
+  // Whether pkgpath_ has been set.
+  bool pkgpath_set_;
+  // Whether an explicit package path was set by -fgo-pkgpath.
+  bool pkgpath_from_option_;
+  // Whether an explicit prefix was set by -fgo-prefix.
+  bool prefix_from_option_;
+  // The relative import path, from the -fgo-relative-import-path
+  // option.
+  std::string relative_import_path_;
+  // Whether or not to check for division by zero, from the
+  // -fgo-check-divide-zero option.
+  bool check_divide_by_zero_;
+  // Whether or not to check for division overflow, from the
+  // -fgo-check-divide-overflow option.
+  bool check_divide_overflow_;
   // A list of types to verify.
   std::vector<Type*> verify_types_;
   // A list of interface types defined while parsing.
@@ -853,10 +924,45 @@ class Function
   result_variables()
   { return this->results_; }
 
+  bool
+  is_sink() const
+  { return this->is_sink_; }
+
+  void
+  set_is_sink()
+  { this->is_sink_ = true; }
+
   // Whether the result variables have names.
   bool
   results_are_named() const
   { return this->results_are_named_; }
+
+  // Whether this method should not be included in the type
+  // descriptor.
+  bool
+  nointerface() const
+  {
+    go_assert(this->is_method());
+    return this->nointerface_;
+  }
+
+  // Record that this method should not be included in the type
+  // descriptor.
+  void
+  set_nointerface()
+  {
+    go_assert(this->is_method());
+    this->nointerface_ = true;
+  }
+
+  // Record that this function is a stub method created for an unnamed
+  // type.
+  void
+  set_is_unnamed_type_stub_method()
+  {
+    go_assert(this->is_method());
+    this->is_unnamed_type_stub_method_ = true;
+  }
 
   // Add a new field to the closure variable.
   void
@@ -924,6 +1030,11 @@ class Function
   void
   check_labels() const;
 
+  // Note that a new local type has been added.  Return its index.
+  unsigned int
+  new_local_type_index()
+  { return this->local_type_count_++; }
+
   // Whether this function calls the predeclared recover function.
   bool
   calls_recover() const
@@ -956,6 +1067,29 @@ class Function
   set_has_recover_thunk()
   { this->has_recover_thunk_ = true; }
 
+  // Record that this function is a thunk created for a defer
+  // statement that calls the __go_set_defer_retaddr runtime function.
+  void
+  set_calls_defer_retaddr()
+  { this->calls_defer_retaddr_ = true; }
+
+  // Whether this is a type hash or equality function created by the
+  // compiler.
+  bool
+  is_type_specific_function()
+  { return this->is_type_specific_function_; }
+
+  // Record that this function is a type hash or equality function
+  // created by the compiler.
+  void
+  set_is_type_specific_function()
+  { this->is_type_specific_function_ = true; }
+
+  // Mark the function as going into a unique section.
+  void
+  set_in_unique_section()
+  { this->in_unique_section_ = true; }
+
   // Swap with another function.  Used only for the thunk which calls
   // recover.
   void
@@ -969,28 +1103,40 @@ class Function
   void
   determine_types();
 
-  // Return the function's decl given an identifier.
-  tree
-  get_or_make_decl(Gogo*, Named_object*, tree id);
+  // Return an expression for the function descriptor, given the named
+  // object for this function.  This may only be called for functions
+  // without a closure.  This will be an immutable struct with one
+  // field that points to the function's code.
+  Expression*
+  descriptor(Gogo*, Named_object*);
 
-  // Return the function's decl after it has been built.
-  tree
-  get_decl() const
+  // Set the descriptor for this function.  This is used when a
+  // function declaration is followed by a function definition.
+  void
+  set_descriptor(Expression* descriptor)
   {
-    go_assert(this->fndecl_ != NULL);
-    return this->fndecl_;
+    go_assert(this->descriptor_ == NULL);
+    this->descriptor_ = descriptor;
   }
 
-  // Set the function decl to hold a tree of the function code.
+  // Return the backend representation.
+  Bfunction*
+  get_or_make_decl(Gogo*, Named_object*);
+
+  // Return the function's decl after it has been built.
+  Bfunction*
+  get_decl() const;
+
+  // Set the function decl to hold a backend representation of the function
+  // code.
   void
-  build_tree(Gogo*, Named_object*);
+  build(Gogo*, Named_object*);
 
-  // Get the value to return when not explicitly specified.  May also
-  // add statements to execute first to STMT_LIST.
-  tree
-  return_value(Gogo*, Named_object*, Location, tree* stmt_list) const;
+  // Get the statement that assigns values to this function's result struct.
+  Bstatement*
+  return_value(Gogo*, Named_object*, Location) const;
 
-  // Get a tree for the variable holding the defer stack.
+  // Get an expression for the variable holding the defer stack.
   Expression*
   defer_stack(Location);
 
@@ -1013,14 +1159,8 @@ class Function
   // Type for mapping from label names to Label objects.
   typedef Unordered_map(std::string, Label*) Labels;
 
-  tree
-  make_receiver_parm_decl(Gogo*, Named_object*, tree);
-
-  tree
-  copy_parm_to_heap(Gogo*, Named_object*, tree);
-
   void
-  build_defer_wrapper(Gogo*, Named_object*, tree*, tree*);
+  build_defer_wrapper(Gogo*, Named_object*, Bstatement**, Bstatement**);
 
   typedef std::vector<std::pair<Named_object*,
 				Location> > Closure_fields;
@@ -1045,20 +1185,40 @@ class Function
   Location location_;
   // Labels defined or referenced in the function.
   Labels labels_;
+  // The number of local types defined in this function.
+  unsigned int local_type_count_;
+  // The function descriptor, if any.
+  Expression* descriptor_;
   // The function decl.
-  tree fndecl_;
+  Bfunction* fndecl_;
   // The defer stack variable.  A pointer to this variable is used to
   // distinguish the defer stack for one function from another.  This
   // is NULL unless we actually need a defer stack.
   Temporary_statement* defer_stack_;
+  // True if this function is sink-named.  No code is generated.
+  bool is_sink_ : 1;
   // True if the result variables are named.
-  bool results_are_named_;
+  bool results_are_named_ : 1;
+  // True if this method should not be included in the type descriptor.
+  bool nointerface_ : 1;
+  // True if this function is a stub method created for an unnamed
+  // type.
+  bool is_unnamed_type_stub_method_ : 1;
   // True if this function calls the predeclared recover function.
-  bool calls_recover_;
+  bool calls_recover_ : 1;
   // True if this a thunk built for a function which calls recover.
-  bool is_recover_thunk_;
+  bool is_recover_thunk_ : 1;
   // True if this function already has a recover thunk.
-  bool has_recover_thunk_;
+  bool has_recover_thunk_ : 1;
+  // True if this is a thunk built for a defer statement that calls
+  // the __go_set_defer_retaddr runtime function.
+  bool calls_defer_retaddr_ : 1;
+  // True if this is a function built by the compiler to as a hash or
+  // equality function for some type.
+  bool is_type_specific_function_ : 1;
+  // True if this function should be put in a unique section.  This is
+  // turned on for field tracking.
+  bool in_unique_section_ : 1;
 };
 
 // A snapshot of the current binding state.
@@ -1101,7 +1261,8 @@ class Function_declaration
 {
  public:
   Function_declaration(Function_type* fntype, Location location)
-    : fntype_(fntype), location_(location), asm_name_(), fndecl_(NULL)
+    : fntype_(fntype), location_(location), asm_name_(), descriptor_(NULL),
+      fndecl_(NULL)
   { }
 
   Function_type*
@@ -1121,9 +1282,26 @@ class Function_declaration
   set_asm_name(const std::string& asm_name)
   { this->asm_name_ = asm_name; }
 
-  // Return a decl for the function given an identifier.
-  tree
-  get_or_make_decl(Gogo*, Named_object*, tree id);
+  // Return an expression for the function descriptor, given the named
+  // object for this function.  This may only be called for functions
+  // without a closure.  This will be an immutable struct with one
+  // field that points to the function's code.
+  Expression*
+  descriptor(Gogo*, Named_object*);
+
+  // Return true if we have created a descriptor for this declaration.
+  bool
+  has_descriptor() const
+  { return this->descriptor_ != NULL; }
+
+  // Return a backend representation.
+  Bfunction*
+  get_or_make_decl(Gogo*, Named_object*);
+
+  // If there is a descriptor, build it into the backend
+  // representation.
+  void
+  build_backend_descriptor(Gogo*);
 
   // Export a function declaration.
   void
@@ -1138,8 +1316,10 @@ class Function_declaration
   // The assembler name: this is the name to use in references to the
   // function.  This is normally empty.
   std::string asm_name_;
+  // The function descriptor, if any.
+  Expression* descriptor_;
   // The function decl if needed.
-  tree fndecl_;
+  Bfunction* fndecl_;
 };
 
 // A variable.
@@ -1185,6 +1365,18 @@ class Variable
   bool
   is_parameter() const
   { return this->is_parameter_; }
+
+  // Return whether this is a closure (static chain) parameter.
+  bool
+  is_closure() const
+  { return this->is_closure_; }
+
+  // Change this parameter to be a closure.
+  void
+  set_is_closure()
+  {
+    this->is_closure_ = true;
+  }
 
   // Return whether this is the receiver parameter of a method.
   bool
@@ -1287,6 +1479,10 @@ class Variable
   void
   lower_init_expression(Gogo*, Named_object*, Statement_inserter*);
 
+  // Flatten the initialization expression after ordering evaluations.
+  void
+  flatten_init_expression(Gogo*, Named_object*, Statement_inserter*);
+
   // A special case: the init value is used only to determine the
   // type.  This is used if the variable is defined using := with the
   // comma-ok form of a map index or a receive expression.  The init
@@ -1334,6 +1530,14 @@ class Variable
   set_is_type_switch_var()
   { this->is_type_switch_var_ = true; }
 
+  // Mark the variable as going into a unique section.
+  void
+  set_in_unique_section()
+  {
+    go_assert(this->is_global_);
+    this->in_unique_section_ = true;
+  }
+
   // Traverse the initializer expression.
   int
   traverse_expression(Traverse*, unsigned int traverse_mask);
@@ -1347,16 +1551,16 @@ class Variable
   get_backend_variable(Gogo*, Named_object*, const Package*,
 		       const std::string&);
 
-  // Get the initial value of the variable as a tree.  This may only
+  // Get the initial value of the variable.  This may only
   // be called if has_pre_init() returns false.
-  tree
-  get_init_tree(Gogo*, Named_object* function);
+  Bexpression*
+  get_init(Gogo*, Named_object* function);
 
   // Return a series of statements which sets the value of the
   // variable in DECL.  This should only be called is has_pre_init()
   // returns true.  DECL may be NULL for a sink variable.
-  tree
-  get_init_block(Gogo*, Named_object* function, tree decl);
+  Bstatement*
+  get_init_block(Gogo*, Named_object* function, Bvariable* decl);
 
   // Export the variable.
   void
@@ -1395,6 +1599,8 @@ class Variable
   bool is_global_ : 1;
   // Whether this is a function parameter.
   bool is_parameter_ : 1;
+  // Whether this is a closure parameter.
+  bool is_closure_ : 1;
   // Whether this is the receiver parameter of a method.
   bool is_receiver_ : 1;
   // Whether this is the varargs parameter of a function.
@@ -1412,6 +1618,8 @@ class Variable
   bool seen_ : 1;
   // True if we have lowered the initialization expression.
   bool init_is_lowered_ : 1;
+  // True if we have flattened the initialization expression.
+  bool init_is_flattened_ : 1;
   // True if init is a tuple used to set the type.
   bool type_from_init_tuple_ : 1;
   // True if init is a range clause and the type is the index type.
@@ -1424,6 +1632,9 @@ class Variable
   bool is_type_switch_var_ : 1;
   // True if we have determined types.
   bool determined_type_ : 1;
+  // True if this variable should be put in a unique section.  This is
+  // used for field tracking.
+  bool in_unique_section_ : 1;
 };
 
 // A variable which is really the name for a function return value, or
@@ -1522,7 +1733,7 @@ class Named_constant
   Named_constant(Type* type, Expression* expr, int iota_value,
 		 Location location)
     : type_(type), expr_(expr), iota_value_(iota_value), location_(location),
-      lowering_(false)
+      lowering_(false), is_sink_(false), bconst_(NULL)
   { }
 
   Type*
@@ -1556,6 +1767,14 @@ class Named_constant
   clear_lowering()
   { this->lowering_ = false; }
 
+  bool
+  is_sink() const
+  { return this->is_sink_; }
+
+  void
+  set_is_sink()
+  { this->is_sink_ = true; }
+
   // Traverse the expression.
   int
   traverse_expression(Traverse*);
@@ -1576,6 +1795,10 @@ class Named_constant
   static void
   import_const(Import*, std::string*, Type**, Expression**);
 
+  // Get the backend representation of the constant value.
+  Bexpression*
+  get_backend(Gogo*, Named_object*);
+
  private:
   // The type of the constant.
   Type* type_;
@@ -1591,6 +1814,10 @@ class Named_constant
   Location location_;
   // Whether we are currently lowering this constant.
   bool lowering_;
+  // Whether this constant is blank named and needs only type checking.
+  bool is_sink_;
+  // The backend representation of the constant value.
+  Bexpression* bconst_;
 };
 
 // A type declaration.
@@ -1599,8 +1826,8 @@ class Type_declaration
 {
  public:
   Type_declaration(Location location)
-    : location_(location), in_function_(NULL), methods_(),
-      issued_warning_(false)
+    : location_(location), in_function_(NULL), in_function_index_(0),
+      methods_(), issued_warning_(false)
   { }
 
   // Return the location.
@@ -1611,13 +1838,19 @@ class Type_declaration
   // Return the function in which this type is declared.  This will
   // return NULL for a type declared in global scope.
   Named_object*
-  in_function()
-  { return this->in_function_; }
+  in_function(unsigned int* pindex)
+  {
+    *pindex = this->in_function_index_;
+    return this->in_function_;
+  }
 
   // Set the function in which this type is declared.
   void
-  set_in_function(Named_object* f)
-  { this->in_function_ = f; }
+  set_in_function(Named_object* f, unsigned int index)
+  {
+    this->in_function_ = f;
+    this->in_function_index_ = index;
+  }
 
   // Add a method to this type.  This is used when methods are defined
   // before the type.
@@ -1633,6 +1866,11 @@ class Type_declaration
   bool
   has_methods() const;
 
+  // Return the methods.
+  const std::vector<Named_object*>*
+  methods() const
+  { return &this->methods_; }
+
   // Define methods when the real type is known.
   void
   define_methods(Named_type*);
@@ -1643,15 +1881,15 @@ class Type_declaration
   using_type();
 
  private:
-  typedef std::vector<Named_object*> Methods;
-
   // The location of the type declaration.
   Location location_;
   // If this type is declared in a function, a pointer back to the
   // function in which it is defined.
   Named_object* in_function_;
+  // The index of this type in IN_FUNCTION_.
+  unsigned int in_function_index_;
   // Methods defined before the type is defined.
-  Methods methods_;
+  std::vector<Named_object*> methods_;
   // True if we have issued a warning about a use of this type
   // declaration when it is undefined.
   bool issued_warning_;
@@ -1998,13 +2236,14 @@ class Named_object
   Bvariable*
   get_backend_variable(Gogo*, Named_object* function);
 
-  // Return a tree for the external identifier for this object.
-  tree
+  // Return the external identifier for this object.
+  std::string
   get_id(Gogo*);
 
-  // Return a tree representing this object.
-  tree
-  get_tree(Gogo*, Named_object* function);
+  // Get the backend representation of this object.
+  void
+  get_backend(Gogo*, std::vector<Bexpression*>&, std::vector<Btype*>&,
+              std::vector<Bfunction*>&);
 
   // Define a type declaration.
   void
@@ -2045,8 +2284,6 @@ class Named_object
     Function_declaration* func_declaration_value;
     Package* package_value;
   } u_;
-  // The DECL tree for this object if we have already converted it.
-  tree tree_;
 };
 
 // A binding contour.  This binds names to objects.
@@ -2157,7 +2394,7 @@ class Bindings
 
   // Clear all names in file scope from the bindings.
   void
-  clear_file_scope();
+  clear_file_scope(Gogo*);
 
   // Look up a name in this binding contour and in any enclosing
   // binding contours.  This returns NULL if the name is not found.
@@ -2387,28 +2624,41 @@ class Unnamed_label
 class Package
 {
  public:
-  Package(const std::string& name, const std::string& unique_prefix,
+  Package(const std::string& pkgpath, const std::string& pkgpath_symbol,
 	  Location location);
 
-  // The real name of this package.  This may be different from the
-  // name in the associated Named_object if the import statement used
-  // an alias.
+  // Get the package path used for all symbols exported from this
+  // package.
   const std::string&
-  name() const
-  { return this->name_; }
+  pkgpath() const
+  { return this->pkgpath_; }
+
+  // Return the package path to use for a symbol name.
+  std::string
+  pkgpath_symbol() const;
+
+  // Set the package path symbol.
+  void
+  set_pkgpath_symbol(const std::string&);
 
   // Return the location of the import statement.
   Location
   location() const
   { return this->location_; }
 
-  // Get the unique prefix used for all symbols exported from this
-  // package.
+  // Return whether we know the name of this package yet.
+  bool
+  has_package_name() const
+  { return !this->package_name_.empty(); }
+
+  // The name that this package uses in its package clause.  This may
+  // be different from the name in the associated Named_object if the
+  // import statement used an alias.
   const std::string&
-  unique_prefix() const
+  package_name() const
   {
-    go_assert(!this->unique_prefix_.empty());
-    return this->unique_prefix_;
+    go_assert(!this->package_name_.empty());
+    return this->package_name_;
   }
 
   // The priority of this package.  The init function of packages with
@@ -2430,17 +2680,25 @@ class Package
   // Whether some symbol from the package was used.
   bool
   used() const
-  { return this->used_; }
+  { return this->used_ > 0; }
 
   // Note that some symbol from this package was used.
   void
-  set_used() const
-  { this->used_ = true; }
+  note_usage() const
+  { this->used_++; }
+
+  // Note that USAGE might be a fake usage of this package.
+  void
+  note_fake_usage(Expression* usage) const
+  { this->fake_uses_.insert(usage); }
+
+  // Forget a given USAGE of this package.
+  void
+  forget_usage(Expression* usage) const;
 
   // Clear the used field for the next file.
   void
-  clear_used()
-  { this->used_ = false; }
+  clear_used();
 
   // Whether this package was imported in the current file.
   bool
@@ -2478,8 +2736,12 @@ class Package
   lookup(const std::string& name) const
   { return this->bindings_->lookup(name); }
 
-  // Set the location of the package.  This is used if it is seen in a
-  // different import before it is really imported.
+  // Set the name of the package.
+  void
+  set_package_name(const std::string& name, Location);
+
+  // Set the location of the package.  This is used to record the most
+  // recent import location.
   void
   set_location(Location location)
   { this->location_ = location; }
@@ -2515,10 +2777,13 @@ class Package
   determine_types();
 
  private:
-  // The real name of this package.
-  std::string name_;
-  // The unique prefix for all exported global symbols.
-  std::string unique_prefix_;
+  // The package path for type reflection data.
+  std::string pkgpath_;
+  // The package path for symbol names.
+  std::string pkgpath_symbol_;
+  // The name that this package uses in the package clause.  This may
+  // be the empty string if it is not yet known.
+  std::string package_name_;
   // The names in this package.
   Bindings* bindings_;
   // The priority of this package.  A package has a priority higher
@@ -2527,10 +2792,12 @@ class Package
   int priority_;
   // The location of the import statement.
   Location location_;
-  // True if some name from this package was used.  This is mutable
-  // because we can use a package even if we have a const pointer to
-  // it.
-  mutable bool used_;
+  // The amount of times some name from this package was used.  This is mutable
+  // because we can use a package even if we have a const pointer to it.
+  mutable size_t used_;
+  // A set of possibly fake uses of this package.  This is mutable because we
+  // can track fake uses of a package even if we have a const pointer to it.
+  mutable std::set<Expression*> fake_uses_;
   // True if this package was imported in the current file.
   bool is_imported_;
   // True if this package was imported with a name of "_".
@@ -2790,6 +3057,9 @@ static const int RUNTIME_ERROR_MAKE_MAP_OUT_OF_BOUNDS = 8;
 
 // Channel capacity out of bounds in make: negative or overflow.
 static const int RUNTIME_ERROR_MAKE_CHAN_OUT_OF_BOUNDS = 9;
+
+// Division by zero.
+static const int RUNTIME_ERROR_DIVISION_BY_ZERO = 10;
 
 // This is used by some of the langhooks.
 extern Gogo* go_get_gogo();

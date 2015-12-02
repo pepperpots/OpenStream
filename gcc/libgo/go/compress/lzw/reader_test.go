@@ -114,12 +114,20 @@ func TestReader(t *testing.T) {
 func benchmarkDecoder(b *testing.B, n int) {
 	b.StopTimer()
 	b.SetBytes(int64(n))
-	buf0, _ := ioutil.ReadFile("../testdata/e.txt")
-	buf0 = buf0[:10000]
+	buf0, err := ioutil.ReadFile("../testdata/e.txt")
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(buf0) == 0 {
+		b.Fatalf("test file has no data")
+	}
 	compressed := new(bytes.Buffer)
 	w := NewWriter(compressed, LSB, 8)
 	for i := 0; i < n; i += len(buf0) {
-		io.Copy(w, bytes.NewBuffer(buf0))
+		if len(buf0) > n-i {
+			buf0 = buf0[:n-i]
+		}
+		w.Write(buf0)
 	}
 	w.Close()
 	buf1 := compressed.Bytes()
@@ -127,7 +135,7 @@ func benchmarkDecoder(b *testing.B, n int) {
 	runtime.GC()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		io.Copy(ioutil.Discard, NewReader(bytes.NewBuffer(buf1), LSB, 8))
+		io.Copy(ioutil.Discard, NewReader(bytes.NewReader(buf1), LSB, 8))
 	}
 }
 

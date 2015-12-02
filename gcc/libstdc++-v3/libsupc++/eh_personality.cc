@@ -1,7 +1,5 @@
 // -*- C++ -*- The GNU C++ exception personality routine.
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-// 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2015 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -332,11 +330,18 @@ namespace __cxxabiv1
 #ifdef _GLIBCXX_SJLJ_EXCEPTIONS
 #define PERSONALITY_FUNCTION	__gxx_personality_sj0
 #define __builtin_eh_return_data_regno(x) x
+#elif defined(__SEH__) && !defined (_GLIBCXX_SJLJ_EXCEPTIONS)
+#define PERSONALITY_FUNCTION	__gxx_personality_imp
 #else
 #define PERSONALITY_FUNCTION	__gxx_personality_v0
 #endif
 
-extern "C" _Unwind_Reason_Code
+#if defined (__SEH__) && !defined (_GLIBCXX_SJLJ_EXCEPTIONS)
+static
+#else
+extern "C"
+#endif
+_Unwind_Reason_Code
 #ifdef __ARM_EABI_UNWINDER__
 PERSONALITY_FUNCTION (_Unwind_State state,
 		      struct _Unwind_Exception* ue_header,
@@ -373,6 +378,12 @@ PERSONALITY_FUNCTION (int version,
   switch (state & _US_ACTION_MASK)
     {
     case _US_VIRTUAL_UNWIND_FRAME:
+      // If the unwind state pattern is
+      // _US_VIRTUAL_UNWIND_FRAME | _US_FORCE_UNWIND
+      // then we don't need to search for any handler as it is not a real
+      // exception. Just unwind the stack.
+      if (state & _US_FORCE_UNWIND)
+	CONTINUE_UNWINDING;
       actions = _UA_SEARCH_PHASE;
       break;
 
@@ -540,7 +551,7 @@ PERSONALITY_FUNCTION (int version,
       else if (!foreign_exception)
 	thrown_ptr = __get_object_from_ue (ue_header);
 #else
-#ifdef __GXX_RTTI
+#if __cpp_rtti
       // During forced unwinding, match a magic exception type.
       if (actions & _UA_FORCE_UNWIND)
 	{
@@ -761,12 +772,12 @@ __cxa_call_unexpected (void *exc_obj_in)
       if (check_exception_spec (&info, __get_exception_header_from_obj
                                   (new_ptr)->exceptionType,
 				new_ptr, xh_switch_value))
-	__throw_exception_again;
+	{ __throw_exception_again; }
 
       // If the exception spec allows std::bad_exception, throw that.
       // We don't have a thrown object to compare against, but since
       // bad_exception doesn't have virtual bases, that's OK; just pass 0.
-#if defined(__EXCEPTIONS) && defined(__GXX_RTTI)
+#if __cpp_exceptions && __cpp_rtti
       const std::type_info &bad_exc = typeid (std::bad_exception);
       if (check_exception_spec (&info, &bad_exc, 0, xh_switch_value))
 	throw std::bad_exception();
@@ -777,5 +788,16 @@ __cxa_call_unexpected (void *exc_obj_in)
     }
 }
 #endif
+
+#if defined (__SEH__) && !defined (_GLIBCXX_SJLJ_EXCEPTIONS)
+extern "C"
+EXCEPTION_DISPOSITION
+__gxx_personality_seh0 (PEXCEPTION_RECORD ms_exc, void *this_frame,
+			PCONTEXT ms_orig_context, PDISPATCHER_CONTEXT ms_disp)
+{
+  return _GCC_specific_handler (ms_exc, this_frame, ms_orig_context,
+				ms_disp, __gxx_personality_imp);
+}
+#endif /* SEH */
 
 } // namespace __cxxabiv1

@@ -90,7 +90,8 @@ __go_check_defer (_Bool *frame)
 
 	  (*pfn) (d->__arg);
 
-	  __go_free (d);
+	  if (runtime_m () != NULL)
+	    runtime_freedefer (d);
 
 	  if (n->__was_recovered)
 	    {
@@ -125,7 +126,9 @@ __go_check_defer (_Bool *frame)
 	 to execute.  */
       d = g->defer;
       g->defer = d->__next;
-      __go_free (d);
+
+      if (runtime_m () != NULL)
+	runtime_freedefer (d);
 
       /* We are returning from this function.  */
       *frame = 1;

@@ -8,7 +8,6 @@
 package jpeg
 
 import (
-	"bufio"
 	"image"
 	"image/color"
 	"io"
@@ -35,11 +34,7 @@ type component struct {
 	tq uint8 // Quantization table destination selector.
 }
 
-type block [blockSize]int
-
 const (
-	blockSize = 64 // A DCT block is 8x8.
-
 	dcTable = 0
 	acTable = 1
 	maxTc   = 1
@@ -51,7 +46,7 @@ const (
 	// A color JPEG image has Y, Cb and Cr components.
 	nColorComponent = 3
 
-	// We only support 4:4:4, 4:2:2 and 4:2:0 downsampling, and therefore the
+	// We only support 4:4:4, 4:4:0, 4:2:2 and 4:2:0 downsampling, and therefore the
 	// number of luma samples per chroma sample is at most 2 in the horizontal
 	// and 2 in the vertical direction.
 	maxH = 2
@@ -74,7 +69,9 @@ const (
 	comMarker   = 0xfe // COMment.
 )
 
-// Maps from the zig-zag ordering to the natural ordering.
+// unzig maps from the zig-zag ordering to the natural ordering. For example,
+// unzig[3] is the column and row of the fourth element in zig-zag order. The
+// value is 16, which means first column (16%8 == 0) and third row (16/8 == 2).
 var unzig = [blockSize]int{
 	0, 1, 8, 16, 9, 2, 3, 10,
 	17, 24, 32, 25, 18, 11, 4, 5,
@@ -86,38 +83,201 @@ var unzig = [blockSize]int{
 	53, 60, 61, 54, 47, 55, 62, 63,
 }
 
-// If the passed in io.Reader does not also have ReadByte, then Decode will introduce its own buffering.
+// Reader is deprecated.
 type Reader interface {
+	io.ByteReader
 	io.Reader
-	ReadByte() (c byte, err error)
+}
+
+// bits holds the unprocessed bits that have been taken from the byte-stream.
+// The n least significant bits of a form the unread bits, to be read in MSB to
+// LSB order.
+type bits struct {
+	a uint32 // accumulator.
+	m uint32 // mask. m==1<<(n-1) when n>0, with m==0 when n==0.
+	n int32  // the number of unread bits in a.
 }
 
 type decoder struct {
-	r             Reader
+	r    io.Reader
+	bits bits
+	// bytes is a byte buffer, similar to a bufio.Reader, except that it
+	// has to be able to unread more than 1 byte, due to byte stuffing.
+	// Byte stuffing is specified in section F.1.2.3.
+	bytes struct {
+		// buf[i:j] are the buffered bytes read from the underlying
+		// io.Reader that haven't yet been passed further on.
+		buf  [4096]byte
+		i, j int
+		// nUnreadable is the number of bytes to back up i after
+		// overshooting. It can be 0, 1 or 2.
+		nUnreadable int
+	}
 	width, height int
 	img1          *image.Gray
 	img3          *image.YCbCr
 	ri            int // Restart Interval.
 	nComp         int
+	progressive   bool
+	eobRun        uint16 // End-of-Band run, specified in section G.1.2.2.
 	comp          [nColorComponent]component
+	progCoeffs    [nColorComponent][]block // Saved state between progressive-mode scans.
 	huff          [maxTc + 1][maxTh + 1]huffman
-	quant         [maxTq + 1]block
-	b             bits
-	tmp           [1024]byte
+	quant         [maxTq + 1]block // Quantization tables, in zig-zag order.
+	tmp           [blockSize + 1]byte
 }
 
-// Reads and ignores the next n bytes.
+// fill fills up the d.bytes.buf buffer from the underlying io.Reader. It
+// should only be called when there are no unread bytes in d.bytes.
+func (d *decoder) fill() error {
+	if d.bytes.i != d.bytes.j {
+		panic("jpeg: fill called when unread bytes exist")
+	}
+	// Move the last 2 bytes to the start of the buffer, in case we need
+	// to call unreadByteStuffedByte.
+	if d.bytes.j > 2 {
+		d.bytes.buf[0] = d.bytes.buf[d.bytes.j-2]
+		d.bytes.buf[1] = d.bytes.buf[d.bytes.j-1]
+		d.bytes.i, d.bytes.j = 2, 2
+	}
+	// Fill in the rest of the buffer.
+	n, err := d.r.Read(d.bytes.buf[d.bytes.j:])
+	d.bytes.j += n
+	if n > 0 {
+		err = nil
+	}
+	return err
+}
+
+// unreadByteStuffedByte undoes the most recent readByteStuffedByte call,
+// giving a byte of data back from d.bits to d.bytes. The Huffman look-up table
+// requires at least 8 bits for look-up, which means that Huffman decoding can
+// sometimes overshoot and read one or two too many bytes. Two-byte overshoot
+// can happen when expecting to read a 0xff 0x00 byte-stuffed byte.
+func (d *decoder) unreadByteStuffedByte() {
+	if d.bytes.nUnreadable == 0 {
+		panic("jpeg: unreadByteStuffedByte call cannot be fulfilled")
+	}
+	d.bytes.i -= d.bytes.nUnreadable
+	d.bytes.nUnreadable = 0
+	if d.bits.n >= 8 {
+		d.bits.a >>= 8
+		d.bits.n -= 8
+		d.bits.m >>= 8
+	}
+}
+
+// readByte returns the next byte, whether buffered or not buffered. It does
+// not care about byte stuffing.
+func (d *decoder) readByte() (x byte, err error) {
+	for d.bytes.i == d.bytes.j {
+		if err = d.fill(); err != nil {
+			return 0, err
+		}
+	}
+	x = d.bytes.buf[d.bytes.i]
+	d.bytes.i++
+	d.bytes.nUnreadable = 0
+	return x, nil
+}
+
+// errMissingFF00 means that readByteStuffedByte encountered an 0xff byte (a
+// marker byte) that wasn't the expected byte-stuffed sequence 0xff, 0x00.
+var errMissingFF00 = FormatError("missing 0xff00 sequence")
+
+// readByteStuffedByte is like readByte but is for byte-stuffed Huffman data.
+func (d *decoder) readByteStuffedByte() (x byte, err error) {
+	// Take the fast path if d.bytes.buf contains at least two bytes.
+	if d.bytes.i+2 <= d.bytes.j {
+		x = d.bytes.buf[d.bytes.i]
+		d.bytes.i++
+		d.bytes.nUnreadable = 1
+		if x != 0xff {
+			return x, err
+		}
+		if d.bytes.buf[d.bytes.i] != 0x00 {
+			return 0, errMissingFF00
+		}
+		d.bytes.i++
+		d.bytes.nUnreadable = 2
+		return 0xff, nil
+	}
+
+	x, err = d.readByte()
+	if err != nil {
+		return 0, err
+	}
+	if x != 0xff {
+		d.bytes.nUnreadable = 1
+		return x, nil
+	}
+
+	x, err = d.readByte()
+	if err != nil {
+		d.bytes.nUnreadable = 1
+		return 0, err
+	}
+	d.bytes.nUnreadable = 2
+	if x != 0x00 {
+		return 0, errMissingFF00
+	}
+	return 0xff, nil
+}
+
+// readFull reads exactly len(p) bytes into p. It does not care about byte
+// stuffing.
+func (d *decoder) readFull(p []byte) error {
+	// Unread the overshot bytes, if any.
+	if d.bytes.nUnreadable != 0 {
+		if d.bits.n >= 8 {
+			d.unreadByteStuffedByte()
+		}
+		d.bytes.nUnreadable = 0
+	}
+
+	for {
+		n := copy(p, d.bytes.buf[d.bytes.i:d.bytes.j])
+		p = p[n:]
+		d.bytes.i += n
+		if len(p) == 0 {
+			break
+		}
+		if err := d.fill(); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// ignore ignores the next n bytes.
 func (d *decoder) ignore(n int) error {
-	for n > 0 {
-		m := len(d.tmp)
+	// Unread the overshot bytes, if any.
+	if d.bytes.nUnreadable != 0 {
+		if d.bits.n >= 8 {
+			d.unreadByteStuffedByte()
+		}
+		d.bytes.nUnreadable = 0
+	}
+
+	for {
+		m := d.bytes.j - d.bytes.i
 		if m > n {
 			m = n
 		}
-		_, err := io.ReadFull(d.r, d.tmp[0:m])
-		if err != nil {
+		d.bytes.i += m
+		n -= m
+		if n == 0 {
+			break
+		}
+		if err := d.fill(); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
 			return err
 		}
-		n -= m
 	}
 	return nil
 }
@@ -132,8 +292,7 @@ func (d *decoder) processSOF(n int) error {
 	default:
 		return UnsupportedError("SOF has wrong length")
 	}
-	_, err := io.ReadFull(d.r, d.tmp[:n])
-	if err != nil {
+	if err := d.readFull(d.tmp[:n]); err != nil {
 		return err
 	}
 	// We only support 8-bit precision.
@@ -146,24 +305,37 @@ func (d *decoder) processSOF(n int) error {
 		return UnsupportedError("SOF has wrong number of image components")
 	}
 	for i := 0; i < d.nComp; i++ {
-		hv := d.tmp[7+3*i]
-		d.comp[i].h = int(hv >> 4)
-		d.comp[i].v = int(hv & 0x0f)
 		d.comp[i].c = d.tmp[6+3*i]
 		d.comp[i].tq = d.tmp[8+3*i]
 		if d.nComp == nGrayComponent {
+			// If a JPEG image has only one component, section A.2 says "this data
+			// is non-interleaved by definition" and section A.2.2 says "[in this
+			// case...] the order of data units within a scan shall be left-to-right
+			// and top-to-bottom... regardless of the values of H_1 and V_1". Section
+			// 4.8.2 also says "[for non-interleaved data], the MCU is defined to be
+			// one data unit". Similarly, section A.1.1 explains that it is the ratio
+			// of H_i to max_j(H_j) that matters, and similarly for V. For grayscale
+			// images, H_1 is the maximum H_j for all components j, so that ratio is
+			// always 1. The component's (h, v) is effectively always (1, 1): even if
+			// the nominal (h, v) is (2, 1), a 20x5 image is encoded in three 8x8
+			// MCUs, not two 16x8 MCUs.
+			d.comp[i].h = 1
+			d.comp[i].v = 1
 			continue
 		}
-		// For color images, we only support 4:4:4, 4:2:2 or 4:2:0 chroma
+		hv := d.tmp[7+3*i]
+		d.comp[i].h = int(hv >> 4)
+		d.comp[i].v = int(hv & 0x0f)
+		// For color images, we only support 4:4:4, 4:4:0, 4:2:2 or 4:2:0 chroma
 		// downsampling ratios. This implies that the (h, v) values for the Y
-		// component are either (1, 1), (2, 1) or (2, 2), and the (h, v)
+		// component are either (1, 1), (1, 2), (2, 1) or (2, 2), and the (h, v)
 		// values for the Cr and Cb components must be (1, 1).
 		if i == 0 {
-			if hv != 0x11 && hv != 0x21 && hv != 0x22 {
-				return UnsupportedError("luma downsample ratio")
+			if hv != 0x11 && hv != 0x21 && hv != 0x22 && hv != 0x12 {
+				return UnsupportedError("luma/chroma downsample ratio")
 			}
 		} else if hv != 0x11 {
-			return UnsupportedError("chroma downsample ratio")
+			return UnsupportedError("luma/chroma downsample ratio")
 		}
 	}
 	return nil
@@ -173,8 +345,7 @@ func (d *decoder) processSOF(n int) error {
 func (d *decoder) processDQT(n int) error {
 	const qtLength = 1 + blockSize
 	for ; n >= qtLength; n -= qtLength {
-		_, err := io.ReadFull(d.r, d.tmp[0:qtLength])
-		if err != nil {
+		if err := d.readFull(d.tmp[:qtLength]); err != nil {
 			return err
 		}
 		pq := d.tmp[0] >> 4
@@ -186,7 +357,7 @@ func (d *decoder) processDQT(n int) error {
 			return FormatError("bad Tq value")
 		}
 		for i := range d.quant[tq] {
-			d.quant[tq][i] = int(d.tmp[i+1])
+			d.quant[tq][i] = int32(d.tmp[i+1])
 		}
 	}
 	if n != 0 {
@@ -195,168 +366,12 @@ func (d *decoder) processDQT(n int) error {
 	return nil
 }
 
-// makeImg allocates and initializes the destination image.
-func (d *decoder) makeImg(h0, v0, mxx, myy int) {
-	if d.nComp == nGrayComponent {
-		m := image.NewGray(image.Rect(0, 0, 8*mxx, 8*myy))
-		d.img1 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.Gray)
-		return
-	}
-	var subsampleRatio image.YCbCrSubsampleRatio
-	switch h0 * v0 {
-	case 1:
-		subsampleRatio = image.YCbCrSubsampleRatio444
-	case 2:
-		subsampleRatio = image.YCbCrSubsampleRatio422
-	case 4:
-		subsampleRatio = image.YCbCrSubsampleRatio420
-	default:
-		panic("unreachable")
-	}
-	m := image.NewYCbCr(image.Rect(0, 0, 8*h0*mxx, 8*v0*myy), subsampleRatio)
-	d.img3 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.YCbCr)
-}
-
-// Specified in section B.2.3.
-func (d *decoder) processSOS(n int) error {
-	if d.nComp == 0 {
-		return FormatError("missing SOF marker")
-	}
-	if n != 4+2*d.nComp {
-		return UnsupportedError("SOS has wrong length")
-	}
-	_, err := io.ReadFull(d.r, d.tmp[0:4+2*d.nComp])
-	if err != nil {
-		return err
-	}
-	if int(d.tmp[0]) != d.nComp {
-		return UnsupportedError("SOS has wrong number of image components")
-	}
-	var scan [nColorComponent]struct {
-		td uint8 // DC table selector.
-		ta uint8 // AC table selector.
-	}
-	for i := 0; i < d.nComp; i++ {
-		cs := d.tmp[1+2*i] // Component selector.
-		if cs != d.comp[i].c {
-			return UnsupportedError("scan components out of order")
-		}
-		scan[i].td = d.tmp[2+2*i] >> 4
-		scan[i].ta = d.tmp[2+2*i] & 0x0f
-	}
-	// mxx and myy are the number of MCUs (Minimum Coded Units) in the image.
-	h0, v0 := d.comp[0].h, d.comp[0].v // The h and v values from the Y components.
-	mxx := (d.width + 8*h0 - 1) / (8 * h0)
-	myy := (d.height + 8*v0 - 1) / (8 * v0)
-	if d.img1 == nil && d.img3 == nil {
-		d.makeImg(h0, v0, mxx, myy)
-	}
-
-	mcu, expectedRST := 0, uint8(rst0Marker)
-	var (
-		b  block
-		dc [nColorComponent]int
-	)
-	for my := 0; my < myy; my++ {
-		for mx := 0; mx < mxx; mx++ {
-			for i := 0; i < d.nComp; i++ {
-				qt := &d.quant[d.comp[i].tq]
-				for j := 0; j < d.comp[i].h*d.comp[i].v; j++ {
-					// TODO(nigeltao): make this a "var b block" once the compiler's escape
-					// analysis is good enough to allocate it on the stack, not the heap.
-					b = block{}
-
-					// Decode the DC coefficient, as specified in section F.2.2.1.
-					value, err := d.decodeHuffman(&d.huff[dcTable][scan[i].td])
-					if err != nil {
-						return err
-					}
-					if value > 16 {
-						return UnsupportedError("excessive DC component")
-					}
-					dcDelta, err := d.receiveExtend(value)
-					if err != nil {
-						return err
-					}
-					dc[i] += dcDelta
-					b[0] = dc[i] * qt[0]
-
-					// Decode the AC coefficients, as specified in section F.2.2.2.
-					for k := 1; k < blockSize; k++ {
-						value, err := d.decodeHuffman(&d.huff[acTable][scan[i].ta])
-						if err != nil {
-							return err
-						}
-						val0 := value >> 4
-						val1 := value & 0x0f
-						if val1 != 0 {
-							k += int(val0)
-							if k > blockSize {
-								return FormatError("bad DCT index")
-							}
-							ac, err := d.receiveExtend(val1)
-							if err != nil {
-								return err
-							}
-							b[unzig[k]] = ac * qt[k]
-						} else {
-							if val0 != 0x0f {
-								break
-							}
-							k += 0x0f
-						}
-					}
-
-					// Perform the inverse DCT and store the MCU component to the image.
-					if d.nComp == nGrayComponent {
-						idct(d.img1.Pix[8*(my*d.img1.Stride+mx):], d.img1.Stride, &b)
-					} else {
-						switch i {
-						case 0:
-							mx0 := h0*mx + (j % 2)
-							my0 := v0*my + (j / 2)
-							idct(d.img3.Y[8*(my0*d.img3.YStride+mx0):], d.img3.YStride, &b)
-						case 1:
-							idct(d.img3.Cb[8*(my*d.img3.CStride+mx):], d.img3.CStride, &b)
-						case 2:
-							idct(d.img3.Cr[8*(my*d.img3.CStride+mx):], d.img3.CStride, &b)
-						}
-					}
-				} // for j
-			} // for i
-			mcu++
-			if d.ri > 0 && mcu%d.ri == 0 && mcu < mxx*myy {
-				// A more sophisticated decoder could use RST[0-7] markers to resynchronize from corrupt input,
-				// but this one assumes well-formed input, and hence the restart marker follows immediately.
-				_, err := io.ReadFull(d.r, d.tmp[0:2])
-				if err != nil {
-					return err
-				}
-				if d.tmp[0] != 0xff || d.tmp[1] != expectedRST {
-					return FormatError("bad RST marker")
-				}
-				expectedRST++
-				if expectedRST == rst7Marker+1 {
-					expectedRST = rst0Marker
-				}
-				// Reset the Huffman decoder.
-				d.b = bits{}
-				// Reset the DC components, as per section F.2.1.3.1.
-				dc = [nColorComponent]int{}
-			}
-		} // for mx
-	} // for my
-
-	return nil
-}
-
 // Specified in section B.2.4.4.
 func (d *decoder) processDRI(n int) error {
 	if n != 2 {
 		return FormatError("DRI has wrong length")
 	}
-	_, err := io.ReadFull(d.r, d.tmp[0:2])
-	if err != nil {
+	if err := d.readFull(d.tmp[:2]); err != nil {
 		return err
 	}
 	d.ri = int(d.tmp[0])<<8 + int(d.tmp[1])
@@ -365,15 +380,10 @@ func (d *decoder) processDRI(n int) error {
 
 // decode reads a JPEG image from r and returns it as an image.Image.
 func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
-	if rr, ok := r.(Reader); ok {
-		d.r = rr
-	} else {
-		d.r = bufio.NewReader(r)
-	}
+	d.r = r
 
 	// Check for the Start Of Image marker.
-	_, err := io.ReadFull(d.r, d.tmp[0:2])
-	if err != nil {
+	if err := d.readFull(d.tmp[:2]); err != nil {
 		return nil, err
 	}
 	if d.tmp[0] != 0xff || d.tmp[1] != soiMarker {
@@ -382,22 +392,66 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 
 	// Process the remaining segments until the End Of Image marker.
 	for {
-		_, err := io.ReadFull(d.r, d.tmp[0:2])
+		err := d.readFull(d.tmp[:2])
 		if err != nil {
 			return nil, err
 		}
-		if d.tmp[0] != 0xff {
-			return nil, FormatError("missing 0xff marker start")
+		for d.tmp[0] != 0xff {
+			// Strictly speaking, this is a format error. However, libjpeg is
+			// liberal in what it accepts. As of version 9, next_marker in
+			// jdmarker.c treats this as a warning (JWRN_EXTRANEOUS_DATA) and
+			// continues to decode the stream. Even before next_marker sees
+			// extraneous data, jpeg_fill_bit_buffer in jdhuff.c reads as many
+			// bytes as it can, possibly past the end of a scan's data. It
+			// effectively puts back any markers that it overscanned (e.g. an
+			// "\xff\xd9" EOI marker), but it does not put back non-marker data,
+			// and thus it can silently ignore a small number of extraneous
+			// non-marker bytes before next_marker has a chance to see them (and
+			// print a warning).
+			//
+			// We are therefore also liberal in what we accept. Extraneous data
+			// is silently ignored.
+			//
+			// This is similar to, but not exactly the same as, the restart
+			// mechanism within a scan (the RST[0-7] markers).
+			//
+			// Note that extraneous 0xff bytes in e.g. SOS data are escaped as
+			// "\xff\x00", and so are detected a little further down below.
+			d.tmp[0] = d.tmp[1]
+			d.tmp[1], err = d.readByte()
+			if err != nil {
+				return nil, err
+			}
 		}
 		marker := d.tmp[1]
+		if marker == 0 {
+			// Treat "\xff\x00" as extraneous data.
+			continue
+		}
+		for marker == 0xff {
+			// Section B.1.1.2 says, "Any marker may optionally be preceded by any
+			// number of fill bytes, which are bytes assigned code X'FF'".
+			marker, err = d.readByte()
+			if err != nil {
+				return nil, err
+			}
+		}
 		if marker == eoiMarker { // End Of Image.
 			break
+		}
+		if rst0Marker <= marker && marker <= rst7Marker {
+			// Figures B.2 and B.16 of the specification suggest that restart markers should
+			// only occur between Entropy Coded Segments and not after the final ECS.
+			// However, some encoders may generate incorrect JPEGs with a final restart
+			// marker. That restart marker will be seen here instead of inside the processSOS
+			// method, and is ignored as a harmless error. Restart markers have no extra data,
+			// so we check for this before we read the 16-bit length of the segment.
+			continue
 		}
 
 		// Read the 16-bit length of the segment. The value includes the 2 bytes for the
 		// length itself, so we subtract 2 to get the number of remaining bytes.
-		_, err = io.ReadFull(d.r, d.tmp[0:2])
-		if err != nil {
+		if err = d.readFull(d.tmp[:2]); err != nil {
 			return nil, err
 		}
 		n := int(d.tmp[0])<<8 + int(d.tmp[1]) - 2
@@ -406,13 +460,12 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 		}
 
 		switch {
-		case marker == sof0Marker: // Start Of Frame (Baseline).
+		case marker == sof0Marker || marker == sof2Marker: // Start Of Frame.
+			d.progressive = marker == sof2Marker
 			err = d.processSOF(n)
 			if configOnly {
 				return nil, err
 			}
-		case marker == sof2Marker: // Start Of Frame (Progressive).
-			err = UnsupportedError("progressive mode")
 		case marker == dhtMarker: // Define Huffman Table.
 			err = d.processDHT(n)
 		case marker == dqtMarker: // Define Quantization Table.
@@ -421,7 +474,7 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 			err = d.processSOS(n)
 		case marker == driMarker: // Define Restart Interval.
 			err = d.processDRI(n)
-		case marker >= app0Marker && marker <= app15Marker || marker == comMarker: // APPlication specific, or COMment.
+		case app0Marker <= marker && marker <= app15Marker || marker == comMarker: // APPlication specific, or COMment.
 			err = d.ignore(n)
 		default:
 			err = UnsupportedError("unknown marker")

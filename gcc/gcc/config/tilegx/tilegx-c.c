@@ -1,6 +1,5 @@
 /* Definitions of C specific functions for TILE-Gx.
-   Copyright (C) 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2011-2015 Free Software Foundation, Inc.
    Contributed by Walter Lee (walt@tilera.com)
 
    This file is part of GCC.
@@ -26,6 +25,15 @@
 #include "tm.h"
 #include "tm_p.h"
 #include "cpplib.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
 #include "c-family/c-common.h"
 
@@ -47,6 +55,9 @@ tilegx_cpu_cpp_builtins (struct cpp_reader *pfile)
 
   if (TARGET_32BIT)
     builtin_define ("__tilegx32__");
+
+  builtin_define ("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_1");
+  builtin_define ("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_2");
 
   TILEGX_CPU_CPP_ENDIAN_BUILTINS ();
   GNU_USER_TARGET_OS_CPP_BUILTINS ();

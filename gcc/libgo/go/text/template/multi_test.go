@@ -33,10 +33,10 @@ var multiParseTests = []multiParseTest{
 		nil},
 	{"one", `{{define "foo"}} FOO {{end}}`, noError,
 		[]string{"foo"},
-		[]string{`" FOO "`}},
+		[]string{" FOO "}},
 	{"two", `{{define "foo"}} FOO {{end}}{{define "bar"}} BAR {{end}}`, noError,
 		[]string{"foo", "bar"},
-		[]string{`" FOO "`, `" BAR "`}},
+		[]string{" FOO ", " BAR "}},
 	// errors
 	{"missing end", `{{define "foo"}} FOO `, hasError,
 		nil,
@@ -93,7 +93,7 @@ var multiExecTests = []execTest{
 	{"invoke dot []int", `{{template "dot" .SI}}`, "[3 4 5]", tVal, true},
 	{"invoke dotV", `{{template "dotV" .U}}`, "v", tVal, true},
 	{"invoke nested int", `{{template "nested" .I}}`, "17", tVal, true},
-	{"variable declared by template", `{{template "nested" $x=.SI}},{{index $x 1}}`, "[3 4 5],4", tVal, true},
+	{"variable declared by template", `{{template "nested" $x:=.SI}},{{index $x 1}}`, "[3 4 5],4", tVal, true},
 
 	// User-defined function: test argument evaluator.
 	{"testFunc literal", `{{oneArg "joe"}}`, "oneArg=joe", tVal, true},
@@ -257,6 +257,18 @@ func TestAddParseTree(t *testing.T) {
 	if b.String() != "broot" {
 		t.Errorf("expected %q got %q", "broot", b.String())
 	}
+}
+
+// Issue 7032
+func TestAddParseTreeToUnparsedTemplate(t *testing.T) {
+	master := "{{define \"master\"}}{{end}}"
+	tmpl := New("master")
+	tree, err := parse.Parse("master", master, "", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected parse err: %v", err)
+	}
+	masterTree := tree["master"]
+	tmpl.AddParseTree("master", masterTree) // used to panic
 }
 
 func TestRedefinition(t *testing.T) {

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -31,9 +31,7 @@
 
 --  This body is specifically for using an Ada interface to C math.h to get
 --  the computation engine. Many special cases are handled locally to avoid
---  unnecessary calls. This is not a "strict" implementation, but takes full
---  advantage of the C functions, e.g. in providing interface to hardware
---  provided versions of the elementary functions.
+--  unnecessary calls or to meet Annex G strict mode requirements.
 
 --  Uses functions sqrt, exp, log, pow, sin, asin, cos, acos, tan, atan, sinh,
 --  cosh, tanh from C library via math.h
@@ -511,12 +509,8 @@ package body Ada.Numerics.Generic_Elementary_Functions is
 
    function Cos (X : Float_Type'Base) return Float_Type'Base is
    begin
-      if X = 0.0 then
+      if abs X < Sqrt_Epsilon then
          return 1.0;
-
-      elsif abs X < Sqrt_Epsilon then
-         return 1.0;
-
       end if;
 
       return Float_Type'Base (Aux.Cos (Double (X)));
@@ -973,7 +967,7 @@ package body Ada.Numerics.Generic_Elementary_Functions is
       G : constant Float_Type'Base := Y * Y;
 
       Float_Type_Digits_15_Or_More : constant Boolean :=
-                                       Float_Type'Digits > 14;
+        Float_Type'Digits > 14;
 
    begin
       if X < Half_Log_Epsilon then

@@ -57,6 +57,7 @@ func Encode(dst, src []byte) int {
 		if v == 0 && len(src) >= 4 {
 			dst[0] = 'z'
 			dst = dst[1:]
+			src = src[4:]
 			n++
 			continue
 		}
@@ -248,7 +249,6 @@ type decoder struct {
 	err     error
 	readErr error
 	r       io.Reader
-	end     bool       // saw end of message
 	buf     [1024]byte // leftover input
 	nbuf    int
 	out     []byte // leftover decoded output
@@ -280,6 +280,18 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 				d.nbuf = copy(d.buf[0:], d.buf[nsrc:d.nbuf])
 				continue // copy out and return
 			}
+			if ndst == 0 && d.err == nil {
+				// Special case: input buffer is mostly filled with non-data bytes.
+				// Filter out such bytes to make room for more input.
+				off := 0
+				for i := 0; i < d.nbuf; i++ {
+					if d.buf[i] > ' ' {
+						d.buf[off] = d.buf[i]
+						off++
+					}
+				}
+				d.nbuf = off
+			}
 		}
 
 		// Out of input, out of decoded output.  Check errors.
@@ -295,5 +307,4 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		nn, d.readErr = d.r.Read(d.buf[d.nbuf:])
 		d.nbuf += nn
 	}
-	panic("unreachable")
 }

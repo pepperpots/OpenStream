@@ -4,14 +4,6 @@
 
 package math
 
-// Sqrt returns the square root of x.
-//
-// Special cases are:
-//	Sqrt(+Inf) = +Inf
-//	Sqrt(±0) = ±0
-//	Sqrt(x < 0) = NaN
-//	Sqrt(NaN) = NaN
-
 //extern sqrt
 func libc_sqrt(float64) float64
 
@@ -95,7 +87,7 @@ func Sqrt(x float64) float64 {
 //
 //
 // Notes:  Rounding mode detection omitted.  The constants "mask", "shift",
-// and "bias" are found in src/pkg/math/bits.go
+// and "bias" are found in src/math/bits.go
 
 // Sqrt returns the square root of x.
 //

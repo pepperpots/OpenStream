@@ -1,6 +1,7 @@
 /* { dg-do compile { target { powerpc*-*-* && lp64 } } } */
 /* { dg-skip-if "" { powerpc*-*-darwin* } { "*" } { "" } } */
 /* { dg-require-effective-target powerpc_vsx_ok } */
+/* { dg-skip-if "do not override -mcpu" { powerpc*-*-* } { "-mcpu=*" } { "-mcpu=power7" } } */
 /* { dg-options "-O2 -mcpu=power7" } */
 /* { dg-final { scan-assembler "xxsel" } } */
 /* { dg-final { scan-assembler "vperm" } } */
@@ -16,9 +17,9 @@
 /* { dg-final { scan-assembler "xvrspiz" } } */
 /* { dg-final { scan-assembler "xsrdpi" } } */
 /* { dg-final { scan-assembler "xsrdpic" } } */
-/* { dg-final { scan-assembler "xsrdpim" } } */
-/* { dg-final { scan-assembler "xsrdpip" } } */
-/* { dg-final { scan-assembler "xsrdpiz" } } */
+/* { dg-final { scan-assembler "xsrdpim\|frim" } } */
+/* { dg-final { scan-assembler "xsrdpip\|frip" } } */
+/* { dg-final { scan-assembler "xsrdpiz\|friz" } } */
 /* { dg-final { scan-assembler "xsmaxdp" } } */
 /* { dg-final { scan-assembler "xsmindp" } } */
 /* { dg-final { scan-assembler "xxland" } } */

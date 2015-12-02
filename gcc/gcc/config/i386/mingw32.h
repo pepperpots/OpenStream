@@ -1,7 +1,6 @@
 /* Operating system specific defines to be used when targeting GCC for
    hosting on Windows32, using GNU tools and the Windows32 API Library.
-   Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2007, 2008,
-   2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1997-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -92,6 +91,8 @@ along with GCC; see the file COPYING3.  If not see
 #define LIB_SPEC "%{pg:-lgmon} %{" SPEC_PTHREAD1 ":-lpthread} " \
 		 "%{" SPEC_PTHREAD2 ": } " \
 		 "%{mwindows:-lgdi32 -lcomdlg32} " \
+     "%{fvtable-verify=preinit:-lvtv -lpsapi; \
+        fvtable-verify=std:-lvtv -lpsapi} " \
                  "-ladvapi32 -lshell32 -luser32 -lkernel32"
 
 /* Weak symbols do not get resolved if using a Windows dll import lib.
@@ -121,25 +122,41 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Include in the mingw32 libraries with libgcc */
 #ifdef ENABLE_SHARED_LIBGCC
-#define SHARED_LIBGCC_SPEC "%{shared-libgcc:-lgcc_s} %{!shared-libgcc:-lgcc_eh}"
+#define SHARED_LIBGCC_SPEC " \
+ %{static|static-libgcc:-lgcc -lgcc_eh} \
+ %{!static: \
+   %{!static-libgcc: \
+     %{!shared: \
+       %{!shared-libgcc:-lgcc -lgcc_eh} \
+       %{shared-libgcc:-lgcc_s -lgcc} \
+      } \
+     %{shared:-lgcc_s -lgcc} \
+    } \
+  } "
 #else
-#define SHARED_LIBGCC_SPEC /*empty*/
+#define SHARED_LIBGCC_SPEC " -lgcc "
 #endif
 #undef REAL_LIBGCC_SPEC
 #define REAL_LIBGCC_SPEC \
   "%{mthreads:-lmingwthrd} -lmingw32 \
    "SHARED_LIBGCC_SPEC" \
-   -lgcc \
    -lmoldname -lmingwex -lmsvcrt"
 
 #undef STARTFILE_SPEC
 #define STARTFILE_SPEC "%{shared|mdll:dllcrt2%O%s} \
   %{!shared:%{!mdll:crt2%O%s}} %{pg:gcrt2%O%s} \
-  crtbegin.o%s"
+  crtbegin.o%s \
+  %{fvtable-verify=none:%s; \
+    fvtable-verify=preinit:vtv_start.o%s; \
+    fvtable-verify=std:vtv_start.o%s}"
 
 #undef ENDFILE_SPEC
 #define ENDFILE_SPEC \
   "%{Ofast|ffast-math|funsafe-math-optimizations:crtfastmath.o%s} \
+   %{!shared:%:if-exists(default-manifest.o%s)}\
+   %{fvtable-verify=none:%s; \
+    fvtable-verify=preinit:vtv_end.o%s; \
+    fvtable-verify=std:vtv_end.o%s} \
   crtend.o%s"
 
 /* Override startfile prefix defaults.  */
@@ -149,6 +166,11 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef STANDARD_STARTFILE_PREFIX_2
 #define STANDARD_STARTFILE_PREFIX_2 ""
 #endif
+
+/* For native mingw-version we need to take care that NATIVE_SYSTEM_HEADER_DIR
+   macro contains POSIX-style path.  See bug 52947.  */
+#undef NATIVE_SYSTEM_HEADER_DIR
+#define NATIVE_SYSTEM_HEADER_DIR "/mingw/include"
 
 /* Output STRING, a string representing a filename, to FILE.
    We canonicalize it to be in Unix format (backslashes are replaced
@@ -185,7 +207,7 @@ do {						         \
 
 /* mingw32 uses the  -mthreads option to enable thread support.  */
 #undef GOMP_SELF_SPECS
-#define GOMP_SELF_SPECS "%{fopenmp|ftree-parallelize-loops=*: " \
+#define GOMP_SELF_SPECS "%{fopenacc|fopenmp|ftree-parallelize-loops=*: " \
 			"-mthreads -pthread}"
 #undef GTM_SELF_SPECS
 #define GTM_SELF_SPECS "%{fgnu-tm:-mthreads -pthread}"
@@ -232,4 +254,4 @@ do {						         \
 #define LIBGCC_SONAME "libgcc_s" LIBGCC_EH_EXTN "-1.dll"
 
 /* We should find a way to not have to update this manually.  */
-#define LIBGCJ_SONAME "libgcj" /*LIBGCC_EH_EXTN*/ "-13.dll"
+#define LIBGCJ_SONAME "libgcj" /*LIBGCC_EH_EXTN*/ "-16.dll"

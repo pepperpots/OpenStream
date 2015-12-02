@@ -8,6 +8,8 @@ package http
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/textproto"
@@ -32,7 +34,7 @@ type Response struct {
 	ProtoMinor int    // e.g. 0
 
 	// Header maps header keys to values.  If the response had multiple
-	// headers with the same key, they will be concatenated, with comma
+	// headers with the same key, they may be concatenated, with comma
 	// delimiters.  (Section 4.2 of RFC 2616 requires that multiple headers
 	// be semantically equivalent to a comma-delimited sequence.) Values
 	// duplicated by other fields in this struct (e.g., ContentLength) are
@@ -45,11 +47,15 @@ type Response struct {
 	//
 	// The http Client and Transport guarantee that Body is always
 	// non-nil, even on responses without a body or responses with
-	// a zero-lengthed body.
+	// a zero-length body. It is the caller's responsibility to
+	// close Body.
+	//
+	// The Body is automatically dechunked if the server replied
+	// with a "chunked" Transfer-Encoding.
 	Body io.ReadCloser
 
 	// ContentLength records the length of the associated content.  The
-	// value -1 indicates that the length is unknown.  Unless RequestMethod
+	// value -1 indicates that the length is unknown.  Unless Request.Method
 	// is "HEAD", values >= 0 indicate that the given number of bytes may
 	// be read from Body.
 	ContentLength int64
@@ -71,6 +77,12 @@ type Response struct {
 	// Request's Body is nil (having already been consumed).
 	// This is only populated for Client requests.
 	Request *Request
+
+	// TLS contains information about the TLS connection on which the
+	// response was received. It is nil for unencrypted responses.
+	// The pointer is shared between responses and should not be
+	// modified.
+	TLS *tls.ConnectionState
 }
 
 // Cookies parses and returns the cookies set in the Set-Cookie headers.
@@ -95,19 +107,17 @@ func (r *Response) Location() (*url.URL, error) {
 	return url.Parse(lv)
 }
 
-// ReadResponse reads and returns an HTTP response from r.  The
-// req parameter specifies the Request that corresponds to
-// this Response.  Clients must call resp.Body.Close when finished
-// reading resp.Body.  After that call, clients can inspect
-// resp.Trailer to find key/value pairs included in the response
-// trailer.
-func ReadResponse(r *bufio.Reader, req *Request) (resp *Response, err error) {
-
+// ReadResponse reads and returns an HTTP response from r.
+// The req parameter optionally specifies the Request that corresponds
+// to this Response. If nil, a GET request is assumed.
+// Clients must call resp.Body.Close when finished reading resp.Body.
+// After that call, clients can inspect resp.Trailer to find key/value
+// pairs included in the response trailer.
+func ReadResponse(r *bufio.Reader, req *Request) (*Response, error) {
 	tp := textproto.NewReader(r)
-	resp = new(Response)
-
-	resp.Request = req
-	resp.Request.Method = strings.ToUpper(resp.Request.Method)
+	resp := &Response{
+		Request: req,
+	}
 
 	// Parse the first line of the response.
 	line, err := tp.ReadLine()
@@ -140,6 +150,9 @@ func ReadResponse(r *bufio.Reader, req *Request) (resp *Response, err error) {
 	// Parse the response headers.
 	mimeHeader, err := tp.ReadMIMEHeader()
 	if err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
 		return nil, err
 	}
 	resp.Header = Header(mimeHeader)
@@ -166,7 +179,7 @@ func fixPragmaCacheControl(header Header) {
 	}
 }
 
-// ProtoAtLeast returns whether the HTTP protocol used
+// ProtoAtLeast reports whether the HTTP protocol used
 // in the response is at least major.minor.
 func (r *Response) ProtoAtLeast(major, minor int) bool {
 	return r.ProtoMajor > major ||
@@ -179,20 +192,15 @@ func (r *Response) ProtoAtLeast(major, minor int) bool {
 //  StatusCode
 //  ProtoMajor
 //  ProtoMinor
-//  RequestMethod
+//  Request.Method
 //  TransferEncoding
 //  Trailer
 //  Body
 //  ContentLength
 //  Header, values for non-canonical keys will have unpredictable behavior
 //
+// Body is closed after it is sent.
 func (r *Response) Write(w io.Writer) error {
-
-	// RequestMethod should be upper-case
-	if r.Request != nil {
-		r.Request.Method = strings.ToUpper(r.Request.Method)
-	}
-
 	// Status line
 	text := r.Status
 	if text == "" {
@@ -202,12 +210,48 @@ func (r *Response) Write(w io.Writer) error {
 			text = "status code " + strconv.Itoa(r.StatusCode)
 		}
 	}
-	io.WriteString(w, "HTTP/"+strconv.Itoa(r.ProtoMajor)+".")
-	io.WriteString(w, strconv.Itoa(r.ProtoMinor)+" ")
-	io.WriteString(w, strconv.Itoa(r.StatusCode)+" "+text+"\r\n")
+	protoMajor, protoMinor := strconv.Itoa(r.ProtoMajor), strconv.Itoa(r.ProtoMinor)
+	statusCode := strconv.Itoa(r.StatusCode) + " "
+	text = strings.TrimPrefix(text, statusCode)
+	if _, err := io.WriteString(w, "HTTP/"+protoMajor+"."+protoMinor+" "+statusCode+text+"\r\n"); err != nil {
+		return err
+	}
+
+	// Clone it, so we can modify r1 as needed.
+	r1 := new(Response)
+	*r1 = *r
+	if r1.ContentLength == 0 && r1.Body != nil {
+		// Is it actually 0 length? Or just unknown?
+		var buf [1]byte
+		n, err := r1.Body.Read(buf[:])
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			// Reset it to a known zero reader, in case underlying one
+			// is unhappy being read repeatedly.
+			r1.Body = eofReader
+		} else {
+			r1.ContentLength = -1
+			r1.Body = struct {
+				io.Reader
+				io.Closer
+			}{
+				io.MultiReader(bytes.NewReader(buf[:1]), r.Body),
+				r.Body,
+			}
+		}
+	}
+	// If we're sending a non-chunked HTTP/1.1 response without a
+	// content-length, the only way to do that is the old HTTP/1.0
+	// way, by noting the EOF with a connection close, so we need
+	// to set Close.
+	if r1.ContentLength == -1 && !r1.Close && r1.ProtoAtLeast(1, 1) && !chunked(r1.TransferEncoding) {
+		r1.Close = true
+	}
 
 	// Process Body,ContentLength,Close,Trailer
-	tw, err := newTransferWriter(r)
+	tw, err := newTransferWriter(r1)
 	if err != nil {
 		return err
 	}
@@ -222,8 +266,19 @@ func (r *Response) Write(w io.Writer) error {
 		return err
 	}
 
+	// contentLengthAlreadySent may have been already sent for
+	// POST/PUT requests, even if zero length. See Issue 8180.
+	contentLengthAlreadySent := tw.shouldSendContentLength()
+	if r1.ContentLength == 0 && !chunked(r1.TransferEncoding) && !contentLengthAlreadySent {
+		if _, err := io.WriteString(w, "Content-Length: 0\r\n"); err != nil {
+			return err
+		}
+	}
+
 	// End-of-header
-	io.WriteString(w, "\r\n")
+	if _, err := io.WriteString(w, "\r\n"); err != nil {
+		return err
+	}
 
 	// Write body and trailer
 	err = tw.WriteBody(w)

@@ -221,7 +221,10 @@ L:
 		if tt.dec != nil {
 			dec = make([]uint32, len(tt.dec))
 		}
-		expandKey(tt.key, enc, dec)
+		// This test could only test Go version of expandKey because asm
+		// version might use different memory layout for expanded keys
+		// This is OK because we don't expose expanded keys to the outside
+		expandKeyGo(tt.key, enc, dec)
 		for j, v := range enc {
 			if v != tt.enc[j] {
 				t.Errorf("key %d: enc[%d] = %#x, want %#x", i, j, v, tt.enc[j])
@@ -351,16 +354,68 @@ func TestCipherDecrypt(t *testing.T) {
 	}
 }
 
+// Test short input/output.
+// Assembly used to not notice.
+// See issue 7928.
+func TestShortBlocks(t *testing.T) {
+	bytes := func(n int) []byte { return make([]byte, n) }
+
+	c, _ := NewCipher(bytes(16))
+
+	mustPanic(t, "crypto/aes: input not full block", func() { c.Encrypt(bytes(1), bytes(1)) })
+	mustPanic(t, "crypto/aes: input not full block", func() { c.Decrypt(bytes(1), bytes(1)) })
+	mustPanic(t, "crypto/aes: input not full block", func() { c.Encrypt(bytes(100), bytes(1)) })
+	mustPanic(t, "crypto/aes: input not full block", func() { c.Decrypt(bytes(100), bytes(1)) })
+	mustPanic(t, "crypto/aes: output not full block", func() { c.Encrypt(bytes(1), bytes(100)) })
+	mustPanic(t, "crypto/aes: output not full block", func() { c.Decrypt(bytes(1), bytes(100)) })
+}
+
+func mustPanic(t *testing.T, msg string, f func()) {
+	defer func() {
+		err := recover()
+		if err == nil {
+			t.Errorf("function did not panic, wanted %q", msg)
+		} else if err != msg {
+			t.Errorf("got panic %v, wanted %q", err, msg)
+		}
+	}()
+	f()
+}
+
 func BenchmarkEncrypt(b *testing.B) {
-	b.StopTimer()
 	tt := encryptTests[0]
 	c, err := NewCipher(tt.key)
 	if err != nil {
 		b.Fatal("NewCipher:", err)
 	}
 	out := make([]byte, len(tt.in))
-	b.StartTimer()
+	b.SetBytes(int64(len(out)))
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c.Encrypt(out, tt.in)
+	}
+}
+
+func BenchmarkDecrypt(b *testing.B) {
+	tt := encryptTests[0]
+	c, err := NewCipher(tt.key)
+	if err != nil {
+		b.Fatal("NewCipher:", err)
+	}
+	out := make([]byte, len(tt.out))
+	b.SetBytes(int64(len(out)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Decrypt(out, tt.out)
+	}
+}
+
+func BenchmarkExpand(b *testing.B) {
+	tt := encryptTests[0]
+	n := len(tt.key) + 28
+	c := &aesCipher{make([]uint32, n), make([]uint32, n)}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		expandKey(tt.key, c.enc, c.dec)
 	}
 }

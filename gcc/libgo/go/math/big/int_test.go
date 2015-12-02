@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -88,7 +90,7 @@ func testFunZZ(t *testing.T, msg string, f funZZ, a argZZ) {
 	var z Int
 	f(&z, a.x, a.y)
 	if !isNormalized(&z) {
-		t.Errorf("%s%v is not normalized", z, msg)
+		t.Errorf("%s%v is not normalized", msg, z)
 	}
 	if (&z).Cmp(a.z) != 0 {
 		t.Errorf("%s%+v\n\tgot z = %v; want %v", msg, a, &z, a.z)
@@ -642,7 +644,7 @@ func TestSetBytes(t *testing.T) {
 
 func checkBytes(b []byte) bool {
 	b2 := new(Int).SetBytes(b).Bytes()
-	return bytes.Compare(b, b2) == 0
+	return bytes.Equal(b, b2)
 }
 
 func TestBytes(t *testing.T) {
@@ -766,10 +768,26 @@ var expTests = []struct {
 	x, y, m string
 	out     string
 }{
+	// y <= 0
+	{"0", "0", "", "1"},
+	{"1", "0", "", "1"},
+	{"-10", "0", "", "1"},
+	{"1234", "-1", "", "1"},
+
+	// m == 1
+	{"0", "0", "1", "0"},
+	{"1", "0", "1", "0"},
+	{"-10", "0", "1", "0"},
+	{"1234", "-1", "1", "0"},
+
+	// misc
+	{"5", "-7", "", "1"},
+	{"-5", "-7", "", "1"},
 	{"5", "0", "", "1"},
-	{"-5", "0", "", "-1"},
+	{"-5", "0", "", "1"},
 	{"5", "1", "", "5"},
 	{"-5", "1", "", "-5"},
+	{"-5", "1", "7", "2"},
 	{"-2", "3", "2", "0"},
 	{"5", "2", "", "25"},
 	{"1", "65537", "2", "1"},
@@ -778,11 +796,19 @@ var expTests = []struct {
 	{"0x8000000000000000", "3", "6719", "5447"},
 	{"0x8000000000000000", "1000", "6719", "1603"},
 	{"0x8000000000000000", "1000000", "6719", "3199"},
+	{"0x8000000000000000", "-1000000", "6719", "1"},
 	{
 		"2938462938472983472983659726349017249287491026512746239764525612965293865296239471239874193284792387498274256129746192347",
 		"298472983472983471903246121093472394872319615612417471234712061",
 		"29834729834729834729347290846729561262544958723956495615629569234729836259263598127342374289365912465901365498236492183464",
 		"23537740700184054162508175125554701713153216681790245129157191391322321508055833908509185839069455749219131480588829346291",
+	},
+	// test case for issue 8822
+	{
+		"-0x1BCE04427D8032319A89E5C4136456671AC620883F2C4139E57F91307C485AD2D6204F4F87A58262652DB5DBBAC72B0613E51B835E7153BEC6068F5C8D696B74DBD18FEC316AEF73985CF0475663208EB46B4F17DD9DA55367B03323E5491A70997B90C059FB34809E6EE55BCFBD5F2F52233BFE62E6AA9E4E26A1D4C2439883D14F2633D55D8AA66A1ACD5595E778AC3A280517F1157989E70C1A437B849F1877B779CC3CDDEDE2DAA6594A6C66D181A00A5F777EE60596D8773998F6E988DEAE4CCA60E4DDCF9590543C89F74F603259FCAD71660D30294FBBE6490300F78A9D63FA660DC9417B8B9DDA28BEB3977B621B988E23D4D954F322C3540541BC649ABD504C50FADFD9F0987D58A2BF689313A285E773FF02899A6EF887D1D4A0D2",
+		"0xB08FFB20760FFED58FADA86DFEF71AD72AA0FA763219618FE022C197E54708BB1191C66470250FCE8879487507CEE41381CA4D932F81C2B3F1AB20B539D50DCD",
+		"0xAC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC3192943DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310DCD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FBD5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF747359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E7303CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB694B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F9E4AFF73",
+		"21484252197776302499639938883777710321993113097987201050501182909581359357618579566746556372589385361683610524730509041328855066514963385522570894839035884713051640171474186548713546686476761306436434146475140156284389181808675016576845833340494848283681088886584219750554408060556769486628029028720727393293111678826356480455433909233520504112074401376133077150471237549474149190242010469539006449596611576612573955754349042329130631128234637924786466585703488460540228477440853493392086251021228087076124706778899179648655221663765993962724699135217212118535057766739392069738618682722216712319320435674779146070442",
 	},
 }
 
@@ -806,25 +832,33 @@ func TestExp(t *testing.T) {
 			continue
 		}
 
-		z := y.Exp(x, y, m)
-		if !isNormalized(z) {
-			t.Errorf("#%d: %v is not normalized", i, *z)
+		z1 := new(Int).Exp(x, y, m)
+		if !isNormalized(z1) {
+			t.Errorf("#%d: %v is not normalized", i, *z1)
 		}
-		if z.Cmp(out) != 0 {
-			t.Errorf("#%d: got %s want %s", i, z, out)
+		if z1.Cmp(out) != 0 {
+			t.Errorf("#%d: got %s want %s", i, z1, out)
+		}
+
+		if m == nil {
+			// The result should be the same as for m == 0;
+			// specifically, there should be no div-zero panic.
+			m = &Int{abs: nat{}} // m != nil && len(m.abs) == 0
+			z2 := new(Int).Exp(x, y, m)
+			if z2.Cmp(z1) != 0 {
+				t.Errorf("#%d: got %s want %s", i, z2, z1)
+			}
 		}
 	}
 }
 
 func checkGcd(aBytes, bBytes []byte) bool {
+	x := new(Int)
+	y := new(Int)
 	a := new(Int).SetBytes(aBytes)
 	b := new(Int).SetBytes(bBytes)
 
-	x := new(Int)
-	y := new(Int)
-	d := new(Int)
-
-	d.GCD(x, y, a, b)
+	d := new(Int).GCD(x, y, a, b)
 	x.Mul(x, a)
 	y.Mul(y, b)
 	x.Add(x, y)
@@ -833,32 +867,70 @@ func checkGcd(aBytes, bBytes []byte) bool {
 }
 
 var gcdTests = []struct {
-	a, b    int64
-	d, x, y int64
+	d, x, y, a, b string
 }{
-	{120, 23, 1, -9, 47},
+	// a <= 0 || b <= 0
+	{"0", "0", "0", "0", "0"},
+	{"0", "0", "0", "0", "7"},
+	{"0", "0", "0", "11", "0"},
+	{"0", "0", "0", "-77", "35"},
+	{"0", "0", "0", "64515", "-24310"},
+	{"0", "0", "0", "-64515", "-24310"},
+
+	{"1", "-9", "47", "120", "23"},
+	{"7", "1", "-2", "77", "35"},
+	{"935", "-3", "8", "64515", "24310"},
+	{"935000000000000000", "-3", "8", "64515000000000000000", "24310000000000000000"},
+	{"1", "-221", "22059940471369027483332068679400581064239780177629666810348940098015901108344", "98920366548084643601728869055592650835572950932266967461790948584315647051443", "991"},
+
+	// test early exit (after one Euclidean iteration) in binaryGCD
+	{"1", "", "", "1", "98920366548084643601728869055592650835572950932266967461790948584315647051443"},
+}
+
+func testGcd(t *testing.T, d, x, y, a, b *Int) {
+	var X *Int
+	if x != nil {
+		X = new(Int)
+	}
+	var Y *Int
+	if y != nil {
+		Y = new(Int)
+	}
+
+	D := new(Int).GCD(X, Y, a, b)
+	if D.Cmp(d) != 0 {
+		t.Errorf("GCD(%s, %s): got d = %s, want %s", a, b, D, d)
+	}
+	if x != nil && X.Cmp(x) != 0 {
+		t.Errorf("GCD(%s, %s): got x = %s, want %s", a, b, X, x)
+	}
+	if y != nil && Y.Cmp(y) != 0 {
+		t.Errorf("GCD(%s, %s): got y = %s, want %s", a, b, Y, y)
+	}
+
+	// binaryGCD requires a > 0 && b > 0
+	if a.Sign() <= 0 || b.Sign() <= 0 {
+		return
+	}
+
+	D.binaryGCD(a, b)
+	if D.Cmp(d) != 0 {
+		t.Errorf("binaryGcd(%s, %s): got d = %s, want %s", a, b, D, d)
+	}
 }
 
 func TestGcd(t *testing.T) {
-	for i, test := range gcdTests {
-		a := NewInt(test.a)
-		b := NewInt(test.b)
+	for _, test := range gcdTests {
+		d, _ := new(Int).SetString(test.d, 0)
+		x, _ := new(Int).SetString(test.x, 0)
+		y, _ := new(Int).SetString(test.y, 0)
+		a, _ := new(Int).SetString(test.a, 0)
+		b, _ := new(Int).SetString(test.b, 0)
 
-		x := new(Int)
-		y := new(Int)
-		d := new(Int)
-
-		expectedX := NewInt(test.x)
-		expectedY := NewInt(test.y)
-		expectedD := NewInt(test.d)
-
-		d.GCD(x, y, a, b)
-
-		if expectedX.Cmp(x) != 0 ||
-			expectedY.Cmp(y) != 0 ||
-			expectedD.Cmp(d) != 0 {
-			t.Errorf("#%d got (%s %s %s) want (%s %s %s)", i, x, y, d, expectedX, expectedY, expectedD)
-		}
+		testGcd(t, d, nil, nil, a, b)
+		testGcd(t, d, x, nil, a, b)
+		testGcd(t, d, nil, y, a, b)
+		testGcd(t, d, x, y, a, b)
 	}
 
 	quick.Check(checkGcd, nil)
@@ -1085,6 +1157,36 @@ func TestInt64(t *testing.T) {
 	}
 }
 
+var uint64Tests = []uint64{
+	0,
+	1,
+	4294967295,
+	4294967296,
+	8589934591,
+	8589934592,
+	9223372036854775807,
+	9223372036854775808,
+	18446744073709551615, // 1<<64 - 1
+}
+
+func TestUint64(t *testing.T) {
+	in := new(Int)
+	for i, testVal := range uint64Tests {
+		in.SetUint64(testVal)
+		out := in.Uint64()
+
+		if out != testVal {
+			t.Errorf("#%d got %d want %d", i, out, testVal)
+		}
+
+		str := fmt.Sprint(testVal)
+		strOut := in.String()
+		if strOut != str {
+			t.Errorf("#%d.String got %s want %s", i, strOut, str)
+		}
+	}
+}
+
 var bitwiseTests = []struct {
 	x, y                 string
 	and, or, xor, andNot string
@@ -1099,6 +1201,7 @@ var bitwiseTests = []struct {
 	{"-0x01", "-0x01", "-0x01", "-0x01", "0x00", "0x00"},
 	{"0x07", "0x08", "0x00", "0x0f", "0x0f", "0x07"},
 	{"0x05", "0x0f", "0x05", "0x0f", "0x0a", "0x00"},
+	{"0xff", "-0x0a", "0xf6", "-0x01", "-0xf7", "0x09"},
 	{"0x013ff6", "0x9a4e", "0x1a46", "0x01bffe", "0x01a5b8", "0x0125b0"},
 	{"-0x013ff6", "0x9a4e", "0x800a", "-0x0125b2", "-0x01a5bc", "-0x01c000"},
 	{"-0x013ff6", "-0x9a4e", "-0x01bffe", "-0x1a46", "0x01a5b8", "0x8008"},
@@ -1346,30 +1449,50 @@ func TestNot(t *testing.T) {
 
 var modInverseTests = []struct {
 	element string
-	prime   string
+	modulus string
 }{
-	{"1", "7"},
-	{"1", "13"},
+	{"1234567", "458948883992"},
 	{"239487239847", "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919"},
 }
 
 func TestModInverse(t *testing.T) {
-	var element, prime Int
+	var element, modulus, gcd, inverse Int
 	one := NewInt(1)
 	for i, test := range modInverseTests {
 		(&element).SetString(test.element, 10)
-		(&prime).SetString(test.prime, 10)
-		inverse := new(Int).ModInverse(&element, &prime)
-		inverse.Mul(inverse, &element)
-		inverse.Mod(inverse, &prime)
-		if inverse.Cmp(one) != 0 {
-			t.Errorf("#%d: failed (e·e^(-1)=%s)", i, inverse)
+		(&modulus).SetString(test.modulus, 10)
+		(&inverse).ModInverse(&element, &modulus)
+		(&inverse).Mul(&inverse, &element)
+		(&inverse).Mod(&inverse, &modulus)
+		if (&inverse).Cmp(one) != 0 {
+			t.Errorf("#%d: failed (e·e^(-1)=%s)", i, &inverse)
+		}
+	}
+	// exhaustive test for small values
+	for n := 2; n < 100; n++ {
+		(&modulus).SetInt64(int64(n))
+		for x := 1; x < n; x++ {
+			(&element).SetInt64(int64(x))
+			(&gcd).GCD(nil, nil, &element, &modulus)
+			if (&gcd).Cmp(one) != 0 {
+				continue
+			}
+			(&inverse).ModInverse(&element, &modulus)
+			(&inverse).Mul(&inverse, &element)
+			(&inverse).Mod(&inverse, &modulus)
+			if (&inverse).Cmp(one) != 0 {
+				t.Errorf("ModInverse(%d,%d)*%d%%%d=%d, not 1", &element, &modulus, &element, &modulus, &inverse)
+			}
 		}
 	}
 }
 
-// used by TestIntGobEncoding and TestRatGobEncoding
-var gobEncodingTests = []string{
+var encodingTests = []string{
+	"-539345864568634858364538753846587364875430589374589",
+	"-678645873",
+	"-100",
+	"-2",
+	"-1",
 	"0",
 	"1",
 	"2",
@@ -1383,26 +1506,115 @@ func TestIntGobEncoding(t *testing.T) {
 	var medium bytes.Buffer
 	enc := gob.NewEncoder(&medium)
 	dec := gob.NewDecoder(&medium)
-	for i, test := range gobEncodingTests {
-		for j := 0; j < 2; j++ {
-			medium.Reset() // empty buffer for each test case (in case of failures)
-			stest := test
-			if j != 0 {
-				// negative numbers
-				stest = "-" + test
-			}
-			var tx Int
-			tx.SetString(stest, 10)
-			if err := enc.Encode(&tx); err != nil {
-				t.Errorf("#%d%c: encoding failed: %s", i, 'a'+j, err)
-			}
-			var rx Int
-			if err := dec.Decode(&rx); err != nil {
-				t.Errorf("#%d%c: decoding failed: %s", i, 'a'+j, err)
-			}
-			if rx.Cmp(&tx) != 0 {
-				t.Errorf("#%d%c: transmission failed: got %s want %s", i, 'a'+j, &rx, &tx)
-			}
+	for _, test := range encodingTests {
+		medium.Reset() // empty buffer for each test case (in case of failures)
+		var tx Int
+		tx.SetString(test, 10)
+		if err := enc.Encode(&tx); err != nil {
+			t.Errorf("encoding of %s failed: %s", &tx, err)
+		}
+		var rx Int
+		if err := dec.Decode(&rx); err != nil {
+			t.Errorf("decoding of %s failed: %s", &tx, err)
+		}
+		if rx.Cmp(&tx) != 0 {
+			t.Errorf("transmission of %s failed: got %s want %s", &tx, &rx, &tx)
+		}
+	}
+}
+
+// Sending a nil Int pointer (inside a slice) on a round trip through gob should yield a zero.
+// TODO: top-level nils.
+func TestGobEncodingNilIntInSlice(t *testing.T) {
+	buf := new(bytes.Buffer)
+	enc := gob.NewEncoder(buf)
+	dec := gob.NewDecoder(buf)
+
+	var in = make([]*Int, 1)
+	err := enc.Encode(&in)
+	if err != nil {
+		t.Errorf("gob encode failed: %q", err)
+	}
+	var out []*Int
+	err = dec.Decode(&out)
+	if err != nil {
+		t.Fatalf("gob decode failed: %q", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("wrong len; want 1 got %d", len(out))
+	}
+	var zero Int
+	if out[0].Cmp(&zero) != 0 {
+		t.Errorf("transmission of (*Int)(nill) failed: got %s want 0", out)
+	}
+}
+
+func TestIntJSONEncoding(t *testing.T) {
+	for _, test := range encodingTests {
+		var tx Int
+		tx.SetString(test, 10)
+		b, err := json.Marshal(&tx)
+		if err != nil {
+			t.Errorf("marshaling of %s failed: %s", &tx, err)
+		}
+		var rx Int
+		if err := json.Unmarshal(b, &rx); err != nil {
+			t.Errorf("unmarshaling of %s failed: %s", &tx, err)
+		}
+		if rx.Cmp(&tx) != 0 {
+			t.Errorf("JSON encoding of %s failed: got %s want %s", &tx, &rx, &tx)
+		}
+	}
+}
+
+var intVals = []string{
+	"-141592653589793238462643383279502884197169399375105820974944592307816406286",
+	"-1415926535897932384626433832795028841971",
+	"-141592653589793",
+	"-1",
+	"0",
+	"1",
+	"141592653589793",
+	"1415926535897932384626433832795028841971",
+	"141592653589793238462643383279502884197169399375105820974944592307816406286",
+}
+
+func TestIntJSONEncodingTextMarshaller(t *testing.T) {
+	for _, num := range intVals {
+		var tx Int
+		tx.SetString(num, 0)
+		b, err := json.Marshal(&tx)
+		if err != nil {
+			t.Errorf("marshaling of %s failed: %s", &tx, err)
+			continue
+		}
+		var rx Int
+		if err := json.Unmarshal(b, &rx); err != nil {
+			t.Errorf("unmarshaling of %s failed: %s", &tx, err)
+			continue
+		}
+		if rx.Cmp(&tx) != 0 {
+			t.Errorf("JSON encoding of %s failed: got %s want %s", &tx, &rx, &tx)
+		}
+	}
+}
+
+func TestIntXMLEncodingTextMarshaller(t *testing.T) {
+	for _, num := range intVals {
+		var tx Int
+		tx.SetString(num, 0)
+		b, err := xml.Marshal(&tx)
+		if err != nil {
+			t.Errorf("marshaling of %s failed: %s", &tx, err)
+			continue
+		}
+		var rx Int
+		if err := xml.Unmarshal(b, &rx); err != nil {
+			t.Errorf("unmarshaling of %s failed: %s", &tx, err)
+			continue
+		}
+		if rx.Cmp(&tx) != 0 {
+			t.Errorf("XML encoding of %s failed: got %s want %s", &tx, &rx, &tx)
 		}
 	}
 }

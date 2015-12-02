@@ -1,5 +1,5 @@
 /* Pass manager for Fortran front end.
-   Copyright (C) 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2010-2015 Free Software Foundation, Inc.
    Contributed by Thomas König.
 
 This file is part of GCC.
@@ -20,6 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "config.h"
 #include "system.h"
+#include "coretypes.h"
 #include "gfortran.h"
 #include "arith.h"
 #include "flags.h"
@@ -37,16 +38,20 @@ static bool optimize_comparison (gfc_expr *, gfc_intrinsic_op);
 static bool optimize_trim (gfc_expr *);
 static bool optimize_lexical_comparison (gfc_expr *);
 static void optimize_minmaxloc (gfc_expr **);
+static bool is_empty_string (gfc_expr *e);
+static void doloop_warn (gfc_namespace *);
+static void optimize_reduction (gfc_namespace *);
+static int callback_reduction (gfc_expr **, int *, void *);
+static void realloc_strings (gfc_namespace *);
+static gfc_expr *create_var (gfc_expr *);
 
 /* How deep we are inside an argument list.  */
 
 static int count_arglist;
 
-/* Pointer to an array of gfc_expr ** we operate on, plus its size
-   and counter.  */
+/* Vector of gfc_expr ** we operate on.  */
 
-static gfc_expr ***expr_array;
-static int expr_size, expr_count;
+static vec<gfc_expr **> expr_array;
 
 /* Pointer to the gfc_code we currently work on - to be able to insert
    a block before the statement.  */
@@ -70,23 +75,91 @@ static int forall_level;
 
 static bool in_omp_workshare;
 
-/* Entry point - run all passes for a namespace.  So far, only an
-   optimization pass is run.  */
+/* Keep track of iterators for array constructors.  */
+
+static int iterator_level;
+
+/* Keep track of DO loop levels.  */
+
+static vec<gfc_code *> doloop_list;
+
+static int doloop_level;
+
+/* Vector of gfc_expr * to keep track of DO loops.  */
+
+struct my_struct *evec;
+
+/* Keep track of association lists.  */
+
+static bool in_assoc_list;
+
+/* Entry point - run all passes for a namespace.  */
 
 void
 gfc_run_passes (gfc_namespace *ns)
 {
-  if (gfc_option.flag_frontend_optimize)
-    {
-      expr_size = 20;
-      expr_array = XNEWVEC(gfc_expr **, expr_size);
 
+  /* Warn about dubious DO loops where the index might
+     change.  */
+
+  doloop_level = 0;
+  doloop_warn (ns);
+  doloop_list.release ();
+
+  if (flag_frontend_optimize)
+    {
       optimize_namespace (ns);
-      if (gfc_option.dump_fortran_optimized)
+      optimize_reduction (ns);
+      if (flag_dump_fortran_optimized)
 	gfc_dump_parse_tree (ns, stdout);
 
-      XDELETEVEC (expr_array);
+      expr_array.release ();
     }
+
+  if (flag_realloc_lhs)
+    realloc_strings (ns);
+}
+
+/* Callback for each gfc_code node invoked from check_realloc_strings.
+   For an allocatable LHS string which also appears as a variable on
+   the RHS, replace 
+
+   a = a(x:y)
+
+   with
+
+   tmp = a(x:y)
+   a = tmp
+ */
+
+static int
+realloc_string_callback (gfc_code **c, int *walk_subtrees,
+			 void *data ATTRIBUTE_UNUSED)
+{
+  gfc_expr *expr1, *expr2;
+  gfc_code *co = *c;
+  gfc_expr *n;
+
+  *walk_subtrees = 0;
+  if (co->op != EXEC_ASSIGN)
+    return 0;
+
+  expr1 = co->expr1;
+  if (expr1->ts.type != BT_CHARACTER || expr1->rank != 0
+      || !expr1->symtree->n.sym->attr.allocatable)
+    return 0;
+
+  expr2 = gfc_discard_nops (co->expr2);
+  if (expr2->expr_type != EXPR_VARIABLE)
+    return 0;
+
+  if (!gfc_check_dependency (expr1, expr2, true))
+    return 0;
+  
+  current_code = c;
+  n = create_var (expr2);
+  co->expr2 = n;
+  return 0;
 }
 
 /* Callback for each gfc_code node invoked through gfc_code_walker
@@ -106,6 +179,10 @@ optimize_code (gfc_code **c, int *walk_subtrees ATTRIBUTE_UNUSED,
     count_arglist = 1;
   else
     count_arglist = 0;
+
+  current_code = c;
+  inserted_block = NULL;
+  changed_statement = NULL;
 
   if (op == EXEC_ASSIGN)
     optimize_assignment (*c);
@@ -155,6 +232,162 @@ optimize_expr (gfc_expr **e, int *walk_subtrees ATTRIBUTE_UNUSED,
   return 0;
 }
 
+/* Auxiliary function to handle the arguments to reduction intrnisics.  If the
+   function is a scalar, just copy it; otherwise returns the new element, the
+   old one can be freed.  */
+
+static gfc_expr *
+copy_walk_reduction_arg (gfc_constructor *c, gfc_expr *fn)
+{
+  gfc_expr *fcn, *e = c->expr;
+
+  fcn = gfc_copy_expr (e);
+  if (c->iterator)
+    {
+      gfc_constructor_base newbase;
+      gfc_expr *new_expr;
+      gfc_constructor *new_c;
+
+      newbase = NULL;
+      new_expr = gfc_get_expr ();
+      new_expr->expr_type = EXPR_ARRAY;
+      new_expr->ts = e->ts;
+      new_expr->where = e->where;
+      new_expr->rank = 1;
+      new_c = gfc_constructor_append_expr (&newbase, fcn, &(e->where));
+      new_c->iterator = c->iterator;
+      new_expr->value.constructor = newbase;
+      c->iterator = NULL;
+
+      fcn = new_expr;
+    }
+
+  if (fcn->rank != 0)
+    {
+      gfc_isym_id id = fn->value.function.isym->id;
+
+      if (id == GFC_ISYM_SUM || id == GFC_ISYM_PRODUCT)
+	fcn = gfc_build_intrinsic_call (current_ns, id,
+					fn->value.function.isym->name,
+					fn->where, 3, fcn, NULL, NULL);
+      else if (id == GFC_ISYM_ANY || id == GFC_ISYM_ALL)
+	fcn = gfc_build_intrinsic_call (current_ns, id,
+					fn->value.function.isym->name,
+					fn->where, 2, fcn, NULL);
+      else
+	gfc_internal_error ("Illegal id in copy_walk_reduction_arg");
+
+      fcn->symtree->n.sym->attr.access = ACCESS_PRIVATE;
+    }
+
+  return fcn;
+}
+
+/* Callback function for optimzation of reductions to scalars.  Transform ANY
+   ([f1,f2,f3, ...]) to f1 .or. f2 .or. f3 .or. ..., with ANY, SUM and PRODUCT
+   correspondingly.  Handly only the simple cases without MASK and DIM.  */
+
+static int
+callback_reduction (gfc_expr **e, int *walk_subtrees ATTRIBUTE_UNUSED,
+		    void *data ATTRIBUTE_UNUSED)
+{
+  gfc_expr *fn, *arg;
+  gfc_intrinsic_op op;
+  gfc_isym_id id;
+  gfc_actual_arglist *a;
+  gfc_actual_arglist *dim;
+  gfc_constructor *c;
+  gfc_expr *res, *new_expr;
+  gfc_actual_arglist *mask;
+
+  fn = *e;
+
+  if (fn->rank != 0 || fn->expr_type != EXPR_FUNCTION
+      || fn->value.function.isym == NULL)
+    return 0;
+
+  id = fn->value.function.isym->id;
+
+  if (id != GFC_ISYM_SUM && id != GFC_ISYM_PRODUCT
+      && id != GFC_ISYM_ANY && id != GFC_ISYM_ALL)
+    return 0;
+
+  a = fn->value.function.actual;
+
+  /* Don't handle MASK or DIM.  */
+
+  dim = a->next;
+
+  if (dim->expr != NULL)
+    return 0;
+
+  if (id == GFC_ISYM_SUM || id == GFC_ISYM_PRODUCT)
+    {
+      mask = dim->next;
+      if ( mask->expr != NULL)
+	return 0;
+    }
+
+  arg = a->expr;
+
+  if (arg->expr_type != EXPR_ARRAY)
+    return 0;
+
+  switch (id)
+    {
+    case GFC_ISYM_SUM:
+      op = INTRINSIC_PLUS;
+      break;
+
+    case GFC_ISYM_PRODUCT:
+      op = INTRINSIC_TIMES;
+      break;
+
+    case GFC_ISYM_ANY:
+      op = INTRINSIC_OR;
+      break;
+
+    case GFC_ISYM_ALL:
+      op = INTRINSIC_AND;
+      break;
+
+    default:
+      return 0;
+    }
+
+  c = gfc_constructor_first (arg->value.constructor);
+
+  /* Don't do any simplififcation if we have
+     - no element in the constructor or
+     - only have a single element in the array which contains an
+     iterator.  */
+
+  if (c == NULL)
+    return 0;
+
+  res = copy_walk_reduction_arg (c, fn);
+
+  c = gfc_constructor_next (c);
+  while (c)
+    {
+      new_expr = gfc_get_expr ();
+      new_expr->ts = fn->ts;
+      new_expr->expr_type = EXPR_OP;
+      new_expr->rank = fn->rank;
+      new_expr->where = fn->where;
+      new_expr->value.op.op = op;
+      new_expr->value.op.op1 = res;
+      new_expr->value.op.op2 = copy_walk_reduction_arg (c, fn);
+      res = new_expr;
+      c = gfc_constructor_next (c);
+    }
+
+  gfc_simplify_expr (res, 0);
+  *e = res;
+  gfc_free_expr (fn);
+
+  return 0;
+}
 
 /* Callback function for common function elimination, called from cfe_expr_0.
    Put all eligible function expressions into expr_array.  */
@@ -179,11 +412,18 @@ cfe_register_funcs (gfc_expr **e, int *walk_subtrees ATTRIBUTE_UNUSED,
   if (forall_level > 0)
     return 0;
 
+  /* Function elimination inside an iterator could lead to functions which
+     depend on iterator variables being moved outside.  FIXME: We should check
+     if the functions do indeed depend on the iterator variable.  */
+
+  if (iterator_level > 0)
+    return 0;
+
   /* If we don't know the shape at compile time, we create an allocatable
      temporary variable to hold the intermediate result, but only if
      allocation on assignment is active.  */
 
-  if ((*e)->rank > 0 && (*e)->shape == NULL && !gfc_option.flag_realloc_lhs)
+  if ((*e)->rank > 0 && (*e)->shape == NULL && !flag_realloc_lhs)
     return 0;
   
   /* Skip the test for pure functions if -faggressive-function-elimination
@@ -196,7 +436,7 @@ cfe_register_funcs (gfc_expr **e, int *walk_subtrees ATTRIBUTE_UNUSED,
 
       /* Only eliminate potentially impure functions if the
 	 user specifically requested it.  */
-      if (!gfc_option.flag_aggressive_function_elimination
+      if (!flag_aggressive_function_elimination
 	  && !(*e)->value.function.esym->attr.pure
 	  && !(*e)->value.function.esym->attr.implicit_pure)
 	return 0;
@@ -221,21 +461,76 @@ cfe_register_funcs (gfc_expr **e, int *walk_subtrees ATTRIBUTE_UNUSED,
 	return 0;
     }
 
-  if (expr_count >= expr_size)
-    {
-      expr_size += expr_size;
-      expr_array = XRESIZEVEC(gfc_expr **, expr_array, expr_size);
-    }
-  expr_array[expr_count] = e;
-  expr_count ++;
+  expr_array.safe_push (e);
   return 0;
 }
 
+/* Auxiliary function to check if an expression is a temporary created by
+   create var.  */
+
+static bool
+is_fe_temp (gfc_expr *e)
+{
+  if (e->expr_type != EXPR_VARIABLE)
+    return false;
+
+  return e->symtree->n.sym->attr.fe_temp;
+}
+
+/* Determine the length of a string, if it can be evaluated as a constant
+   expression.  Return a newly allocated gfc_expr or NULL on failure.
+   If the user specified a substring which is potentially longer than
+   the string itself, the string will be padded with spaces, which
+   is harmless.  */
+
+static gfc_expr *
+constant_string_length (gfc_expr *e)
+{
+
+  gfc_expr *length;
+  gfc_ref *ref;
+  gfc_expr *res;
+  mpz_t value;
+
+  if (e->ts.u.cl)
+    {
+      length = e->ts.u.cl->length;
+      if (length && length->expr_type == EXPR_CONSTANT)
+	return gfc_copy_expr(length);
+    }
+
+  /* Return length of substring, if constant. */
+  for (ref = e->ref; ref; ref = ref->next)
+    {
+      if (ref->type == REF_SUBSTRING
+	  && gfc_dep_difference (ref->u.ss.end, ref->u.ss.start, &value))
+	{
+	  res = gfc_get_constant_expr (BT_INTEGER, gfc_charlen_int_kind,
+				       &e->where);
+	  
+	  mpz_add_ui (res->value.integer, value, 1);
+	  mpz_clear (value);
+	  return res;
+	}
+    }
+
+  /* Return length of char symbol, if constant.  */
+
+  if (e->symtree->n.sym->ts.u.cl && e->symtree->n.sym->ts.u.cl->length
+      && e->symtree->n.sym->ts.u.cl->length->expr_type == EXPR_CONSTANT)
+    return gfc_copy_expr (e->symtree->n.sym->ts.u.cl->length);
+
+  return NULL;
+
+}
+
 /* Returns a new expression (a variable) to be used in place of the old one,
-   with an an assignment statement before the current statement to set
+   with an assignment statement before the current statement to set
    the value of the variable. Creates a new BLOCK for the statement if
    that hasn't already been done and puts the statement, plus the
-   newly created variables, in that block.  */
+   newly created variables, in that block.  Special cases:  If the
+   expression is constant or a temporary which has already
+   been created, just copy it.  */
 
 static gfc_expr*
 create_var (gfc_expr * e)
@@ -249,6 +544,9 @@ create_var (gfc_expr * e)
   gfc_namespace *ns;
   int i;
 
+  if (e->expr_type == EXPR_CONSTANT || is_fe_temp (e))
+    return gfc_copy_expr (e);
+
   /* If the block hasn't already been created, do so.  */
   if (inserted_block == NULL)
     {
@@ -260,6 +558,16 @@ create_var (gfc_expr * e)
       inserted_block->ext.block.assoc = NULL;
 
       ns->code = *current_code;
+
+      /* If the statement has a label,  make sure it is transferred to
+	 the newly created block.  */
+
+      if ((*current_code)->here) 
+	{
+	  inserted_block->here = (*current_code)->here;
+	  (*current_code)->here = NULL;
+	}
+
       inserted_block->next = (*current_code)->next;
       changed_statement = &(inserted_block->ext.block.ns->code);
       (*current_code)->next = NULL;
@@ -285,7 +593,7 @@ create_var (gfc_expr * e)
       if (e->shape == NULL)
 	{
 	  /* We don't know the shape at compile time, so we use an
-	     allocatable. */
+	     allocatable.  */
 	  symbol->as->type = AS_DEFERRED;
 	  symbol->attr.allocatable = 1;
 	}
@@ -310,9 +618,24 @@ create_var (gfc_expr * e)
 	}
     }
 
+  if (e->ts.type == BT_CHARACTER && e->rank == 0)
+    {
+      gfc_expr *length;
+
+      length = constant_string_length (e);
+      if (length)
+	{
+	  symbol->ts.u.cl = gfc_new_charlen (ns, NULL);
+	  symbol->ts.u.cl->length = length;
+	}
+      else
+	symbol->attr.allocatable = 1;
+    }
+
   symbol->attr.flavor = FL_VARIABLE;
   symbol->attr.referenced = 1;
   symbol->attr.dimension = e->rank > 0;
+  symbol->attr.fe_temp = 1;
   gfc_commit_symbol (symbol);
 
   result = gfc_get_expr ();
@@ -330,8 +653,9 @@ create_var (gfc_expr * e)
       result->ref->u.ar.where = e->where;
       result->ref->u.ar.as = symbol->ts.type == BT_CLASS
 			     ? CLASS_DATA (symbol)->as : symbol->as;
-      if (gfc_option.warn_array_temp)
-	gfc_warning ("Creating array temporary at %L", &(e->where));
+      if (warn_array_temporaries)
+	gfc_warning (OPT_Warray_temporaries,
+		     "Creating array temporary at %L", &(e->where));
     }
 
   /* Generate the new assignment.  */
@@ -349,15 +673,15 @@ create_var (gfc_expr * e)
 /* Warn about function elimination.  */
 
 static void
-warn_function_elimination (gfc_expr *e)
+do_warn_function_elimination (gfc_expr *e)
 {
   if (e->expr_type != EXPR_FUNCTION)
     return;
   if (e->value.function.esym)
-    gfc_warning ("Removing call to function '%s' at %L",
+    gfc_warning (0, "Removing call to function %qs at %L",
 		 e->value.function.esym->name, &(e->where));
   else if (e->value.function.isym)
-    gfc_warning ("Removing call to function '%s' at %L",
+    gfc_warning (0, "Removing call to function %qs at %L",
 		 e->value.function.isym->name, &(e->where));
 }
 /* Callback function for the code walker for doing common function
@@ -371,8 +695,9 @@ cfe_expr_0 (gfc_expr **e, int *walk_subtrees,
 {
   int i,j;
   gfc_expr *newvar;
+  gfc_expr **ei, **ej;
 
-  /* Don't do this optimization within OMP workshare. */
+  /* Don't do this optimization within OMP workshare.  */
 
   if (in_omp_workshare)
     {
@@ -380,36 +705,36 @@ cfe_expr_0 (gfc_expr **e, int *walk_subtrees,
       return 0;
     }
 
-  expr_count = 0;
+  expr_array.release ();
 
   gfc_expr_walker (e, cfe_register_funcs, NULL);
 
   /* Walk through all the functions.  */
 
-  for (i=1; i<expr_count; i++)
+  FOR_EACH_VEC_ELT_FROM (expr_array, i, ei, 1)
     {
       /* Skip if the function has been replaced by a variable already.  */
-      if ((*(expr_array[i]))->expr_type == EXPR_VARIABLE)
+      if ((*ei)->expr_type == EXPR_VARIABLE)
 	continue;
 
       newvar = NULL;
       for (j=0; j<i; j++)
 	{
-	  if (gfc_dep_compare_functions(*(expr_array[i]),
-					*(expr_array[j]), true)	== 0)
+	  ej = expr_array[j];
+	  if (gfc_dep_compare_functions (*ei, *ej, true) == 0)
 	    {
 	      if (newvar == NULL)
-		newvar = create_var (*(expr_array[i]));
+		newvar = create_var (*ei);
 
-	      if (gfc_option.warn_function_elimination)
-		warn_function_elimination (*(expr_array[j]));
+	      if (warn_function_elimination)
+		do_warn_function_elimination (*ej);
 
-	      free (*(expr_array[j]));
-	      *(expr_array[j]) = gfc_copy_expr (newvar);
+	      free (*ej);
+	      *ej = gfc_copy_expr (newvar);
 	    }
 	}
       if (newvar)
-	*(expr_array[i]) = newvar;
+	*ei = newvar;
     }
 
   /* We did all the necessary walking in this function.  */
@@ -422,12 +747,35 @@ cfe_expr_0 (gfc_expr **e, int *walk_subtrees,
    to insert statements as needed.  */
 
 static int
-cfe_code (gfc_code **c, int *walk_subtrees ATTRIBUTE_UNUSED,
-	  void *data ATTRIBUTE_UNUSED)
+cfe_code (gfc_code **c, int *walk_subtrees, void *data ATTRIBUTE_UNUSED)
 {
   current_code = c;
   inserted_block = NULL;
   changed_statement = NULL;
+
+  /* Do not do anything inside a WHERE statement; scalar assignments, BLOCKs
+     and allocation on assigment are prohibited inside WHERE, and finally
+     masking an expression would lead to wrong-code when replacing
+
+     WHERE (a>0)
+       b = sum(foo(a) + foo(a))
+     END WHERE
+
+     with
+
+     WHERE (a > 0)
+       tmp = foo(a)
+       b = sum(tmp + tmp)
+     END WHERE
+*/
+
+  if ((*c)->op == EXEC_WHERE)
+    {
+      *walk_subtrees = 0;
+      return 0;
+    }
+  
+
   return 0;
 }
 
@@ -439,6 +787,16 @@ dummy_expr_callback (gfc_expr **e ATTRIBUTE_UNUSED, int *walk_subtrees,
 		     void *data ATTRIBUTE_UNUSED)
 {
   *walk_subtrees = 0;
+  return 0;
+}
+
+/* Dummy function for code callback, for use when we really
+   don't want to do anything.  */
+int
+gfc_dummy_code_callback (gfc_code **e ATTRIBUTE_UNUSED,
+			 int *walk_subtrees ATTRIBUTE_UNUSED,
+			 void *data ATTRIBUTE_UNUSED)
+{
   return 0;
 }
 
@@ -581,6 +939,8 @@ optimize_namespace (gfc_namespace *ns)
 
   current_ns = ns;
   forall_level = 0;
+  iterator_level = 0;
+  in_assoc_list = false;
   in_omp_workshare = false;
 
   gfc_code_walker (&ns->code, convert_do_while, dummy_expr_callback, NULL);
@@ -593,6 +953,41 @@ optimize_namespace (gfc_namespace *ns)
     {
       if (ns->code == NULL || ns->code->op != EXEC_BLOCK)
 	optimize_namespace (ns);
+    }
+}
+
+/* Handle dependencies for allocatable strings which potentially redefine
+   themselves in an assignment.  */
+
+static void
+realloc_strings (gfc_namespace *ns)
+{
+  current_ns = ns;
+  gfc_code_walker (&ns->code, realloc_string_callback, dummy_expr_callback, NULL);
+
+  for (ns = ns->contained; ns; ns = ns->sibling)
+    {
+      if (ns->code == NULL || ns->code->op != EXEC_BLOCK)
+	{
+	  // current_ns = ns;
+	  realloc_strings (ns);
+	}
+    }
+
+}
+
+static void
+optimize_reduction (gfc_namespace *ns)
+{
+  current_ns = ns;
+  gfc_code_walker (&ns->code, gfc_dummy_code_callback,
+		   callback_reduction, NULL);
+
+/* BLOCKs are handled in the expression walker below.  */
+  for (ns = ns->contained; ns; ns = ns->sibling)
+    {
+      if (ns->code == NULL || ns->code->op != EXEC_BLOCK)
+	optimize_reduction (ns);
     }
 }
 
@@ -623,6 +1018,10 @@ optimize_binop_array_assignment (gfc_code *c, gfc_expr **rhs, bool seen_op)
 	case INTRINSIC_POWER:
 	  if (optimize_binop_array_assignment (c, &e->value.op.op1, seen_op))
 	    return true;
+	  break;
+
+	case INTRINSIC_CONCAT:
+	  /* Do not do string concatenations.  */
 	  break;
 
 	default:
@@ -712,10 +1111,15 @@ optimize_assignment (gfc_code * c)
   lhs = c->expr1;
   rhs = c->expr2;
 
-  /* Optimize away a = trim(b), where a is a character variable.  */
+  if (lhs->ts.type == BT_CHARACTER && !lhs->ts.deferred)
+    {
+      /* Optimize  a = trim(b)  to  a = b.  */
+      remove_trim (rhs);
 
-  if (lhs->ts.type == BT_CHARACTER)
-    remove_trim (rhs);
+      /* Replace a = '   ' by a = '' to optimize away a memcpy.  */
+      if (is_empty_string (rhs))
+	rhs->value.character.length = 0;
+    }
 
   if (lhs->rank > 0 && gfc_check_dependency (lhs, rhs, true) == 0)
     optimize_binop_array_assignment (c, &rhs, false);
@@ -777,34 +1181,295 @@ optimize_lexical_comparison (gfc_expr *e)
   return false;
 }
 
+/* Combine stuff like [a]>b into [a>b], for easier optimization later.  Do not
+   do CHARACTER because of possible pessimization involving character
+   lengths.  */
+
+static bool
+combine_array_constructor (gfc_expr *e)
+{
+
+  gfc_expr *op1, *op2;
+  gfc_expr *scalar;
+  gfc_expr *new_expr;
+  gfc_constructor *c, *new_c;
+  gfc_constructor_base oldbase, newbase;
+  bool scalar_first;
+
+  /* Array constructors have rank one.  */
+  if (e->rank != 1)
+    return false;
+
+  /* Don't try to combine association lists, this makes no sense
+     and leads to an ICE.  */
+  if (in_assoc_list)
+    return false;
+
+  /* With FORALL, the BLOCKS created by create_var will cause an ICE.  */
+  if (forall_level > 0)
+    return false;
+
+  op1 = e->value.op.op1;
+  op2 = e->value.op.op2;
+
+  if (op1->expr_type == EXPR_ARRAY && op2->rank == 0)
+    scalar_first = false;
+  else if (op2->expr_type == EXPR_ARRAY && op1->rank == 0)
+    {
+      scalar_first = true;
+      op1 = e->value.op.op2;
+      op2 = e->value.op.op1;
+    }
+  else
+    return false;
+
+  if (op2->ts.type == BT_CHARACTER)
+    return false;
+
+  scalar = create_var (gfc_copy_expr (op2));
+
+  oldbase = op1->value.constructor;
+  newbase = NULL;
+  e->expr_type = EXPR_ARRAY;
+
+  for (c = gfc_constructor_first (oldbase); c;
+       c = gfc_constructor_next (c))
+    {
+      new_expr = gfc_get_expr ();
+      new_expr->ts = e->ts;
+      new_expr->expr_type = EXPR_OP;
+      new_expr->rank = c->expr->rank;
+      new_expr->where = c->where;
+      new_expr->value.op.op = e->value.op.op;
+
+      if (scalar_first)
+	{
+	  new_expr->value.op.op1 = gfc_copy_expr (scalar);
+	  new_expr->value.op.op2 = gfc_copy_expr (c->expr);
+	}
+      else
+	{
+	  new_expr->value.op.op1 = gfc_copy_expr (c->expr);
+	  new_expr->value.op.op2 = gfc_copy_expr (scalar);
+	}
+
+      new_c = gfc_constructor_append_expr (&newbase, new_expr, &(e->where));
+      new_c->iterator = c->iterator;
+      c->iterator = NULL;
+    }
+
+  gfc_free_expr (op1);
+  gfc_free_expr (op2);
+  gfc_free_expr (scalar);
+
+  e->value.constructor = newbase;
+  return true;
+}
+
+/* Change (-1)**k into 1-ishift(iand(k,1),1) and
+ 2**k into ishift(1,k) */
+
+static bool
+optimize_power (gfc_expr *e)
+{
+  gfc_expr *op1, *op2;
+  gfc_expr *iand, *ishft;
+
+  if (e->ts.type != BT_INTEGER)
+    return false;
+
+  op1 = e->value.op.op1;
+
+  if (op1 == NULL || op1->expr_type != EXPR_CONSTANT)
+    return false;
+
+  if (mpz_cmp_si (op1->value.integer, -1L) == 0)
+    {
+      gfc_free_expr (op1);
+
+      op2 = e->value.op.op2;
+
+      if (op2 == NULL)
+	return false;
+
+      iand = gfc_build_intrinsic_call (current_ns, GFC_ISYM_IAND,
+				       "_internal_iand", e->where, 2, op2,
+				       gfc_get_int_expr (e->ts.kind,
+							 &e->where, 1));
+				   
+      ishft = gfc_build_intrinsic_call (current_ns, GFC_ISYM_ISHFT,
+					"_internal_ishft", e->where, 2, iand,
+					gfc_get_int_expr (e->ts.kind,
+							  &e->where, 1));
+
+      e->value.op.op = INTRINSIC_MINUS;
+      e->value.op.op1 = gfc_get_int_expr (e->ts.kind, &e->where, 1);
+      e->value.op.op2 = ishft;
+      return true;
+    }
+  else if (mpz_cmp_si (op1->value.integer, 2L) == 0)
+    {
+      gfc_free_expr (op1);
+
+      op2 = e->value.op.op2;
+      if (op2 == NULL)
+	return false;
+
+      ishft = gfc_build_intrinsic_call (current_ns, GFC_ISYM_ISHFT,
+					"_internal_ishft", e->where, 2,
+					gfc_get_int_expr (e->ts.kind,
+							  &e->where, 1),
+					op2);
+      *e = *ishft;
+      return true;
+    }
+
+  else if (mpz_cmp_si (op1->value.integer, 1L) == 0)
+    {
+      op2 = e->value.op.op2;
+      if (op2 == NULL)
+	return false;
+
+      gfc_free_expr (op1);
+      gfc_free_expr (op2);
+
+      e->expr_type = EXPR_CONSTANT;
+      e->value.op.op1 = NULL;
+      e->value.op.op2 = NULL;
+      mpz_init_set_si (e->value.integer, 1);
+      /* Typespec and location are still OK.  */
+      return true;
+    }
+
+  return false;
+}
+
 /* Recursive optimization of operators.  */
 
 static bool
 optimize_op (gfc_expr *e)
 {
+  bool changed;
+
   gfc_intrinsic_op op = e->value.op.op;
+
+  changed = false;
+
+  /* Only use new-style comparisons.  */
+  switch(op)
+    {
+    case INTRINSIC_EQ_OS:
+      op = INTRINSIC_EQ;
+      break;
+
+    case INTRINSIC_GE_OS:
+      op = INTRINSIC_GE;
+      break;
+
+    case INTRINSIC_LE_OS:
+      op = INTRINSIC_LE;
+      break;
+
+    case INTRINSIC_NE_OS:
+      op = INTRINSIC_NE;
+      break;
+
+    case INTRINSIC_GT_OS:
+      op = INTRINSIC_GT;
+      break;
+
+    case INTRINSIC_LT_OS:
+      op = INTRINSIC_LT;
+      break;
+
+    default:
+      break;
+    }
 
   switch (op)
     {
     case INTRINSIC_EQ:
-    case INTRINSIC_EQ_OS:
     case INTRINSIC_GE:
-    case INTRINSIC_GE_OS:
     case INTRINSIC_LE:
-    case INTRINSIC_LE_OS:
     case INTRINSIC_NE:
-    case INTRINSIC_NE_OS:
     case INTRINSIC_GT:
-    case INTRINSIC_GT_OS:
     case INTRINSIC_LT:
-    case INTRINSIC_LT_OS:
-      return optimize_comparison (e, op);
+      changed = optimize_comparison (e, op);
+
+      /* Fall through */
+      /* Look at array constructors.  */
+    case INTRINSIC_PLUS:
+    case INTRINSIC_MINUS:
+    case INTRINSIC_TIMES:
+    case INTRINSIC_DIVIDE:
+      return combine_array_constructor (e) || changed;
+
+    case INTRINSIC_POWER:
+      return optimize_power (e);
+      break;
 
     default:
       break;
     }
 
   return false;
+}
+
+
+/* Return true if a constant string contains only blanks.  */
+
+static bool
+is_empty_string (gfc_expr *e)
+{
+  int i;
+
+  if (e->ts.type != BT_CHARACTER || e->expr_type != EXPR_CONSTANT)
+    return false;
+
+  for (i=0; i < e->value.character.length; i++)
+    {
+      if (e->value.character.string[i] != ' ')
+	return false;
+    }
+
+  return true;
+}
+
+
+/* Insert a call to the intrinsic len_trim. Use a different name for
+   the symbol tree so we don't run into trouble when the user has
+   renamed len_trim for some reason.  */
+
+static gfc_expr*
+get_len_trim_call (gfc_expr *str, int kind)
+{
+  gfc_expr *fcn;
+  gfc_actual_arglist *actual_arglist, *next;
+
+  fcn = gfc_get_expr ();
+  fcn->expr_type = EXPR_FUNCTION;
+  fcn->value.function.isym = gfc_intrinsic_function_by_id (GFC_ISYM_LEN_TRIM);
+  actual_arglist = gfc_get_actual_arglist ();
+  actual_arglist->expr = str;
+  next = gfc_get_actual_arglist ();
+  next->expr = gfc_get_int_expr (gfc_default_integer_kind, NULL, kind);
+  actual_arglist->next = next;
+
+  fcn->value.function.actual = actual_arglist;
+  fcn->where = str->where;
+  fcn->ts.type = BT_INTEGER;
+  fcn->ts.kind = gfc_charlen_int_kind;
+
+  gfc_get_sym_tree ("__internal_len_trim", current_ns, &fcn->symtree, false);
+  fcn->symtree->n.sym->ts = fcn->ts;
+  fcn->symtree->n.sym->attr.flavor = FL_PROCEDURE;
+  fcn->symtree->n.sym->attr.function = 1;
+  fcn->symtree->n.sym->attr.elemental = 1;
+  fcn->symtree->n.sym->attr.referenced = 1;
+  fcn->symtree->n.sym->attr.access = ACCESS_PRIVATE;
+  gfc_commit_symbol (fcn->symtree->n.sym);
+
+  return fcn;
 }
 
 /* Optimize expressions for equality.  */
@@ -827,7 +1492,7 @@ optimize_comparison (gfc_expr *e, gfc_intrinsic_op op)
     }
   else if (e->expr_type == EXPR_FUNCTION)
     {
-      /* One of the lexical comparision functions.  */
+      /* One of the lexical comparison functions.  */
       firstarg = e->value.function.actual;
       secondarg = firstarg->next;
       op1 = firstarg->expr;
@@ -850,6 +1515,45 @@ optimize_comparison (gfc_expr *e, gfc_intrinsic_op op)
   if (e->rank > 0)
     return change;
 
+  /* Replace a == '' with len_trim(a) == 0 and a /= '' with
+     len_trim(a) != 0 */
+  if (op1->ts.type == BT_CHARACTER && op2->ts.type == BT_CHARACTER
+      && (op == INTRINSIC_EQ || op == INTRINSIC_NE))
+    {
+      bool empty_op1, empty_op2;
+      empty_op1 = is_empty_string (op1);
+      empty_op2 = is_empty_string (op2);
+
+      if (empty_op1 || empty_op2)
+	{
+	  gfc_expr *fcn;
+	  gfc_expr *zero;
+	  gfc_expr *str;
+
+	  /* This can only happen when an error for comparing
+	     characters of different kinds has already been issued.  */
+	  if (empty_op1 && empty_op2)
+	    return false;
+
+	  zero = gfc_get_int_expr (gfc_charlen_int_kind, &e->where, 0);
+	  str = empty_op1 ? op2 : op1;
+
+	  fcn = get_len_trim_call (str, gfc_charlen_int_kind);
+
+
+	  if (empty_op1)
+	    gfc_free_expr (op1);
+	  else
+	    gfc_free_expr (op2);
+
+	  op1 = fcn;
+	  op2 = zero;
+	  e->value.op.op1 = fcn;
+	  e->value.op.op2 = zero;
+	}
+    }
+
+
   /* Don't compare REAL or COMPLEX expressions when honoring NaNs.  */
 
   if (flag_finite_math_only
@@ -862,7 +1566,9 @@ optimize_comparison (gfc_expr *e, gfc_intrinsic_op op)
 	  /* Replace A // B < A // C with B < C, and A // B < C // B
 	     with A < C.  */
 	  if (op1->ts.type == BT_CHARACTER && op2->ts.type == BT_CHARACTER
+	      && op1->expr_type == EXPR_OP
 	      && op1->value.op.op == INTRINSIC_CONCAT
+	      && op2->expr_type == EXPR_OP
 	      && op2->value.op.op == INTRINSIC_CONCAT)
 	    {
 	      gfc_expr *op1_left = op1->value.op.op1;
@@ -923,32 +1629,26 @@ optimize_comparison (gfc_expr *e, gfc_intrinsic_op op)
 	  switch (op)
 	    {
 	    case INTRINSIC_EQ:
-	    case INTRINSIC_EQ_OS:
 	      result = eq == 0;
 	      break;
 	      
 	    case INTRINSIC_GE:
-	    case INTRINSIC_GE_OS:
 	      result = eq >= 0;
 	      break;
 
 	    case INTRINSIC_LE:
-	    case INTRINSIC_LE_OS:
 	      result = eq <= 0;
 	      break;
 
 	    case INTRINSIC_NE:
-	    case INTRINSIC_NE_OS:
 	      result = eq != 0;
 	      break;
 
 	    case INTRINSIC_GT:
-	    case INTRINSIC_GT_OS:
 	      result = eq > 0;
 	      break;
 
 	    case INTRINSIC_LT:
-	    case INTRINSIC_LT_OS:
 	      result = eq < 0;
 	      break;
 	      
@@ -980,7 +1680,6 @@ optimize_trim (gfc_expr *e)
   gfc_expr *a;
   gfc_ref *ref;
   gfc_expr *fcn;
-  gfc_actual_arglist *actual_arglist, *next;
   gfc_ref **rr = NULL;
 
   /* Don't do this optimization within an argument list, because
@@ -997,6 +1696,11 @@ optimize_trim (gfc_expr *e)
   a = e->value.function.actual->expr;
 
   if (a->expr_type != EXPR_VARIABLE)
+    return false;
+
+  /* This would pessimize the idiom a = trim(a) for reallocatable strings.  */
+
+  if (a->symtree->n.sym->attr.allocatable)
     return false;
 
   /* Follow all references to find the correct place to put the newly
@@ -1027,24 +1731,14 @@ optimize_trim (gfc_expr *e)
 
   ref->u.ss.start = gfc_get_int_expr (gfc_default_integer_kind, NULL, 1);
 
-  /* Build the function call to len_trim(x, gfc_defaul_integer_kind).  */
+  /* Build the function call to len_trim(x, gfc_default_integer_kind).  */
 
-  fcn = gfc_get_expr ();
-  fcn->expr_type = EXPR_FUNCTION;
-  fcn->value.function.isym =
-    gfc_intrinsic_function_by_id (GFC_ISYM_LEN_TRIM);
-  actual_arglist = gfc_get_actual_arglist ();
-  actual_arglist->expr = gfc_copy_expr (e);
-  next = gfc_get_actual_arglist ();
-  next->expr = gfc_get_int_expr (gfc_default_integer_kind, NULL,
-				 gfc_default_integer_kind);
-  actual_arglist->next = next;
-  fcn->value.function.actual = actual_arglist;
+  fcn = get_len_trim_call (gfc_copy_expr (e), gfc_default_integer_kind);
 
   /* Set the end of the reference to the call to len_trim.  */
 
   ref->u.ss.end = fcn;
-  gcc_assert (*rr == NULL);
+  gcc_assert (rr != NULL && *rr == NULL);
   *rr = ref;
   return true;
 }
@@ -1091,6 +1785,164 @@ optimize_minmaxloc (gfc_expr **e)
 				   &fn->where);
   mpz_set_ui (a->expr->value.integer, 1);
 }
+
+/* Callback function for code checking that we do not pass a DO variable to an
+   INTENT(OUT) or INTENT(INOUT) dummy variable.  */
+
+static int
+doloop_code (gfc_code **c, int *walk_subtrees ATTRIBUTE_UNUSED,
+	 void *data ATTRIBUTE_UNUSED)
+{
+  gfc_code *co;
+  int i;
+  gfc_formal_arglist *f;
+  gfc_actual_arglist *a;
+  gfc_code *cl;
+
+  co = *c;
+
+  /* If the doloop_list grew, we have to truncate it here.  */
+
+  if ((unsigned) doloop_level < doloop_list.length())
+    doloop_list.truncate (doloop_level);
+
+  switch (co->op)
+    {
+    case EXEC_DO:
+
+      if (co->ext.iterator && co->ext.iterator->var)
+	doloop_list.safe_push (co);
+      else
+	doloop_list.safe_push ((gfc_code *) NULL);
+      break;
+
+    case EXEC_CALL:
+
+      if (co->resolved_sym == NULL)
+	break;
+
+      f = gfc_sym_get_dummy_args (co->resolved_sym);
+
+      /* Withot a formal arglist, there is only unknown INTENT,
+	 which we don't check for.  */
+      if (f == NULL)
+	break;
+
+      a = co->ext.actual;
+
+      while (a && f)
+	{
+	  FOR_EACH_VEC_ELT (doloop_list, i, cl)
+	    {
+	      gfc_symbol *do_sym;
+	      
+	      if (cl == NULL)
+		break;
+
+	      do_sym = cl->ext.iterator->var->symtree->n.sym;
+	      
+	      if (a->expr && a->expr->symtree
+		  && a->expr->symtree->n.sym == do_sym)
+		{
+		  if (f->sym->attr.intent == INTENT_OUT)
+		    gfc_error_now_1 ("Variable '%s' at %L set to undefined "
+				     "value inside loop  beginning at %L as "
+				     "INTENT(OUT) argument to subroutine '%s'",
+				     do_sym->name, &a->expr->where,
+				     &doloop_list[i]->loc,
+				     co->symtree->n.sym->name);
+		  else if (f->sym->attr.intent == INTENT_INOUT)
+		    gfc_error_now_1 ("Variable '%s' at %L not definable inside "
+				     "loop beginning at %L as INTENT(INOUT) "
+				     "argument to subroutine '%s'",
+				     do_sym->name, &a->expr->where,
+				     &doloop_list[i]->loc,
+				     co->symtree->n.sym->name);
+		}
+	    }
+	  a = a->next;
+	  f = f->next;
+	}
+      break;
+
+    default:
+      break;
+    }
+  return 0;
+}
+
+/* Callback function for functions checking that we do not pass a DO variable
+   to an INTENT(OUT) or INTENT(INOUT) dummy variable.  */
+
+static int
+do_function (gfc_expr **e, int *walk_subtrees ATTRIBUTE_UNUSED,
+	     void *data ATTRIBUTE_UNUSED)
+{
+  gfc_formal_arglist *f;
+  gfc_actual_arglist *a;
+  gfc_expr *expr;
+  gfc_code *dl;
+  int i;
+
+  expr = *e;
+  if (expr->expr_type != EXPR_FUNCTION)
+    return 0;
+
+  /* Intrinsic functions don't modify their arguments.  */
+
+  if (expr->value.function.isym)
+    return 0;
+
+  f = gfc_sym_get_dummy_args (expr->symtree->n.sym);
+
+  /* Without a formal arglist, there is only unknown INTENT,
+     which we don't check for.  */
+  if (f == NULL)
+    return 0;
+
+  a = expr->value.function.actual;
+
+  while (a && f)
+    {
+      FOR_EACH_VEC_ELT (doloop_list, i, dl)
+	{
+	  gfc_symbol *do_sym;
+
+	  if (dl == NULL)
+	    break;
+
+	  do_sym = dl->ext.iterator->var->symtree->n.sym;
+	  
+	  if (a->expr && a->expr->symtree
+	      && a->expr->symtree->n.sym == do_sym)
+	    {
+	      if (f->sym->attr.intent == INTENT_OUT)
+		gfc_error_now_1 ("Variable '%s' at %L set to undefined value "
+				 "inside loop beginning at %L as INTENT(OUT) "
+				 "argument to function '%s'", do_sym->name,
+				 &a->expr->where, &doloop_list[i]->loc,
+				 expr->symtree->n.sym->name);
+	      else if (f->sym->attr.intent == INTENT_INOUT)
+		gfc_error_now_1 ("Variable '%s' at %L not definable inside loop"
+				 " beginning at %L as INTENT(INOUT) argument to"
+				 " function '%s'", do_sym->name,
+				 &a->expr->where, &doloop_list[i]->loc,
+				 expr->symtree->n.sym->name);
+	    }
+	}
+      a = a->next;
+      f = f->next;
+    }
+
+  return 0;
+}
+
+static void
+doloop_warn (gfc_namespace *ns)
+{
+  gfc_code_walker (&ns->code, doloop_code, do_function, NULL);
+}
+
 
 #define WALK_SUBEXPR(NODE) \
   do							\
@@ -1140,9 +1992,13 @@ gfc_expr_walker (gfc_expr **e, walk_expr_fn_t exprfn, void *data)
 	    for (c = gfc_constructor_first ((*e)->value.constructor); c;
 		 c = gfc_constructor_next (c))
 	      {
-		WALK_SUBEXPR (c->expr);
-		if (c->iterator != NULL)
+		if (c->iterator == NULL)
+		  WALK_SUBEXPR (c->expr);
+		else
 		  {
+		    iterator_level ++;
+		    WALK_SUBEXPR (c->expr);
+		    iterator_level --;
 		    WALK_SUBEXPR (c->iterator->var);
 		    WALK_SUBEXPR (c->iterator->start);
 		    WALK_SUBEXPR (c->iterator->end);
@@ -1241,11 +2097,21 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 
 	    case EXEC_BLOCK:
 	      WALK_SUBCODE (co->ext.block.ns->code);
-	      for (alist = co->ext.block.assoc; alist; alist = alist->next)
-		WALK_SUBEXPR (alist->target);
+	      if (co->ext.block.assoc)
+		{
+		  bool saved_in_assoc_list = in_assoc_list;
+
+		  in_assoc_list = true;
+		  for (alist = co->ext.block.assoc; alist; alist = alist->next)
+		    WALK_SUBEXPR (alist->target);
+
+		  in_assoc_list = saved_in_assoc_list;
+		}
+
 	      break;
 
 	    case EXEC_DO:
+	      doloop_level ++;
 	      WALK_SUBEXPR (co->ext.iterator->var);
 	      WALK_SUBEXPR (co->ext.iterator->start);
 	      WALK_SUBEXPR (co->ext.iterator->end);
@@ -1412,6 +2278,7 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 
 	    case EXEC_OMP_PARALLEL:
 	    case EXEC_OMP_PARALLEL_DO:
+	    case EXEC_OMP_PARALLEL_DO_SIMD:
 	    case EXEC_OMP_PARALLEL_SECTIONS:
 
 	      in_omp_workshare = false;
@@ -1426,12 +2293,31 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 	      in_omp_workshare = true;
 
 	      /* Fall through  */
-	      
+
+	    case EXEC_OMP_DISTRIBUTE:
+	    case EXEC_OMP_DISTRIBUTE_PARALLEL_DO:
+	    case EXEC_OMP_DISTRIBUTE_PARALLEL_DO_SIMD:
+	    case EXEC_OMP_DISTRIBUTE_SIMD:
 	    case EXEC_OMP_DO:
+	    case EXEC_OMP_DO_SIMD:
 	    case EXEC_OMP_SECTIONS:
 	    case EXEC_OMP_SINGLE:
 	    case EXEC_OMP_END_SINGLE:
+	    case EXEC_OMP_SIMD:
+	    case EXEC_OMP_TARGET:
+	    case EXEC_OMP_TARGET_DATA:
+	    case EXEC_OMP_TARGET_TEAMS:
+	    case EXEC_OMP_TARGET_TEAMS_DISTRIBUTE:
+	    case EXEC_OMP_TARGET_TEAMS_DISTRIBUTE_PARALLEL_DO:
+	    case EXEC_OMP_TARGET_TEAMS_DISTRIBUTE_PARALLEL_DO_SIMD:
+	    case EXEC_OMP_TARGET_TEAMS_DISTRIBUTE_SIMD:
+	    case EXEC_OMP_TARGET_UPDATE:
 	    case EXEC_OMP_TASK:
+	    case EXEC_OMP_TEAMS:
+	    case EXEC_OMP_TEAMS_DISTRIBUTE:
+	    case EXEC_OMP_TEAMS_DISTRIBUTE_PARALLEL_DO:
+	    case EXEC_OMP_TEAMS_DISTRIBUTE_PARALLEL_DO_SIMD:
+	    case EXEC_OMP_TEAMS_DISTRIBUTE_SIMD:
 
 	      /* Come to this label only from the
 		 EXEC_OMP_PARALLEL_* cases above.  */
@@ -1440,10 +2326,27 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 
 	      if (co->ext.omp_clauses)
 		{
+		  gfc_omp_namelist *n;
+		  static int list_types[]
+		    = { OMP_LIST_ALIGNED, OMP_LIST_LINEAR, OMP_LIST_DEPEND,
+			OMP_LIST_MAP, OMP_LIST_TO, OMP_LIST_FROM };
+		  size_t idx;
 		  WALK_SUBEXPR (co->ext.omp_clauses->if_expr);
 		  WALK_SUBEXPR (co->ext.omp_clauses->final_expr);
 		  WALK_SUBEXPR (co->ext.omp_clauses->num_threads);
 		  WALK_SUBEXPR (co->ext.omp_clauses->chunk_size);
+		  WALK_SUBEXPR (co->ext.omp_clauses->safelen_expr);
+		  WALK_SUBEXPR (co->ext.omp_clauses->simdlen_expr);
+		  WALK_SUBEXPR (co->ext.omp_clauses->num_teams);
+		  WALK_SUBEXPR (co->ext.omp_clauses->device);
+		  WALK_SUBEXPR (co->ext.omp_clauses->thread_limit);
+		  WALK_SUBEXPR (co->ext.omp_clauses->dist_chunk_size);
+		  for (idx = 0;
+		       idx < sizeof (list_types) / sizeof (list_types[0]);
+		       idx++)
+		    for (n = co->ext.omp_clauses->lists[list_types[idx]];
+			 n; n = n->next)
+		      WALK_SUBEXPR (n->expr);
 		}
 	      break;
 	    default:
@@ -1463,6 +2366,9 @@ gfc_code_walker (gfc_code **c, walk_code_fn_t codefn, walk_expr_fn_t exprfn,
 
 	  if (co->op == EXEC_FORALL)
 	    forall_level --;
+
+	  if (co->op == EXEC_DO)
+	    doloop_level --;
 
 	  in_omp_workshare = saved_in_omp_workshare;
 	}

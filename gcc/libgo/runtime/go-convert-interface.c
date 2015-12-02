@@ -4,11 +4,13 @@
    Use of this source code is governed by a BSD-style
    license that can be found in the LICENSE file.  */
 
+#include "runtime.h"
 #include "go-alloc.h"
 #include "go-assert.h"
 #include "go-panic.h"
+#include "go-string.h"
+#include "go-type.h"
 #include "interface.h"
-#include "runtime.h"
 
 /* This is called when converting one interface type into another
    interface type.  LHS_DESCRIPTOR is the type descriptor of the
@@ -39,7 +41,7 @@ __go_convert_interface_2 (const struct __go_type_descriptor *lhs_descriptor,
       return NULL;
     }
 
-  __go_assert (lhs_descriptor->__code == GO_INTERFACE);
+  __go_assert ((lhs_descriptor->__code & GO_CODE_MASK) == GO_INTERFACE);
   lhs_interface = (const struct __go_interface_type *) lhs_descriptor;
   lhs_method_count = lhs_interface->__methods.__count;
   lhs_methods = ((const struct __go_interface_method *)

@@ -10,39 +10,54 @@
 #include <stdlib.h>
 
 #include "go-alloc.h"
-#include "go-string.h"
+#include "runtime.h"
+#include "arch.h"
+#include "malloc.h"
 
 /* Set the C environment from Go.  This is called by syscall.Setenv.  */
 
-void setenv_c (struct __go_string, struct __go_string)
-  __asm__ ("libgo_syscall.syscall.setenv_c");
+void setenv_c (String, String) __asm__ (GOSYM_PREFIX "syscall.setenv_c");
 
 void
-setenv_c (struct __go_string k, struct __go_string v)
+setenv_c (String k, String v)
 {
-  const unsigned char *ks;
+  const byte *ks;
   unsigned char *kn;
-  const unsigned char *vs;
+  const byte *vs;
   unsigned char *vn;
+  intgo len;
 
-  ks = k.__data;
+  ks = k.str;
+  if (ks == NULL)
+    ks = (const byte *) "";
   kn = NULL;
-  vs = v.__data;
+
+  vs = v.str;
+  if (vs == NULL)
+    vs = (const byte *) "";
   vn = NULL;
 
 #ifdef HAVE_SETENV
 
-  if (ks[k.__length] != 0)
+  if (ks != NULL && ks[k.len] != 0)
     {
-      kn = __go_alloc (k.__length + 1);
-      __builtin_memcpy (kn, ks, k.__length);
+      // Objects that are explicitly freed must be at least 16 bytes in size,
+      // so that they are not allocated using tiny alloc.
+      len = k.len + 1;
+      if (len < TinySize)
+	len = TinySize;
+      kn = __go_alloc (len);
+      __builtin_memcpy (kn, ks, k.len);
       ks = kn;
     }
 
-  if (vs[v.__length] != 0)
+  if (vs != NULL && vs[v.len] != 0)
     {
-      vn = __go_alloc (v.__length + 1);
-      __builtin_memcpy (vn, vs, v.__length);
+      len = v.len + 1;
+      if (len < TinySize)
+	len = TinySize;
+      vn = __go_alloc (len);
+      __builtin_memcpy (vn, vs, v.len);
       vs = vn;
     }
 
@@ -50,11 +65,14 @@ setenv_c (struct __go_string k, struct __go_string v)
 
 #else /* !defined(HAVE_SETENV) */
 
-  kn = malloc (k.__length + v.__length + 2);
-  __builtin_memcpy (kn, ks, k.__length);
-  kn[k.__length] = '=';
-  __builtin_memcpy (kn + k.__length + 1, vs, v.__length);
-  kn[k.__length + v.__length + 1] = '\0';
+  len = k.len + v.len + 2;
+  if (len < TinySize)
+    len = TinySize;
+  kn = __go_alloc (len);
+  __builtin_memcpy (kn, ks, k.len);
+  kn[k.len] = '=';
+  __builtin_memcpy (kn + k.len + 1, vs, v.len);
+  kn[k.len + v.len + 1] = '\0';
   putenv ((char *) kn);
 
 #endif /* !defined(HAVE_SETENV) */

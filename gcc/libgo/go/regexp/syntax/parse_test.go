@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package syntax_test
+package syntax
 
 import (
 	"bytes"
 	"fmt"
-	. "regexp/syntax"
 	"testing"
 	"unicode"
 )
@@ -101,12 +100,12 @@ var parseTests = []parseTest{
 	{`\P{Braille}`, `cc{0x0-0x27ff 0x2900-0x10ffff}`},
 	{`\p{^Braille}`, `cc{0x0-0x27ff 0x2900-0x10ffff}`},
 	{`\P{^Braille}`, `cc{0x2800-0x28ff}`},
-	{`\pZ`, `cc{0x20 0xa0 0x1680 0x180e 0x2000-0x200a 0x2028-0x2029 0x202f 0x205f 0x3000}`},
+	{`\pZ`, `cc{0x20 0xa0 0x1680 0x2000-0x200a 0x2028-0x2029 0x202f 0x205f 0x3000}`},
 	{`[\p{Braille}]`, `cc{0x2800-0x28ff}`},
 	{`[\P{Braille}]`, `cc{0x0-0x27ff 0x2900-0x10ffff}`},
 	{`[\p{^Braille}]`, `cc{0x0-0x27ff 0x2900-0x10ffff}`},
 	{`[\P{^Braille}]`, `cc{0x2800-0x28ff}`},
-	{`[\pZ]`, `cc{0x20 0xa0 0x1680 0x180e 0x2000-0x200a 0x2028-0x2029 0x202f 0x205f 0x3000}`},
+	{`[\pZ]`, `cc{0x20 0xa0 0x1680 0x2000-0x200a 0x2028-0x2029 0x202f 0x205f 0x3000}`},
 	{`\p{Lu}`, mkCharClass(unicode.IsUpper)},
 	{`[\p{Lu}]`, mkCharClass(unicode.IsUpper)},
 	{`(?i)[\p{Lu}]`, mkCharClass(isUpperFold)},
@@ -201,6 +200,10 @@ var parseTests = []parseTest{
 		`cat{rep{2,2 lit{x}}alt{emp{}cc{0x30-0x39}}}`},
 	{`x{2}y|x{2}[0-9]y`,
 		`cat{rep{2,2 lit{x}}alt{lit{y}cat{cc{0x30-0x39}lit{y}}}}`},
+
+	// Valid repetitions.
+	{`((((((((((x{2}){2}){2}){2}){2}){2}){2}){2}){2}))`, ``},
+	{`((((((((((x{1}){2}){2}){2}){2}){2}){2}){2}){2}){2})`, ``},
 }
 
 const testFlags = MatchNL | PerlX | UnicodeGroups
@@ -261,6 +264,10 @@ func testParseDump(t *testing.T, tests []parseTest, flags Flags) {
 		re, err := Parse(tt.Regexp, flags)
 		if err != nil {
 			t.Errorf("Parse(%#q): %v", tt.Regexp, err)
+			continue
+		}
+		if tt.Dump == "" {
+			// It parsed. That's all we care about.
 			continue
 		}
 		d := dump(re)
@@ -413,13 +420,13 @@ func TestFoldConstants(t *testing.T) {
 		if unicode.SimpleFold(i) == i {
 			continue
 		}
-		if last == -1 && MinFold != i {
-			t.Errorf("MinFold=%#U should be %#U", MinFold, i)
+		if last == -1 && minFold != i {
+			t.Errorf("minFold=%#U should be %#U", minFold, i)
 		}
 		last = i
 	}
-	if MaxFold != last {
-		t.Errorf("MaxFold=%#U should be %#U", MaxFold, last)
+	if maxFold != last {
+		t.Errorf("maxFold=%#U should be %#U", maxFold, last)
 	}
 }
 
@@ -430,11 +437,11 @@ func TestAppendRangeCollapse(t *testing.T) {
 	// Note that we are not calling cleanClass.
 	var r []rune
 	for i := rune('A'); i <= 'Z'; i++ {
-		r = AppendRange(r, i, i)
-		r = AppendRange(r, i+'a'-'A', i+'a'-'A')
+		r = appendRange(r, i, i)
+		r = appendRange(r, i+'a'-'A', i+'a'-'A')
 	}
 	if string(r) != "AZaz" {
-		t.Errorf("AppendRange interlaced A-Z a-z = %s, want AZaz", string(r))
+		t.Errorf("appendRange interlaced A-Z a-z = %s, want AZaz", string(r))
 	}
 }
 
@@ -442,10 +449,18 @@ var invalidRegexps = []string{
 	`(`,
 	`)`,
 	`(a`,
+	`a)`,
+	`(a))`,
 	`(a|b|`,
+	`a|b|)`,
+	`(a|b|))`,
 	`(a|b`,
+	`a|b)`,
+	`(a|b))`,
 	`[a-z`,
 	`([a-z)`,
+	`[a-z)`,
+	`([a-z]))`,
 	`x{1001}`,
 	`x{9876543210}`,
 	`x{2,1}`,
@@ -463,6 +478,7 @@ var invalidRegexps = []string{
 	`(?i)[a-Z]`,
 	`a{100000}`,
 	`a{100000,}`,
+	"((((((((((x{2}){2}){2}){2}){2}){2}){2}){2}){2}){2})",
 }
 
 var onlyPerl = []string{
@@ -520,6 +536,10 @@ func TestToStringEquivalentParse(t *testing.T) {
 			t.Errorf("Parse(%#q): %v", tt.Regexp, err)
 			continue
 		}
+		if tt.Dump == "" {
+			// It parsed. That's all we care about.
+			continue
+		}
 		d := dump(re)
 		if d != tt.Dump {
 			t.Errorf("Parse(%#q).Dump() = %#q want %#q", tt.Regexp, d, tt.Dump)
@@ -535,7 +555,7 @@ func TestToStringEquivalentParse(t *testing.T) {
 			// but "{" is a shorter equivalent in some contexts.
 			nre, err := Parse(s, testFlags)
 			if err != nil {
-				t.Errorf("Parse(%#q.String() = %#q): %v", tt.Regexp, t, err)
+				t.Errorf("Parse(%#q.String() = %#q): %v", tt.Regexp, s, err)
 				continue
 			}
 			nd := dump(nre)

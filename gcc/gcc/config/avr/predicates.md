@@ -1,5 +1,5 @@
 ;; Predicate definitions for ATMEL AVR micro controllers.
-;; Copyright (C) 2006, 2007, 2008 Free Software Foundation, Inc.
+;; Copyright (C) 2006-2015 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -43,22 +43,26 @@
        (match_test "REGNO (op) == REG_SP")))
 
 ;; Return true if OP is a valid address for lower half of I/O space.
-(define_predicate "low_io_address_operand"
-  (and (match_code "const_int")
-       (match_test "IN_RANGE (INTVAL (op) - avr_current_arch->sfr_offset,
-                              0, 0x1f)")))
+(define_special_predicate "low_io_address_operand"
+  (ior (and (match_code "const_int")
+	    (match_test "IN_RANGE (INTVAL (op) - avr_arch->sfr_offset,
+				   0, 0x20 - GET_MODE_SIZE (mode))"))
+       (and (match_code "symbol_ref")
+	    (match_test "SYMBOL_REF_FLAGS (op) & SYMBOL_FLAG_IO_LOW"))))
 
 ;; Return true if OP is a valid address for high half of I/O space.
 (define_predicate "high_io_address_operand"
   (and (match_code "const_int")
-       (match_test "IN_RANGE (INTVAL (op) - avr_current_arch->sfr_offset,
+       (match_test "IN_RANGE (INTVAL (op) - avr_arch->sfr_offset,
                               0x20, 0x3F)")))
 
 ;; Return true if OP is a valid address of I/O space.
-(define_predicate "io_address_operand"
-  (and (match_code "const_int")
-       (match_test "IN_RANGE (INTVAL (op) - avr_current_arch->sfr_offset,
-                              0, 0x40 - GET_MODE_SIZE (mode))")))
+(define_special_predicate "io_address_operand"
+  (ior (and (match_code "const_int")
+	    (match_test "IN_RANGE (INTVAL (op) - avr_arch->sfr_offset,
+				   0, 0x40 - GET_MODE_SIZE (mode))"))
+       (and (match_code "symbol_ref")
+	    (match_test "SYMBOL_REF_FLAGS (op) & SYMBOL_FLAG_IO"))))
 
 ;; Return 1 if OP is a general operand not in flash memory
 (define_predicate "nop_general_operand"
@@ -72,9 +76,16 @@
        (not (match_test "avr_load_libgcc_p (op)"))
        (not (match_test "avr_mem_memx_p (op)"))))
 
+;; Return 1 if OP is a memory operand in one of the __flash* address spaces
+(define_predicate "flash_operand"
+  (and (match_operand 0 "memory_operand")
+       (match_test "Pmode == mode")
+       (ior (match_test "!MEM_P (op)")
+            (match_test "avr_mem_flash_p (op)"))))
+
 ;; Return 1 if OP is the zero constant for MODE.
 (define_predicate "const0_operand"
-  (and (match_code "const_int,const_double")
+  (and (match_code "const_int,const_fixed,const_double")
        (match_test "op == CONST0_RTX (mode)")))
 
 ;; Return 1 if OP is the one constant integer for MODE.
@@ -155,11 +166,11 @@
 ;; True for EQ & NE
 (define_predicate "eqne_operator"
   (match_code "eq,ne"))
-       
+
 ;; True for GE & LT
 (define_predicate "gelt_operator"
   (match_code "ge,lt"))
-       
+
 ;; True for GT, GTU, LE & LEU
 (define_predicate "difficult_comparison_operator"
   (match_code "gt,gtu,le,leu"))
@@ -248,3 +259,21 @@
 (define_predicate "o16_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), -(1<<16), -1)")))
+
+;; Const int, fixed, or double operand
+(define_predicate "const_operand"
+  (ior (match_code "const_fixed")
+       (match_code "const_double")
+       (match_operand 0 "const_int_operand")))
+
+;; Const int, const fixed, or const double operand
+(define_predicate "nonmemory_or_const_operand"
+  (ior (match_code "const_fixed")
+       (match_code "const_double")
+       (match_operand 0 "nonmemory_operand")))
+
+;; Immediate, const fixed, or const double operand
+(define_predicate "const_or_immediate_operand"
+  (ior (match_code "const_fixed")
+       (match_code "const_double")
+       (match_operand 0 "immediate_operand")))

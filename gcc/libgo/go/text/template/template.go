@@ -105,7 +105,7 @@ func (t *Template) copy(c *common) *Template {
 // AddParseTree creates a new template with the name and parse tree
 // and associates it with t.
 func (t *Template) AddParseTree(name string, tree *parse.Tree) (*Template, error) {
-	if t.tmpl[name] != nil {
+	if t.common != nil && t.tmpl[name] != nil {
 		return nil, fmt.Errorf("template: redefinition of template %q", name)
 	}
 	nt := t.New(name)
@@ -117,6 +117,9 @@ func (t *Template) AddParseTree(name string, tree *parse.Tree) (*Template, error
 // Templates returns a slice of the templates associated with t, including t
 // itself.
 func (t *Template) Templates() []*Template {
+	if t.common == nil {
+		return nil
+	}
 	// Return a slice so we don't expose the map.
 	m := make([]*Template, 0, len(t.tmpl))
 	for _, v := range t.tmpl {

@@ -1,6 +1,5 @@
 /* Definitions of target machine GNU compiler.  IA-64 version.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1999-2015 Free Software Foundation, Inc.
    Contributed by James E. Wilson <wilson@cygnus.com> and
    		  David Mosberger <davidm@hpl.hp.com>.
 
@@ -254,13 +253,6 @@ while (0)
    : TARGET_ABI_OPEN_VMS ? 64 \
    : 80)
 
-/* We always want the XFmode operations from libgcc2.c, except on VMS
-   where this yields references to unimplemented "insns".  */
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE  (TARGET_ABI_OPEN_VMS ? 64 : 80)
-
-
-/* On HP-UX, we use the l suffix for TFmode in libgcc2.c.  */
-#define LIBGCC2_TF_CEXT l
 
 #define DEFAULT_SIGNED_CHAR 1
 
@@ -1484,15 +1476,15 @@ do {									\
 
 #define ASM_OUTPUT_ADDR_DIFF_ELT(STREAM, BODY, VALUE, REL)	\
   do {								\
-  if (TARGET_ILP32)						\
+  if (CASE_VECTOR_MODE == SImode)				\
     fprintf (STREAM, "\tdata4 @pcrel(.L%d)\n", VALUE);		\
   else								\
     fprintf (STREAM, "\tdata8 @pcrel(.L%d)\n", VALUE);		\
   } while (0)
 
-/* Jump tables only need 8 byte alignment.  */
+/* Jump tables only need 4 or 8 byte alignment.  */
 
-#define ADDR_VEC_ALIGN(ADDR_VEC) 3
+#define ADDR_VEC_ALIGN(ADDR_VEC) (CASE_VECTOR_MODE == SImode ? 2 : 3)
 
 
 /* Assembler Commands for Exception Regions.  */

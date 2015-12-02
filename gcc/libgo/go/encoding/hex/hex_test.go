@@ -38,7 +38,10 @@ func TestEncode(t *testing.T) {
 }
 
 func TestDecode(t *testing.T) {
-	for i, test := range encDecTests {
+	// Case for decoding uppercase hex characters, since
+	// Encode always uses lowercase.
+	decTests := append(encDecTests, encDecTest{"F8F9FAFBFCFDFEFF", []byte{0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff}})
+	for i, test := range decTests {
 		dst := make([]byte, DecodedLen(len(test.enc)))
 		n, err := Decode(dst, []byte(test.enc))
 		if err != nil {
@@ -65,7 +68,7 @@ func TestDecodeString(t *testing.T) {
 			t.Errorf("#%d: unexpected err value: %s", i, err)
 			continue
 		}
-		if bytes.Compare(dst, test.dec) != 0 {
+		if !bytes.Equal(dst, test.dec) {
 			t.Errorf("#%d: got: %#v want: #%v", i, dst, test.dec)
 		}
 	}
@@ -79,6 +82,7 @@ type errTest struct {
 var errTests = []errTest{
 	{"0", "encoding/hex: odd length hex string"},
 	{"0g", "encoding/hex: invalid byte: U+0067 'g'"},
+	{"00gg", "encoding/hex: invalid byte: U+0067 'g'"},
 	{"0\x01", "encoding/hex: invalid byte: U+0001"},
 }
 

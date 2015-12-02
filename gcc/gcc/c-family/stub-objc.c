@@ -1,8 +1,7 @@
 /* Stub functions for Objective-C and Objective-C++ routines
    that are called from within the C and C++ front-ends,
    respectively.
-   Copyright (C) 1991, 1995, 1997, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2007, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1991-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -23,6 +22,15 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "vec.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "alias.h"
+#include "input.h"
+#include "symtab.h"
+#include "double-int.h"
+#include "flags.h"
+#include "inchash.h"
 #include "tree.h"
 #include "c-common.h"
 #include "c-objc.h"

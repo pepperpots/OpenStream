@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd windows
+// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris windows
 
 package os
 
@@ -13,43 +13,12 @@ import (
 
 func sigpipe() // implemented in package runtime
 
-func epipecheck(file *File, e error) {
-	if e == syscall.EPIPE {
-		file.nepipe++
-		if file.nepipe >= 10 {
-			sigpipe()
-		}
-	} else {
-		file.nepipe = 0
-	}
-}
-
-// Link creates newname as a hard link to the oldname file.
-// If there is an error, it will be of type *LinkError.
-func Link(oldname, newname string) error {
-	e := syscall.Link(oldname, newname)
-	if e != nil {
-		return &LinkError{"link", oldname, newname, e}
-	}
-	return nil
-}
-
-// Symlink creates newname as a symbolic link to oldname.
-// If there is an error, it will be of type *LinkError.
-func Symlink(oldname, newname string) error {
-	e := syscall.Symlink(oldname, newname)
-	if e != nil {
-		return &LinkError{"symlink", oldname, newname, e}
-	}
-	return nil
-}
-
 // Readlink returns the destination of the named symbolic link.
 // If there is an error, it will be of type *PathError.
 func Readlink(name string) (string, error) {
 	for len := 128; ; len *= 2 {
 		b := make([]byte, len)
-		n, e := syscall.Readlink(name, b)
+		n, e := fixCount(syscall.Readlink(name, b))
 		if e != nil {
 			return "", &PathError{"readlink", name, e}
 		}
@@ -57,12 +26,9 @@ func Readlink(name string) (string, error) {
 			return string(b[0:n]), nil
 		}
 	}
-	// Silence 6g.
-	return "", nil
 }
 
-// Rename renames a file.
-func Rename(oldname, newname string) error {
+func rename(oldname, newname string) error {
 	e := syscall.Rename(oldname, newname)
 	if e != nil {
 		return &LinkError{"rename", oldname, newname, e}
@@ -99,6 +65,9 @@ func Chmod(name string, mode FileMode) error {
 // Chmod changes the mode of the file to mode.
 // If there is an error, it will be of type *PathError.
 func (f *File) Chmod(mode FileMode) error {
+	if f == nil {
+		return ErrInvalid
+	}
 	if e := syscall.Fchmod(f.fd, syscallMode(mode)); e != nil {
 		return &PathError{"chmod", f.name, e}
 	}
@@ -128,6 +97,9 @@ func Lchown(name string, uid, gid int) error {
 // Chown changes the numeric uid and gid of the named file.
 // If there is an error, it will be of type *PathError.
 func (f *File) Chown(uid, gid int) error {
+	if f == nil {
+		return ErrInvalid
+	}
 	if e := syscall.Fchown(f.fd, uid, gid); e != nil {
 		return &PathError{"chown", f.name, e}
 	}
@@ -138,6 +110,9 @@ func (f *File) Chown(uid, gid int) error {
 // It does not change the I/O offset.
 // If there is an error, it will be of type *PathError.
 func (f *File) Truncate(size int64) error {
+	if f == nil {
+		return ErrInvalid
+	}
 	if e := syscall.Ftruncate(f.fd, size); e != nil {
 		return &PathError{"truncate", f.name, e}
 	}
@@ -149,7 +124,7 @@ func (f *File) Truncate(size int64) error {
 // of recently written data to disk.
 func (f *File) Sync() (err error) {
 	if f == nil {
-		return syscall.EINVAL
+		return ErrInvalid
 	}
 	if e := syscall.Fsync(f.fd); e != nil {
 		return NewSyscallError("fsync", e)
@@ -164,12 +139,10 @@ func (f *File) Sync() (err error) {
 // less precise time unit.
 // If there is an error, it will be of type *PathError.
 func Chtimes(name string, atime time.Time, mtime time.Time) error {
-	var utimes [2]syscall.Timeval
-	atime_ns := atime.Unix()*1e9 + int64(atime.Nanosecond())
-	mtime_ns := mtime.Unix()*1e9 + int64(mtime.Nanosecond())
-	utimes[0] = syscall.NsecToTimeval(atime_ns)
-	utimes[1] = syscall.NsecToTimeval(mtime_ns)
-	if e := syscall.Utimes(name, utimes[0:]); e != nil {
+	var utimes [2]syscall.Timespec
+	utimes[0] = syscall.NsecToTimespec(atime.UnixNano())
+	utimes[1] = syscall.NsecToTimespec(mtime.UnixNano())
+	if e := syscall.UtimesNano(name, utimes[0:]); e != nil {
 		return &PathError{"chtimes", name, e}
 	}
 	return nil

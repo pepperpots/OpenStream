@@ -1,7 +1,5 @@
 /* Implement classes and message passing for Objective C.
-   Copyright (C) 1992, 1993, 1994, 1995, 1997, 1998, 1999, 2000, 2001,
-   2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1992-2015 Free Software Foundation, Inc.
    Contributed by Steve Naroff.
 
 This file is part of GCC.
@@ -24,13 +22,27 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "options.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "fold-const.h"
+#include "stringpool.h"
+#include "stor-layout.h"
+#include "attribs.h"
 
 #ifdef OBJCPLUS
-#include "cp-tree.h"
+#include "cp/cp-tree.h"
 #else
-#include "c-tree.h"
-#include "c-lang.h"
+#include "c/c-tree.h"
+#include "c/c-lang.h"
 #endif
 
 #include "c-family/c-common.h"
@@ -42,17 +54,21 @@ along with GCC; see the file COPYING3.  If not see
 #include "objc-act.h"
 #include "objc-map.h"
 #include "input.h"
+#include "hard-reg-set.h"
 #include "function.h"
-#include "output.h"
 #include "toplev.h"
-#include "ggc.h"
 #include "debug.h"
 #include "c-family/c-target.h"
 #include "diagnostic-core.h"
 #include "intl.h"
+#include "hash-map.h"
+#include "is-a.h"
+#include "plugin-api.h"
+#include "ipa-ref.h"
 #include "cgraph.h"
 #include "tree-iterator.h"
-#include "hashtab.h"
+#include "hash-table.h"
+#include "wide-int.h"
 #include "langhooks-def.h"
 /* Different initialization, code gen and meta data generation for each
    runtime.  */
@@ -63,7 +79,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pretty-print.h"
 
 /* For enum gimplify_status */
-#include "gimple.h"
+#include "gimple-expr.h"
+#include "gimplify.h"
 
 /* For encode_method_prototype().  */
 #include "objc-encoding.h"
@@ -226,7 +243,7 @@ struct imp_entry *imp_list = 0;
 int imp_count = 0;	/* `@implementation' */
 int cat_count = 0;	/* `@category' */
 
-objc_ivar_visibility_kind objc_ivar_visibility;
+objc_ivar_visibility_kind objc_ivar_visibility, objc_default_ivar_visibility;
 
 /* Use to generate method labels.  */
 static int method_slot = 0;
@@ -247,12 +264,12 @@ static char *errbuf;	/* Buffer for error diagnostics */
 
 /* An array of all the local variables in the current function that
    need to be marked as volatile.  */
-VEC(tree,gc) *local_variables_to_volatilize = NULL;
+vec<tree, va_gc> *local_variables_to_volatilize = NULL;
 
 /* Store all constructed constant strings in a hash table so that
    they get uniqued properly.  */
 
-struct GTY(()) string_descriptor {
+struct GTY((for_user)) string_descriptor {
   /* The literal argument .  */
   tree literal;
 
@@ -260,7 +277,13 @@ struct GTY(()) string_descriptor {
   tree constructor;
 };
 
-static GTY((param_is (struct string_descriptor))) htab_t string_htab;
+struct objc_string_hasher : ggc_hasher<string_descriptor *>
+{
+  static hashval_t hash (string_descriptor *);
+  static bool equal (string_descriptor *, string_descriptor *);
+};
+
+static GTY(()) hash_table<objc_string_hasher> *string_htab;
 
 FILE *gen_declaration_file;
 
@@ -394,6 +417,22 @@ objc_init (void)
   if (!ok)
     return false;
 
+  /* Determine the default visibility for instance variables. */
+  switch (default_ivar_visibility)
+    {
+    case IVAR_VISIBILITY_PRIVATE:
+        objc_default_ivar_visibility = OBJC_IVAR_VIS_PRIVATE;
+        break;
+    case IVAR_VISIBILITY_PUBLIC:
+        objc_default_ivar_visibility = OBJC_IVAR_VIS_PUBLIC;
+        break;
+    case IVAR_VISIBILITY_PACKAGE:
+        objc_default_ivar_visibility = OBJC_IVAR_VIS_PACKAGE;
+        break;
+    default:
+        objc_default_ivar_visibility = OBJC_IVAR_VIS_PROTECTED;
+    }
+      
   /* Generate general types and push runtime-specific decls to file scope.  */
   synth_module_prologue ();
 
@@ -446,7 +485,7 @@ objc_write_global_declarations (void)
 	  char * const dumpname = concat (dump_base_name, ".decl", NULL);
 	  gen_declaration_file = fopen (dumpname, "w");
 	  if (gen_declaration_file == 0)
-	    fatal_error ("can%'t open %s: %m", dumpname);
+	    fatal_error (input_location, "can%'t open %s: %m", dumpname);
 	  free (dumpname);
 	}
 
@@ -568,7 +607,7 @@ objc_start_class_interface (tree klass, tree super_class,
   objc_interface_context
     = objc_ivar_context
     = start_class (CLASS_INTERFACE_TYPE, klass, super_class, protos, attributes);
-  objc_ivar_visibility = OBJC_IVAR_VIS_PROTECTED;
+  objc_ivar_visibility = objc_default_ivar_visibility;
 }
 
 void
@@ -646,7 +685,7 @@ objc_start_class_implementation (tree klass, tree super_class)
     = objc_ivar_context
     = start_class (CLASS_IMPLEMENTATION_TYPE, klass, super_class, NULL_TREE,
 		   NULL_TREE);
-  objc_ivar_visibility = OBJC_IVAR_VIS_PROTECTED;
+  objc_ivar_visibility = objc_default_ivar_visibility;
 }
 
 void
@@ -1404,7 +1443,7 @@ objc_maybe_build_component_ref (tree object, tree property_ident)
 		     object.component dot-syntax without a declared
 		     property (this is valid for classes too).  Look
 		     for getter/setter methods and internally declare
-		     an artifical property based on them if found.  */
+		     an artificial property based on them if found.  */
 		  x = maybe_make_artificial_property_decl (NULL_TREE,
 							   NULL_TREE,
 							   rprotos,
@@ -1999,7 +2038,8 @@ objc_add_method_declaration (bool is_class_method, tree decl, tree attributes)
 	 impossible to get here.  But it's good to have the check in
 	 case the parser changes.
       */
-      fatal_error ("method declaration not in @interface context");
+      fatal_error (input_location,
+		   "method declaration not in @interface context");
     }
 
   if (flag_objc1_only && attributes)
@@ -2068,7 +2108,7 @@ objc_build_struct (tree klass, tree fields, tree super_name)
   tree s = objc_start_struct (name);
   tree super = (super_name ? xref_tag (RECORD_TYPE, super_name) : NULL_TREE);
   tree t;
-  VEC(tree,heap) *objc_info = NULL;
+  vec<tree> objc_info = vNULL;
   int i;
 
   if (super)
@@ -2128,7 +2168,7 @@ objc_build_struct (tree klass, tree fields, tree super_name)
   for (t = TYPE_MAIN_VARIANT (s); t; t = TYPE_NEXT_VARIANT (t))
     {
       INIT_TYPE_OBJC_INFO (t);
-      VEC_safe_push (tree, heap, objc_info, TYPE_OBJC_INFO (t));
+      objc_info.safe_push (TYPE_OBJC_INFO (t));
     }
 
   s = objc_finish_struct (s, fields);
@@ -2159,12 +2199,12 @@ objc_build_struct (tree klass, tree fields, tree super_name)
       /* Replace TYPE_OBJC_INFO with the saved one.  This restores any
 	 protocol information that may have been associated with the
 	 type.  */
-      TYPE_OBJC_INFO (t) = VEC_index (tree, objc_info, i);
+      TYPE_OBJC_INFO (t) = objc_info[i];
       /* Replace the IDENTIFIER_NODE with an actual @interface now
 	 that we have it.  */
       TYPE_OBJC_INTERFACE (t) = klass;
     }
-  VEC_free (tree, heap, objc_info);
+  objc_info.release ();
 
   /* Use TYPE_BINFO structures to point at the super class, if any.  */
   objc_xref_basetypes (s, super);
@@ -2188,9 +2228,9 @@ objc_volatilize_decl (tree decl)
 	  || TREE_CODE (decl) == PARM_DECL))
     {
       if (local_variables_to_volatilize == NULL)
-	local_variables_to_volatilize = VEC_alloc (tree, gc, 8);
+	vec_alloc (local_variables_to_volatilize, 8);
 
-      VEC_safe_push (tree, gc, local_variables_to_volatilize, decl);
+      vec_safe_push (local_variables_to_volatilize, decl);
     }
 }
 
@@ -2209,7 +2249,7 @@ objc_finish_function (void)
     {
       int i;
       tree decl;
-      FOR_EACH_VEC_ELT (tree, local_variables_to_volatilize, i, decl)
+      FOR_EACH_VEC_ELT (*local_variables_to_volatilize, i, decl)
 	{
 	  tree t = TREE_TYPE (decl);
 
@@ -2224,7 +2264,7 @@ objc_finish_function (void)
 	}
 
       /* Now we delete the vector.  This sets it to NULL as well.  */
-      VEC_free (tree, gc, local_variables_to_volatilize);
+      vec_free (local_variables_to_volatilize);
     }
 }
 
@@ -2678,18 +2718,22 @@ objc_copy_binfo (tree binfo)
 static void
 objc_xref_basetypes (tree ref, tree basetype)
 {
+  tree variant;
   tree binfo = make_tree_binfo (basetype ? 1 : 0);
-
   TYPE_BINFO (ref) = binfo;
   BINFO_OFFSET (binfo) = size_zero_node;
   BINFO_TYPE (binfo) = ref;
+
+  gcc_assert (TYPE_MAIN_VARIANT (ref) == ref);
+  for (variant = ref; variant; variant = TYPE_NEXT_VARIANT (variant))
+    TYPE_BINFO (variant) = binfo;
 
   if (basetype)
     {
       tree base_binfo = objc_copy_binfo (TYPE_BINFO (basetype));
 
       BINFO_INHERITANCE_CHAIN (base_binfo) = binfo;
-      BINFO_BASE_ACCESSES (binfo) = VEC_alloc (tree, gc, 1);
+      vec_alloc (BINFO_BASE_ACCESSES (binfo), 1);
       BINFO_BASE_APPEND (binfo, base_binfo);
       BINFO_BASE_ACCESS_APPEND (binfo, access_public_node);
     }
@@ -2820,7 +2864,7 @@ check_protocol_recursively (tree proto, tree list)
 			      /* definition_required */ false);
 
       if (pp == proto)
-	fatal_error ("protocol %qE has circular dependency",
+	fatal_error (input_location, "protocol %qE has circular dependency",
 		     PROTOCOL_NAME (pp));
       if (pp)
 	check_protocol_recursively (proto, PROTOCOL_LIST (pp));
@@ -3086,10 +3130,10 @@ my_build_string_pointer (int len, const char *str)
   return build1 (ADDR_EXPR, ptrtype, string);
 }
 
-static hashval_t
-string_hash (const void *ptr)
+hashval_t
+objc_string_hasher::hash (string_descriptor *ptr)
 {
-  const_tree const str = ((const struct string_descriptor *)ptr)->literal;
+  const_tree const str = ptr->literal;
   const unsigned char *p = (const unsigned char *) TREE_STRING_POINTER (str);
   int i, len = TREE_STRING_LENGTH (str);
   hashval_t h = len;
@@ -3100,11 +3144,11 @@ string_hash (const void *ptr)
   return h;
 }
 
-static int
-string_eq (const void *ptr1, const void *ptr2)
+bool
+objc_string_hasher::equal (string_descriptor *ptr1, string_descriptor *ptr2)
 {
-  const_tree const str1 = ((const struct string_descriptor *)ptr1)->literal;
-  const_tree const str2 = ((const struct string_descriptor *)ptr2)->literal;
+  const_tree const str1 = ptr1->literal;
+  const_tree const str2 = ptr2->literal;
   int len1 = TREE_STRING_LENGTH (str1);
 
   return (len1 == TREE_STRING_LENGTH (str2)
@@ -3126,7 +3170,6 @@ objc_build_string_object (tree string)
   int length;
   tree addr;
   struct string_descriptor *desc, key;
-  void **loc;
 
   /* We should be passed a STRING_CST.  */
   gcc_checking_assert (TREE_CODE (string) == STRING_CST);
@@ -3177,12 +3220,12 @@ objc_build_string_object (tree string)
 
   /* Perhaps we already constructed a constant string just like this one? */
   key.literal = string;
-  loc = htab_find_slot (string_htab, &key, INSERT);
-  desc = (struct string_descriptor *) *loc;
+  string_descriptor **loc = string_htab->find_slot (&key, INSERT);
+  desc = *loc;
 
   if (!desc)
     {
-      *loc = desc = ggc_alloc_string_descriptor ();
+      *loc = desc = ggc_alloc<string_descriptor> ();
       desc->literal = string;
       desc->constructor =
 	(*runtime.build_const_string_constructor) (input_location, string, length);
@@ -3199,7 +3242,7 @@ objc_build_string_object (tree string)
    with type TYPE and elements ELTS.  */
 
 tree
-objc_build_constructor (tree type, VEC(constructor_elt,gc) *elts)
+objc_build_constructor (tree type, vec<constructor_elt, va_gc> *elts)
 {
   tree constructor = build_constructor (type, elts);
 
@@ -3210,7 +3253,7 @@ objc_build_constructor (tree type, VEC(constructor_elt,gc) *elts)
 #ifdef OBJCPLUS
   /* Adjust for impedance mismatch.  We should figure out how to build
      CONSTRUCTORs that consistently please both the C and C++ gods.  */
-  if (!VEC_index (constructor_elt, elts, 0)->index)
+  if (!(*elts)[0].index)
     TREE_TYPE (constructor) = init_list_type_node;
 #endif
 
@@ -3293,7 +3336,7 @@ objc_get_class_reference (tree ident)
 #ifdef OBJCPLUS
   if (processing_template_decl)
     /* Must wait until template instantiation time.  */
-    return build_min_nt (CLASS_REFERENCE_EXPR, ident);
+    return build_min_nt_loc (UNKNOWN_LOCATION, CLASS_REFERENCE_EXPR, ident);
 #endif
 
   if (TREE_CODE (ident) == TYPE_DECL)
@@ -3553,7 +3596,6 @@ objc_build_ivar_assignment (tree outervar, tree lhs, tree rhs)
 		tree_cons (NULL_TREE, offs,
 		    NULL_TREE)));
 
-  assemble_external (func);
   return build_function_call (input_location, func, func_params);
 }
 
@@ -3566,7 +3608,6 @@ objc_build_global_assignment (tree lhs, tree rhs)
 		      build_unary_op (input_location, ADDR_EXPR, lhs, 0)),
 		    NULL_TREE));
 
-  assemble_external (objc_assign_global_decl);
   return build_function_call (input_location,
 			      objc_assign_global_decl, func_params);
 }
@@ -3580,7 +3621,6 @@ objc_build_strong_cast_assignment (tree lhs, tree rhs)
 		      build_unary_op (input_location, ADDR_EXPR, lhs, 0)),
 		    NULL_TREE));
 
-  assemble_external (objc_assign_strong_cast_decl);
   return build_function_call (input_location,
 			      objc_assign_strong_cast_decl, func_params);
 }
@@ -3828,18 +3868,24 @@ objc_get_class_ivars (tree class_name)
    allows us to store keys in the hashtable, without values (it looks
    more like a set).  So, we store the DECLs, but define equality as
    DECLs having the same name, and hash as the hash of the name.  */
-static hashval_t
-hash_instance_variable (const PTR p)
+
+struct decl_name_hash : typed_noop_remove <tree_node>
 {
-  const_tree q = (const_tree)p;
+  typedef tree_node value_type;
+  typedef tree_node compare_type;
+  static inline hashval_t hash (const value_type *);
+  static inline bool equal (const value_type *, const compare_type *);
+};
+
+inline hashval_t
+decl_name_hash::hash (const value_type *q)
+{
   return (hashval_t) ((intptr_t)(DECL_NAME (q)) >> 3);
 }
 
-static int
-eq_instance_variable (const PTR p1, const PTR p2)
+inline bool
+decl_name_hash::equal (const value_type *a, const compare_type *b)
 {
-  const_tree a = (const_tree)p1;
-  const_tree b = (const_tree)p2;
   return DECL_NAME (a) == DECL_NAME (b);
 }
 
@@ -3920,8 +3966,7 @@ objc_detect_field_duplicates (bool check_superclasses_only)
 	  {
 	    /* First, build the hashtable by putting all the instance
 	       variables of superclasses in it.  */
-	    htab_t htab = htab_create (37, hash_instance_variable,
-				       eq_instance_variable, NULL);
+	    hash_table<decl_name_hash> htab (37);
 	    tree interface;
 	    for (interface = lookup_interface (CLASS_SUPER_NAME
 					       (objc_interface_context));
@@ -3934,7 +3979,7 @@ objc_detect_field_duplicates (bool check_superclasses_only)
 		  {
 		    if (DECL_NAME (ivar) != NULL_TREE)
 		      {
-			void **slot = htab_find_slot (htab, ivar, INSERT);
+			tree_node **slot = htab.find_slot (ivar, INSERT);
 			/* Do not check for duplicate instance
 			   variables in superclasses.  Errors have
 			   already been generated.  */
@@ -3954,7 +3999,7 @@ objc_detect_field_duplicates (bool check_superclasses_only)
 		  {
 		    if (DECL_NAME (ivar) != NULL_TREE)
 		      {
-			tree duplicate_ivar = (tree)(htab_find (htab, ivar));
+			tree duplicate_ivar = htab.find (ivar);
 			if (duplicate_ivar != HTAB_EMPTY_ENTRY)
 			  {
 			    error_at (DECL_SOURCE_LOCATION (ivar),
@@ -3981,7 +4026,7 @@ objc_detect_field_duplicates (bool check_superclasses_only)
 		  {
 		    if (DECL_NAME (ivar) != NULL_TREE)
 		      {
-			void **slot = htab_find_slot (htab, ivar, INSERT);
+			tree_node **slot = htab.find_slot (ivar, INSERT);
 			if (*slot)
 			  {
 			    tree duplicate_ivar = (tree)(*slot);
@@ -3998,7 +4043,6 @@ objc_detect_field_duplicates (bool check_superclasses_only)
 		      }
 		  }
 	      }
-	    htab_delete (htab);
 	    return true;
 	  }
       }
@@ -4628,16 +4672,14 @@ mark_referenced_methods (void)
       chain = CLASS_CLS_METHODS (impent->imp_context);
       while (chain)
 	{
-	  cgraph_mark_needed_node (
-			   cgraph_get_create_node (METHOD_DEFINITION (chain)));
+	  cgraph_node::get_create (METHOD_DEFINITION (chain))->mark_force_output ();
 	  chain = DECL_CHAIN (chain);
 	}
 
       chain = CLASS_NST_METHODS (impent->imp_context);
       while (chain)
 	{
-	  cgraph_mark_needed_node (
-			   cgraph_get_create_node (METHOD_DEFINITION (chain)));
+	  cgraph_node::get_create (METHOD_DEFINITION (chain))->mark_force_output ();
 	  chain = DECL_CHAIN (chain);
 	}
     }
@@ -4880,12 +4922,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  number = TREE_VALUE (second_argument);
 		  if (number
 		      && TREE_CODE (number) == INTEGER_CST
-		      && TREE_INT_CST_HIGH (number) == 0)
-		    {
-		      TREE_VALUE (second_argument)
-			= build_int_cst (integer_type_node,
-					 TREE_INT_CST_LOW (number) + 2);
-		    }
+		      && !wi::eq_p (number, 0))
+		    TREE_VALUE (second_argument)
+		      = wide_int_to_tree (TREE_TYPE (number),
+					  wi::add (number, 2));
 
 		  /* This is the third argument, the "first-to-check",
 		     which specifies the index of the first argument to
@@ -4895,13 +4935,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  number = TREE_VALUE (third_argument);
 		  if (number
 		      && TREE_CODE (number) == INTEGER_CST
-		      && TREE_INT_CST_HIGH (number) == 0
-		      && TREE_INT_CST_LOW (number) != 0)
-		    {
-		      TREE_VALUE (third_argument)
-			= build_int_cst (integer_type_node,
-					 TREE_INT_CST_LOW (number) + 2);
-		    }
+		      && !wi::eq_p (number, 0))
+		    TREE_VALUE (third_argument)
+		      = wide_int_to_tree (TREE_TYPE (number),
+					  wi::add (number, 2));
 		}
 	      filtered_attributes = chainon (filtered_attributes,
 					     new_attribute);
@@ -4933,15 +4970,11 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		{
 		  /* Get the value of the argument and add 2.  */
 		  tree number = TREE_VALUE (argument);
-		  if (number
-		      && TREE_CODE (number) == INTEGER_CST
-		      && TREE_INT_CST_HIGH (number) == 0
-		      && TREE_INT_CST_LOW (number) != 0)
-		    {
-		      TREE_VALUE (argument)
-			= build_int_cst (integer_type_node,
-					 TREE_INT_CST_LOW (number) + 2);
-		    }
+		  if (number && TREE_CODE (number) == INTEGER_CST
+		      && !wi::eq_p (number, 0))
+		    TREE_VALUE (argument)
+		      = wide_int_to_tree (TREE_TYPE (number),
+					  wi::add (number, 2));
 		  argument = TREE_CHAIN (argument);
 		}
 
@@ -4993,7 +5026,7 @@ tree
 build_function_type_for_method (tree return_type, tree method,
 				int context, bool super_flag)
 {
-  VEC(tree,gc) *argtypes = make_tree_vector ();
+  vec<tree, va_gc> *argtypes = make_tree_vector ();
   tree t, ftype;
   bool is_varargs = false;
 
@@ -5014,7 +5047,7 @@ build_function_type_for_method (tree return_type, tree method,
          appropriate.  */
       arg_type = objc_decay_parm_type (arg_type);
 
-      VEC_safe_push (tree, gc, argtypes, arg_type);
+      vec_safe_push (argtypes, arg_type);
     }
 
   if (METHOD_ADD_ARGS (method))
@@ -5026,7 +5059,7 @@ build_function_type_for_method (tree return_type, tree method,
 
 	  arg_type = objc_decay_parm_type (arg_type);
 
-	  VEC_safe_push (tree, gc, argtypes, arg_type);
+	  vec_safe_push (argtypes, arg_type);
 	}
 
       if (METHOD_ADD_ARGS_ELLIPSIS_P (method))
@@ -5275,8 +5308,8 @@ objc_build_message_expr (tree receiver, tree message_args)
 #ifdef OBJCPLUS
   if (processing_template_decl)
     /* Must wait until template instantiation time.  */
-    return build_min_nt (MESSAGE_SEND_EXPR, receiver, sel_name,
-			 method_params);
+    return build_min_nt_loc (UNKNOWN_LOCATION, MESSAGE_SEND_EXPR, receiver,
+			     sel_name, method_params);
 #endif
 
   return objc_finish_message_expr (receiver, sel_name, method_params, NULL);
@@ -5765,8 +5798,7 @@ hash_init (void)
   alias_name_map = objc_map_alloc_ggc (200);
 
   /* Initialize the hash table used to hold the constant string objects.  */
-  string_htab = htab_create_ggc (31, string_hash,
-				   string_eq, NULL);
+  string_htab = hash_table<objc_string_hasher>::create_ggc (31);
 }
 
 /* Use the following to add a method to class_method_map or
@@ -7021,7 +7053,7 @@ continue_class (tree klass)
 	uprivate_record = CLASS_STATIC_TEMPLATE (implementation_template);
 	objc_instance_type = build_pointer_type (uprivate_record);
 
-	imp_entry = ggc_alloc_imp_entry ();
+	imp_entry = ggc_alloc<struct imp_entry> ();
 
 	imp_entry->next = imp_list;
 	imp_entry->imp_context = klass;
@@ -7270,6 +7302,7 @@ objc_synthesize_getter (tree klass, tree class_methods ATTRIBUTE_UNUSED, tree pr
 	     the same type, there is no need to lookup the ivar.  */
 	  size_of = c_sizeof_or_alignof_type (location, TREE_TYPE (property),
 					      true /* is_sizeof */,
+					      false /* min_alignof */,
 					      false /* complain */);
 
 	  if (PROPERTY_NONATOMIC (property))
@@ -7471,6 +7504,7 @@ objc_synthesize_setter (tree klass, tree class_methods ATTRIBUTE_UNUSED, tree pr
 	     the same type, there is no need to lookup the ivar.  */
 	  size_of = c_sizeof_or_alignof_type (location, TREE_TYPE (property),
 					      true /* is_sizeof */,
+					      false /* min_alignof */,
 					      false /* complain */);
 
 	  if (PROPERTY_NONATOMIC (property))
@@ -8244,6 +8278,7 @@ objc_push_parm (tree parm)
   c_apply_type_quals_to_decl
   ((TYPE_READONLY (TREE_TYPE (parm)) ? TYPE_QUAL_CONST : 0)
    | (TYPE_RESTRICT (TREE_TYPE (parm)) ? TYPE_QUAL_RESTRICT : 0)
+   | (TYPE_ATOMIC (TREE_TYPE (parm)) ? TYPE_QUAL_ATOMIC : 0)
    | (TYPE_VOLATILE (TREE_TYPE (parm)) ? TYPE_QUAL_VOLATILE : 0), parm);
 
   objc_parmlist = chainon (objc_parmlist, parm);
@@ -9360,6 +9395,12 @@ objc_lookup_ivar (tree other, tree id)
       && other && other != error_mark_node)
     return other;
 
+  /* Don't look up the ivar if the user has explicitly advised against
+     it with -fno-local-ivars.  */
+
+  if (!flag_local_ivars)
+    return other;
+
   /* Look up the ivar, but do not use it if it is not accessible.  */
   ivar = is_ivar (objc_ivar_chain, id);
 
@@ -9376,8 +9417,11 @@ objc_lookup_ivar (tree other, tree id)
       && !DECL_FILE_SCOPE_P (other))
 #endif
     {
-      warning (0, "local declaration of %qE hides instance variable", id);
-
+      if (warn_shadow_ivar == 1 || (warn_shadow && warn_shadow_ivar != 0)) {
+          warning (warn_shadow_ivar ? OPT_Wshadow_ivar : OPT_Wshadow,
+                   "local declaration of %qE hides instance variable", id);
+      }
+        
       return other;
     }
 
@@ -10089,5 +10133,22 @@ objc_common_init_ts (void)
   MARK_TS_TYPED (MESSAGE_SEND_EXPR);
   MARK_TS_TYPED (PROPERTY_REF);
 }
+
+size_t
+objc_common_tree_size (enum tree_code code)
+{
+  switch (code)
+    {
+    case CLASS_METHOD_DECL:
+    case INSTANCE_METHOD_DECL:
+    case KEYWORD_DECL:
+    case PROPERTY_DECL:
+      return sizeof (struct tree_decl_non_common);
+    default:
+      gcc_unreachable ();
+  
+    }
+}
+
 
 #include "gt-objc-objc-act.h"

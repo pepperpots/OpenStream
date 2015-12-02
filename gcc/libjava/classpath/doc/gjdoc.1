@@ -132,7 +132,7 @@
 .\" ========================================================================
 .\"
 .IX Title "GJDOC 1"
-.TH GJDOC 1 "2012-03-22" "0.99-pre" "GNU"
+.TH GJDOC 1 "2015-07-16" "0.99.1-pre" "GNU"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -230,7 +230,7 @@ Doclet, grouped by type.  Explanations are in the following sections.
 \&\fB\-quiet  \-verbose\fR
 .IP "\fIVirtual Machine Options\fR" 4
 .IX Item "Virtual Machine Options"
-\&\fB\-classpath\fR  \fB\-bootclasspath\fR  \fB\-J\fR\fIvmopt\fR
+\&\fB\-classpath  \-bootclasspath  \-J\fR \fIvmopt\fR
 .Sh "Selecting which Source Files to Process"
 .IX Subsection "Selecting which Source Files to Process"
 .IP "\fB\-s\fR \fIpathlist\fR" 4
@@ -616,14 +616,14 @@ with the header \fB\s-1CVS\s0 \s-1ID\s0\fR, you would specify:
 Let's say that a class javadoc comment contains
 .Sp
 .Vb 1
-\&        @cvsid $Id: cp\-tools.texinfo,v 1.7 2008/08/13 13:32:05 jsumali Exp $
+\&        @cvsid $Id: cp\-tools.texinfo,v 1.9 2012\-03\-07 15:27:27 gnu_andrew Exp $
 .Ve
 .Sp
 Then the \s-1HTML\s0 output will contain something like
 .Sp
 .Vb 2
 \&        CVS ID:
-\&          $Id: cp\-tools.texinfo,v 1.7 2008/08/13 13:32:05 jsumali Exp $
+\&          $Id: cp\-tools.texinfo,v 1.9 2012\-03\-07 15:27:27 gnu_andrew Exp $
 .Ve
 .RE
 .Sh "Running Other Doclets"

@@ -1,6 +1,5 @@
 /* Subroutines used for code generation on Renesas RX processors.
-   Copyright (C) 2008, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2008-2015 Free Software Foundation, Inc.
    Contributed by Red Hat.
 
    This file is part of GCC.
@@ -27,7 +26,19 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "varasm.h"
+#include "stor-layout.h"
+#include "calls.h"
 #include "rtl.h"
 #include "regs.h"
 #include "hard-reg-set.h"
@@ -37,13 +48,32 @@
 #include "insn-attr.h"
 #include "flags.h"
 #include "function.h"
+#include "hashtab.h"
+#include "statistics.h"
+#include "real.h"
+#include "fixed-value.h"
+#include "expmed.h"
+#include "dojump.h"
+#include "explow.h"
+#include "emit-rtl.h"
+#include "stmt.h"
 #include "expr.h"
+#include "insn-codes.h"
 #include "optabs.h"
 #include "libfuncs.h"
 #include "recog.h"
 #include "diagnostic-core.h"
 #include "toplev.h"
 #include "reload.h"
+#include "dominance.h"
+#include "cfg.h"
+#include "cfgrtl.h"
+#include "cfganal.h"
+#include "lcm.h"
+#include "cfgbuild.h"
+#include "cfgcleanup.h"
+#include "predict.h"
+#include "basic-block.h"
 #include "df.h"
 #include "ggc.h"
 #include "tm_p.h"
@@ -52,6 +82,12 @@
 #include "target-def.h"
 #include "langhooks.h"
 #include "opts.h"
+#include "hash-map.h"
+#include "is-a.h"
+#include "plugin-api.h"
+#include "ipa-ref.h"
+#include "cgraph.h"
+#include "builtins.h"
 
 static unsigned int rx_gp_base_regnum_val = INVALID_REGNUM;
 static unsigned int rx_pid_base_regnum_val = INVALID_REGNUM;
@@ -97,7 +133,7 @@ static void rx_print_operand (FILE *, rtx, int);
 #define CC_FLAG_C	(1 << 3)
 #define CC_FLAG_FP	(1 << 4)	/* Fake, to differentiate CC_Fmode.  */
 
-static unsigned int flags_from_mode (enum machine_mode mode);
+static unsigned int flags_from_mode (machine_mode mode);
 static unsigned int flags_from_code (enum rtx_code code);
 
 /* Return true if OP is a reference to an object in a PID data area.  */
@@ -144,7 +180,7 @@ rx_pid_data_operand (rtx op)
 static rtx
 rx_legitimize_address (rtx x,
 		       rtx oldx ATTRIBUTE_UNUSED,
-		       enum machine_mode mode ATTRIBUTE_UNUSED)
+		       machine_mode mode ATTRIBUTE_UNUSED)
 {
   if (rx_pid_data_operand (x) == PID_UNENCODED)
     {
@@ -176,7 +212,7 @@ rx_small_data_operand (rtx op)
 }
 
 static bool
-rx_is_legitimate_address (enum machine_mode mode, rtx x,
+rx_is_legitimate_address (machine_mode mode, rtx x,
 			  bool strict ATTRIBUTE_UNUSED)
 {
   if (RTX_OK_FOR_BASE (x, strict))
@@ -274,7 +310,7 @@ rx_is_legitimate_address (enum machine_mode mode, rtx x,
    or pre/post increment/decrement.  */
 
 bool
-rx_is_restricted_memory_address (rtx mem, enum machine_mode mode)
+rx_is_restricted_memory_address (rtx mem, machine_mode mode)
 {
   if (! rx_is_legitimate_address
       (mode, mem, reload_in_progress || reload_completed))
@@ -317,7 +353,7 @@ rx_is_restricted_memory_address (rtx mem, enum machine_mode mode)
 /* Implement TARGET_MODE_DEPENDENT_ADDRESS_P.  */
 
 static bool
-rx_mode_dependent_address_p (const_rtx addr)
+rx_mode_dependent_address_p (const_rtx addr, addr_space_t as ATTRIBUTE_UNUSED)
 {
   if (GET_CODE (addr) == CONST)
     addr = XEXP (addr, 0);
@@ -344,9 +380,9 @@ rx_mode_dependent_address_p (const_rtx addr)
 
 	case CONST_INT:
 	  /* REG+INT is only mode independent if INT is a
-	     multiple of 4, positive and will fit into 8-bits.  */
+	     multiple of 4, positive and will fit into 16-bits.  */
 	  if (((INTVAL (addr) & 3) == 0)
-	      && IN_RANGE (INTVAL (addr), 4, 252))
+	      && IN_RANGE (INTVAL (addr), 4, 0xfffc))
 	    return false;
 	  return true;
 
@@ -548,7 +584,7 @@ rx_print_operand (FILE * file, rtx op, int letter)
     case 'B':
       {
 	enum rtx_code code = GET_CODE (op);
-	enum machine_mode mode = GET_MODE (XEXP (op, 0));
+	machine_mode mode = GET_MODE (XEXP (op, 0));
 	const char *ret;
 
 	if (mode == CC_Fmode)
@@ -730,7 +766,7 @@ rx_print_operand (FILE * file, rtx op, int letter)
       break;
 
     case 'R':
-      gcc_assert (GET_MODE_SIZE (GET_MODE (op)) < 4);
+      gcc_assert (GET_MODE_SIZE (GET_MODE (op)) <= 4);
       unsigned_load = true;
       /* Fall through.  */
     case 'Q':
@@ -975,6 +1011,8 @@ rx_gen_move_template (rtx * operands, bool is_movu)
 	   loading an immediate into a register.  */
 	extension = ".W";
       break;
+    case DFmode:
+    case DImode:
     case SFmode:
     case SImode:
       extension = ".L";
@@ -988,19 +1026,44 @@ rx_gen_move_template (rtx * operands, bool is_movu)
     }
 
   if (MEM_P (src) && rx_pid_data_operand (XEXP (src, 0)) == PID_UNENCODED)
-    src_template = "(%A1-__pid_base)[%P1]";
+    {
+      gcc_assert (GET_MODE (src) != DImode);
+      gcc_assert (GET_MODE (src) != DFmode);
+      
+      src_template = "(%A1 - __pid_base)[%P1]";
+    }
   else if (MEM_P (src) && rx_small_data_operand (XEXP (src, 0)))
-    src_template = "%%gp(%A1)[%G1]";
+    {
+      gcc_assert (GET_MODE (src) != DImode);
+      gcc_assert (GET_MODE (src) != DFmode);
+      
+      src_template = "%%gp(%A1)[%G1]";
+    }
   else
     src_template = "%1";
 
   if (MEM_P (dest) && rx_small_data_operand (XEXP (dest, 0)))
-    dst_template = "%%gp(%A0)[%G0]";
+    {
+      gcc_assert (GET_MODE (dest) != DImode);
+      gcc_assert (GET_MODE (dest) != DFmode);
+      
+      dst_template = "%%gp(%A0)[%G0]";
+    }
   else
     dst_template = "%0";
 
-  sprintf (out_template, "%s%s\t%s, %s", is_movu ? "movu" : "mov",
-	   extension, src_template, dst_template);
+  if (GET_MODE (dest) == DImode || GET_MODE (dest) == DFmode)
+    {
+      gcc_assert (! is_movu);
+
+      if (REG_P (src) && REG_P (dest) && (REGNO (dest) == REGNO (src) + 1))
+	sprintf (out_template, "mov.L\t%%H1, %%H0 ! mov.L\t%%1, %%0");
+      else
+	sprintf (out_template, "mov.L\t%%1, %%0 ! mov.L\t%%H1, %%H0");
+    }
+  else
+    sprintf (out_template, "%s%s\t%s, %s", is_movu ? "movu" : "mov",
+	     extension, src_template, dst_template);
   return out_template;
 }
 
@@ -1017,7 +1080,7 @@ rx_round_up (unsigned int value, unsigned int alignment)
    occupied by an argument of type TYPE and mode MODE.  */
 
 static unsigned int
-rx_function_arg_size (enum machine_mode mode, const_tree type)
+rx_function_arg_size (machine_mode mode, const_tree type)
 {
   unsigned int num_bytes;
 
@@ -1037,7 +1100,7 @@ rx_function_arg_size (enum machine_mode mode, const_tree type)
    variable parameter list.  */
 
 static rtx
-rx_function_arg (cumulative_args_t cum, enum machine_mode mode,
+rx_function_arg (cumulative_args_t cum, machine_mode mode,
 		 const_tree type, bool named)
 {
   unsigned int next_reg;
@@ -1075,17 +1138,30 @@ rx_function_arg (cumulative_args_t cum, enum machine_mode mode,
 }
 
 static void
-rx_function_arg_advance (cumulative_args_t cum, enum machine_mode mode,
+rx_function_arg_advance (cumulative_args_t cum, machine_mode mode,
 			 const_tree type, bool named ATTRIBUTE_UNUSED)
 {
   *get_cumulative_args (cum) += rx_function_arg_size (mode, type);
 }
 
 static unsigned int
-rx_function_arg_boundary (enum machine_mode mode ATTRIBUTE_UNUSED,
+rx_function_arg_boundary (machine_mode mode ATTRIBUTE_UNUSED,
 			  const_tree type ATTRIBUTE_UNUSED)
 {
-  return 32;
+  /* Older versions of the RX backend aligned all on-stack arguments
+     to 32-bits.  The RX C ABI however says that they should be
+     aligned to their natural alignment.  (See section 5.2.2 of the ABI).  */
+  if (TARGET_GCC_ABI)
+    return STACK_BOUNDARY;
+
+  if (type)
+    {
+      if (DECL_P (type))
+	return DECL_ALIGN (type);
+      return TYPE_ALIGN (type);
+    }
+
+  return PARM_BOUNDARY;
 }
 
 /* Return an RTL describing where a function return value of type RET_TYPE
@@ -1096,7 +1172,7 @@ rx_function_value (const_tree ret_type,
 		   const_tree fn_decl_or_type ATTRIBUTE_UNUSED,
 		   bool       outgoing ATTRIBUTE_UNUSED)
 {
-  enum machine_mode mode = TYPE_MODE (ret_type);
+  machine_mode mode = TYPE_MODE (ret_type);
 
   /* RX ABI specifies that small integer types are
      promoted to int when returned by a function.  */
@@ -1112,9 +1188,9 @@ rx_function_value (const_tree ret_type,
 /* TARGET_PROMOTE_FUNCTION_MODE must behave in the same way with
    regard to function returns as does TARGET_FUNCTION_VALUE.  */
 
-static enum machine_mode
+static machine_mode
 rx_promote_function_mode (const_tree type ATTRIBUTE_UNUSED,
-			  enum machine_mode mode,
+			  machine_mode mode,
 			  int * punsignedp ATTRIBUTE_UNUSED,
 			  const_tree funtype ATTRIBUTE_UNUSED,
 			  int for_return)
@@ -1255,6 +1331,41 @@ rx_conditional_register_usage (void)
     }
 }
 
+struct decl_chain
+{
+  tree fndecl;
+  struct decl_chain * next;
+};
+
+/* Stack of decls for which we have issued warnings.  */
+static struct decl_chain * warned_decls = NULL;
+
+static void
+add_warned_decl (tree fndecl)
+{
+  struct decl_chain * warned = (struct decl_chain *) xmalloc (sizeof * warned);
+
+  warned->fndecl = fndecl;
+  warned->next = warned_decls;
+  warned_decls = warned;
+}
+
+/* Returns TRUE if FNDECL is on our list of warned about decls.  */
+
+static bool
+already_warned (tree fndecl)
+{
+  struct decl_chain * warned;
+
+  for (warned = warned_decls;
+       warned != NULL;
+       warned = warned->next)
+    if (warned->fndecl == fndecl)
+      return true;
+
+  return false;
+}
+
 /* Perform any actions necessary before starting to compile FNDECL.
    For the RX we use this to make sure that we have the correct
    set of register masks selected.  If FNDECL is NULL then we are
@@ -1285,6 +1396,24 @@ rx_set_current_function (tree fndecl)
     {
       use_fixed_regs = current_is_fast_interrupt;
       target_reinit ();
+    }
+
+  if (current_is_fast_interrupt && rx_warn_multiple_fast_interrupts)
+    {
+      /* We do not warn about the first fast interrupt routine that
+	 we see.  Instead we just push it onto the stack.  */
+      if (warned_decls == NULL)
+	add_warned_decl (fndecl);
+
+      /* Otherwise if this fast interrupt is one for which we have
+	 not already issued a warning, generate one and then push
+	 it onto the stack as well.  */
+      else if (! already_warned (fndecl))
+	{
+	  warning (0, "multiple fast interrupt routines seen: %qE and %qE",
+		   fndecl, warned_decls->fndecl);
+	  add_warned_decl (fndecl);
+	}
     }
 
   rx_previous_fndecl = fndecl;
@@ -1381,7 +1510,7 @@ rx_get_stack_layout (unsigned int * lowest,
 	      be used in (non-interrupt aware) routines called from this one.  */
 	   || (call_used_regs[reg]
 	       && is_interrupt_func (NULL_TREE)
-	       && ! current_function_is_leaf))
+	       && ! crtl->is_leaf))
 	  && (! call_used_regs[reg]
 	      /* Even call clobbered registered must
 		 be pushed inside interrupt handlers.  */
@@ -1606,6 +1735,9 @@ rx_expand_prologue (void)
 
   rx_get_stack_layout (& low, & high, & mask, & frame_size, & stack_size);
 
+  if (flag_stack_usage_info)
+    current_function_static_stack_size = frame_size + stack_size;
+
   /* If we use any of the callee-saved registers, save them now.  */
   if (mask)
     {
@@ -1711,9 +1843,68 @@ rx_expand_prologue (void)
 }
 
 static void
+add_vector_labels (FILE *file, const char *aname)
+{
+  tree vec_attr;
+  tree val_attr;
+  const char *vname = "vect";
+  const char *s;
+  int vnum;
+
+  /* This node is for the vector/interrupt tag itself */
+  vec_attr = lookup_attribute (aname, DECL_ATTRIBUTES (current_function_decl));
+  if (!vec_attr)
+    return;
+
+  /* Now point it at the first argument */
+  vec_attr = TREE_VALUE (vec_attr);
+
+  /* Iterate through the arguments.  */
+  while (vec_attr)
+    {
+      val_attr = TREE_VALUE (vec_attr);
+      switch (TREE_CODE (val_attr))
+	{
+	case STRING_CST:
+	  s = TREE_STRING_POINTER (val_attr);
+	  goto string_id_common;
+
+	case IDENTIFIER_NODE:
+	  s = IDENTIFIER_POINTER (val_attr);
+
+	string_id_common:
+	  if (strcmp (s, "$default") == 0)
+	    {
+	      fprintf (file, "\t.global\t$tableentry$default$%s\n", vname);
+	      fprintf (file, "$tableentry$default$%s:\n", vname);
+	    }
+	  else
+	    vname = s;
+	  break;
+
+	case INTEGER_CST:
+	  vnum = TREE_INT_CST_LOW (val_attr);
+
+	  fprintf (file, "\t.global\t$tableentry$%d$%s\n", vnum, vname);
+	  fprintf (file, "$tableentry$%d$%s:\n", vnum, vname);
+	  break;
+
+	default:
+	  ;
+	}
+
+      vec_attr = TREE_CHAIN (vec_attr);
+    }
+
+}
+
+static void
 rx_output_function_prologue (FILE * file,
 			     HOST_WIDE_INT frame_size ATTRIBUTE_UNUSED)
 {
+  add_vector_labels (file, "interrupt");
+  add_vector_labels (file, "vector");
+
   if (is_fast_interrupt_func (NULL_TREE))
     asm_fprintf (file, "\t; Note: Fast Interrupt Handler\n");
 
@@ -1776,7 +1967,7 @@ gen_rx_rtsd_vector (unsigned int adjust, unsigned int low, unsigned int high)
 
   XVECEXP (vector, 0, 0) =
     gen_rtx_SET (VOIDmode, stack_pointer_rtx,
-		 plus_constant (stack_pointer_rtx, adjust));
+		 plus_constant (Pmode, stack_pointer_rtx, adjust));
 
   for (i = 0; i < count - 2; i++)
     XVECEXP (vector, 0, i + 1) =
@@ -1784,7 +1975,7 @@ gen_rx_rtsd_vector (unsigned int adjust, unsigned int low, unsigned int high)
 		   gen_rtx_REG (SImode, low + i),
 		   gen_rtx_MEM (SImode,
 				i == 0 ? stack_pointer_rtx
-				: plus_constant (stack_pointer_rtx,
+				: plus_constant (Pmode, stack_pointer_rtx,
 						 i * UNITS_PER_WORD)));
 
   XVECEXP (vector, 0, count - 1) = ret_rtx;
@@ -1805,7 +1996,7 @@ gen_rx_popm_vector (unsigned int low, unsigned int high)
 
   XVECEXP (vector, 0, 0) =
     gen_rtx_SET (VOIDmode, stack_pointer_rtx,
-		 plus_constant (stack_pointer_rtx,
+		 plus_constant (Pmode, stack_pointer_rtx,
 				(count - 1) * UNITS_PER_WORD));
 
   for (i = 0; i < count - 1; i++)
@@ -1814,7 +2005,7 @@ gen_rx_popm_vector (unsigned int low, unsigned int high)
 		   gen_rtx_REG (SImode, low + i),
 		   gen_rtx_MEM (SImode,
 				i == 0 ? stack_pointer_rtx
-				: plus_constant (stack_pointer_rtx,
+				: plus_constant (Pmode, stack_pointer_rtx,
 						 i * UNITS_PER_WORD)));
 
   return vector;
@@ -2060,7 +2251,7 @@ static bool
 rx_in_small_data (const_tree decl)
 {
   int size;
-  const_tree section;
+  const char * section;
 
   if (rx_small_data_limit == 0)
     return false;
@@ -2079,11 +2270,7 @@ rx_in_small_data (const_tree decl)
 
   section = DECL_SECTION_NAME (decl);
   if (section)
-    {
-      const char * const name = TREE_STRING_POINTER (section);
-
-      return (strcmp (name, "D_2") == 0) || (strcmp (name, "B_2") == 0);
-    }
+    return (strcmp (section, "D_2") == 0) || (strcmp (section, "B_2") == 0);
 
   size = int_size_in_bytes (TREE_TYPE (decl));
 
@@ -2094,7 +2281,7 @@ rx_in_small_data (const_tree decl)
    The only special thing we do here is to honor small data.  */
 
 static section *
-rx_select_rtx_section (enum machine_mode mode,
+rx_select_rtx_section (machine_mode mode,
 		       rtx x,
 		       unsigned HOST_WIDE_INT align)
 {
@@ -2177,6 +2364,14 @@ static GTY(()) tree rx_builtins[(int) RX_BUILTIN_max];
 static void
 rx_init_builtins (void)
 {
+#define ADD_RX_BUILTIN0(UC_NAME, LC_NAME, RET_TYPE)		\
+   rx_builtins[RX_BUILTIN_##UC_NAME] =					\
+   add_builtin_function ("__builtin_rx_" LC_NAME,			\
+			build_function_type_list (RET_TYPE##_type_node, \
+						  NULL_TREE),		\
+			RX_BUILTIN_##UC_NAME,				\
+			BUILT_IN_MD, NULL, NULL_TREE)
+
 #define ADD_RX_BUILTIN1(UC_NAME, LC_NAME, RET_TYPE, ARG_TYPE)		\
    rx_builtins[RX_BUILTIN_##UC_NAME] =					\
    add_builtin_function ("__builtin_rx_" LC_NAME,			\
@@ -2207,7 +2402,7 @@ rx_init_builtins (void)
 			RX_BUILTIN_##UC_NAME,				\
 			BUILT_IN_MD, NULL, NULL_TREE)
 
-  ADD_RX_BUILTIN1 (BRK,     "brk",     void,  void);
+  ADD_RX_BUILTIN0 (BRK,     "brk",     void);
   ADD_RX_BUILTIN1 (CLRPSW,  "clrpsw",  void,  integer);
   ADD_RX_BUILTIN1 (SETPSW,  "setpsw",  void,  integer);
   ADD_RX_BUILTIN1 (INT,     "int",     void,  integer);
@@ -2215,18 +2410,18 @@ rx_init_builtins (void)
   ADD_RX_BUILTIN2 (MACLO,   "maclo",   void,  intSI, intSI);
   ADD_RX_BUILTIN2 (MULHI,   "mulhi",   void,  intSI, intSI);
   ADD_RX_BUILTIN2 (MULLO,   "mullo",   void,  intSI, intSI);
-  ADD_RX_BUILTIN1 (MVFACHI, "mvfachi", intSI, void);
-  ADD_RX_BUILTIN1 (MVFACMI, "mvfacmi", intSI, void);
+  ADD_RX_BUILTIN0 (MVFACHI, "mvfachi", intSI);
+  ADD_RX_BUILTIN0 (MVFACMI, "mvfacmi", intSI);
   ADD_RX_BUILTIN1 (MVTACHI, "mvtachi", void,  intSI);
   ADD_RX_BUILTIN1 (MVTACLO, "mvtaclo", void,  intSI);
-  ADD_RX_BUILTIN1 (RMPA,    "rmpa",    void,  void);
+  ADD_RX_BUILTIN0 (RMPA,    "rmpa",    void);
   ADD_RX_BUILTIN1 (MVFC,    "mvfc",    intSI, integer);
   ADD_RX_BUILTIN2 (MVTC,    "mvtc",    void,  integer, integer);
   ADD_RX_BUILTIN1 (MVTIPL,  "mvtipl",  void,  integer);
   ADD_RX_BUILTIN1 (RACW,    "racw",    void,  integer);
   ADD_RX_BUILTIN1 (ROUND,   "round",   intSI, float);
   ADD_RX_BUILTIN1 (REVW,    "revw",    intSI, intSI);
-  ADD_RX_BUILTIN1 (WAIT,    "wait",    void,  void);
+  ADD_RX_BUILTIN0 (WAIT,    "wait",    void);
 }
 
 /* Return the RX builtin for CODE.  */
@@ -2392,7 +2587,7 @@ static rtx
 rx_expand_builtin (tree exp,
 		   rtx target,
 		   rtx subtarget ATTRIBUTE_UNUSED,
-		   enum machine_mode mode ATTRIBUTE_UNUSED,
+		   machine_mode mode ATTRIBUTE_UNUSED,
 		   int ignore ATTRIBUTE_UNUSED)
 {
   tree fndecl = TREE_OPERAND (CALL_EXPR_FN (exp), 0);
@@ -2490,12 +2685,11 @@ rx_elf_asm_destructor (rtx symbol, int priority)
 static tree
 rx_handle_func_attribute (tree * node,
 			  tree   name,
-			  tree   args,
+			  tree   args ATTRIBUTE_UNUSED,
 			  int    flags ATTRIBUTE_UNUSED,
 			  bool * no_add_attrs)
 {
   gcc_assert (DECL_P (* node));
-  gcc_assert (args == NULL_TREE);
 
   if (TREE_CODE (* node) != FUNCTION_DECL)
     {
@@ -2511,6 +2705,28 @@ rx_handle_func_attribute (tree * node,
   return NULL_TREE;
 }
 
+/* Check "vector" attribute.  */
+
+static tree
+rx_handle_vector_attribute (tree * node,
+			    tree   name,
+			    tree   args,
+			    int    flags ATTRIBUTE_UNUSED,
+			    bool * no_add_attrs)
+{
+  gcc_assert (DECL_P (* node));
+  gcc_assert (args != NULL_TREE);
+
+  if (TREE_CODE (* node) != FUNCTION_DECL)
+    {
+      warning (OPT_Wattributes, "%qE attribute only applies to functions",
+	       name);
+      * no_add_attrs = true;
+    }
+
+  return NULL_TREE;
+}
+
 /* Table of RX specific attributes.  */
 const struct attribute_spec rx_attribute_table[] =
 {
@@ -2518,9 +2734,11 @@ const struct attribute_spec rx_attribute_table[] =
      affects_type_identity.  */
   { "fast_interrupt", 0, 0, true, false, false, rx_handle_func_attribute,
     false },
-  { "interrupt",      0, 0, true, false, false, rx_handle_func_attribute,
+  { "interrupt",      0, -1, true, false, false, rx_handle_func_attribute,
     false },
   { "naked",          0, 0, true, false, false, rx_handle_func_attribute,
+    false },
+  { "vector",         1, -1, true, false, false, rx_handle_vector_attribute,
     false },
   { NULL,             0, 0, false, false, false, NULL, false }
 };
@@ -2557,43 +2775,43 @@ rx_option_override (void)
 {
   unsigned int i;
   cl_deferred_option *opt;
-  VEC(cl_deferred_option,heap) *vec
-    = (VEC(cl_deferred_option,heap) *) rx_deferred_options;
+  vec<cl_deferred_option> *v = (vec<cl_deferred_option> *) rx_deferred_options;
 
-  FOR_EACH_VEC_ELT (cl_deferred_option, vec, i, opt)
-    {
-      switch (opt->opt_index)
-	{
-	case OPT_mint_register_:
-	  switch (opt->value)
-	    {
-	    case 4:
-	      fixed_regs[10] = call_used_regs [10] = 1;
-	      /* Fall through.  */
-	    case 3:
-	      fixed_regs[11] = call_used_regs [11] = 1;
-	      /* Fall through.  */
-	    case 2:
-	      fixed_regs[12] = call_used_regs [12] = 1;
-	      /* Fall through.  */
-	    case 1:
-	      fixed_regs[13] = call_used_regs [13] = 1;
-	      /* Fall through.  */
-	    case 0:
-	      rx_num_interrupt_regs = opt->value;
-	      break;
-	    default:
-	      rx_num_interrupt_regs = 0;
-	      /* Error message already given because rx_handle_option
-		 returned false.  */
-	      break;
-	    }
-	  break;
+  if (v)
+    FOR_EACH_VEC_ELT (*v, i, opt)
+      {
+	switch (opt->opt_index)
+	  {
+	  case OPT_mint_register_:
+	    switch (opt->value)
+	      {
+	      case 4:
+		fixed_regs[10] = call_used_regs [10] = 1;
+		/* Fall through.  */
+	      case 3:
+		fixed_regs[11] = call_used_regs [11] = 1;
+		/* Fall through.  */
+	      case 2:
+		fixed_regs[12] = call_used_regs [12] = 1;
+		/* Fall through.  */
+	      case 1:
+		fixed_regs[13] = call_used_regs [13] = 1;
+		/* Fall through.  */
+	      case 0:
+		rx_num_interrupt_regs = opt->value;
+		break;
+	      default:
+		rx_num_interrupt_regs = 0;
+		/* Error message already given because rx_handle_option
+		  returned false.  */
+		break;
+	      }
+	    break;
 
-	default:
-	  gcc_unreachable ();
-	}
-    }
+	  default:
+	    gcc_unreachable ();
+	  }
+      }
 
   /* This target defaults to strict volatile bitfields.  */
   if (flag_strict_volatile_bitfields < 0 && abi_version_at_least(2))
@@ -2601,12 +2819,13 @@ rx_option_override (void)
 
   rx_override_options_after_change ();
 
+  /* These values are bytes, not log.  */
   if (align_jumps == 0 && ! optimize_size)
-    align_jumps = 3;
+    align_jumps = ((rx_cpu_type == RX100 || rx_cpu_type == RX200) ? 4 : 8);
   if (align_loops == 0 && ! optimize_size)
-    align_loops = 3;
+    align_loops = ((rx_cpu_type == RX100 || rx_cpu_type == RX200) ? 4 : 8);
   if (align_labels == 0 && ! optimize_size)
-    align_labels = 3;
+    align_labels = ((rx_cpu_type == RX100 || rx_cpu_type == RX200) ? 4 : 8);
 }
 
 
@@ -2623,6 +2842,14 @@ rx_func_attr_inlinable (const_tree decl)
   return ! is_fast_interrupt_func (decl)
     &&   ! is_interrupt_func (decl)
     &&   ! is_naked_func (decl);  
+}
+
+static bool
+rx_warn_func_return (tree decl)
+{
+  /* Naked functions are implemented entirely in assembly, including the
+     return sequence, so suppress warnings about this.  */
+  return !is_naked_func (decl);
 }
 
 /* Return nonzero if it is ok to make a tail-call to DECL,
@@ -2663,7 +2890,7 @@ rx_is_ms_bitfield_layout (const_tree record_type ATTRIBUTE_UNUSED)
    operand on the RX.  X is already known to satisfy CONSTANT_P.  */
 
 bool
-rx_is_legitimate_constant (enum machine_mode mode ATTRIBUTE_UNUSED, rtx x)
+rx_is_legitimate_constant (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
   switch (GET_CODE (x))
     {
@@ -2712,7 +2939,8 @@ rx_is_legitimate_constant (enum machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 }
 
 static int
-rx_address_cost (rtx addr, bool speed)
+rx_address_cost (rtx addr, machine_mode mode ATTRIBUTE_UNUSED,
+		 addr_space_t as ATTRIBUTE_UNUSED, bool speed)
 {
   rtx a, b;
 
@@ -2833,7 +3061,7 @@ rx_trampoline_init (rtx tramp, tree fndecl, rtx chain)
 }
 
 static int
-rx_memory_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
+rx_memory_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
 		     reg_class_t regclass ATTRIBUTE_UNUSED,
 		     bool in)
 {
@@ -2843,7 +3071,7 @@ rx_memory_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
 /* Convert a CC_MODE to the set of flags that it represents.  */
 
 static unsigned int
-flags_from_mode (enum machine_mode mode)
+flags_from_mode (machine_mode mode)
 {
   switch (mode)
     {
@@ -2864,7 +3092,7 @@ flags_from_mode (enum machine_mode mode)
 
 /* Convert a set of flags to a CC_MODE that can implement it.  */
 
-static enum machine_mode
+static machine_mode
 mode_from_flags (unsigned int f)
 {
   if (f & CC_FLAG_FP)
@@ -2912,8 +3140,8 @@ flags_from_code (enum rtx_code code)
 
 /* Return a CC_MODE of which both M1 and M2 are subsets.  */
 
-static enum machine_mode
-rx_cc_modes_compatible (enum machine_mode m1, enum machine_mode m2)
+static machine_mode
+rx_cc_modes_compatible (machine_mode m1, machine_mode m2)
 {
   unsigned f;
 
@@ -2932,7 +3160,7 @@ rx_cc_modes_compatible (enum machine_mode m1, enum machine_mode m2)
 
 /* Return the minimal CC mode needed to implement (CMP_CODE X Y).  */
 
-enum machine_mode
+machine_mode
 rx_select_cc_mode (enum rtx_code cmp_code, rtx x, rtx y)
 {
   if (GET_MODE_CLASS (GET_MODE (x)) == MODE_FLOAT)
@@ -2948,7 +3176,7 @@ rx_select_cc_mode (enum rtx_code cmp_code, rtx x, rtx y)
    CC_MODE, and use that in branches based on that compare.  */
 
 void
-rx_split_cbranch (enum machine_mode cc_mode, enum rtx_code cmp1,
+rx_split_cbranch (machine_mode cc_mode, enum rtx_code cmp1,
 		  rtx c1, rtx c2, rtx label)
 {
   rtx flags, x;
@@ -2967,10 +3195,10 @@ rx_split_cbranch (enum machine_mode cc_mode, enum rtx_code cmp1,
 /* A helper function for matching parallels that set the flags.  */
 
 bool
-rx_match_ccmode (rtx insn, enum machine_mode cc_mode)
+rx_match_ccmode (rtx insn, machine_mode cc_mode)
 {
   rtx op1, flags;
-  enum machine_mode flags_mode;
+  machine_mode flags_mode;
 
   gcc_checking_assert (XVECLEN (PATTERN (insn), 0) == 2);
 
@@ -3002,16 +3230,24 @@ rx_align_for_label (rtx lab, int uses_threshold)
   if (LABEL_P (lab) && LABEL_NUSES (lab) < uses_threshold)
     return 0;
 
-  return optimize_size ? 1 : 3;
+  if (optimize_size)
+    return 0;
+  /* These values are log, not bytes.  */
+  if (rx_cpu_type == RX100 || rx_cpu_type == RX200)
+    return 2; /* 4 bytes */
+  return 3;   /* 8 bytes */
 }
 
 static int
-rx_max_skip_for_label (rtx lab)
+rx_max_skip_for_label (rtx_insn *lab)
 {
   int opsize;
-  rtx op;
+  rtx_insn *op;
 
-  if (lab == NULL_RTX)
+  if (optimize_size)
+    return 0;
+
+  if (lab == NULL)
     return 0;
 
   op = lab;
@@ -3033,11 +3269,14 @@ rx_max_skip_for_label (rtx lab)
 /* Compute the real length of the extending load-and-op instructions.  */
 
 int
-rx_adjust_insn_length (rtx insn, int current_length)
+rx_adjust_insn_length (rtx_insn *insn, int current_length)
 {
   rtx extend, mem, offset;
   bool zero;
   int factor;
+
+  if (!INSN_P (insn))
+    return current_length;
 
   switch (INSN_CODE (insn))
     {
@@ -3136,7 +3375,45 @@ rx_adjust_insn_length (rtx insn, int current_length)
 
   return (zero && factor == 1) ? 4 : 5;
 }
+
+static bool
+rx_narrow_volatile_bitfield (void)
+{
+  return true;
+}
+
+static bool
+rx_ok_to_inline (tree caller, tree callee)
+{
+  /* Do not inline functions with local variables
+     into a naked CALLER - naked function have no stack frame and
+     locals need a frame in order to have somewhere to live.
+
+     Unfortunately we have no way to determine the presence of
+     local variables in CALLEE, so we have to be cautious and
+     assume that there might be some there.
+
+     We do allow inlining when CALLEE has the "inline" type
+     modifier or the "always_inline" or "gnu_inline" attributes.  */
+  return lookup_attribute ("naked", DECL_ATTRIBUTES (caller)) == NULL_TREE
+    || DECL_DECLARED_INLINE_P (callee)
+    || lookup_attribute ("always_inline", DECL_ATTRIBUTES (callee)) != NULL_TREE
+    || lookup_attribute ("gnu_inline", DECL_ATTRIBUTES (callee)) != NULL_TREE;
+}
+
+static bool
+rx_enable_lra (void)
+{
+  return TARGET_ENABLE_LRA;
+}
+
 
+#undef  TARGET_NARROW_VOLATILE_BITFIELD
+#define TARGET_NARROW_VOLATILE_BITFIELD		rx_narrow_volatile_bitfield
+
+#undef  TARGET_CAN_INLINE_P
+#define TARGET_CAN_INLINE_P			rx_ok_to_inline
+
 #undef  TARGET_ASM_JUMP_ALIGN_MAX_SKIP
 #define TARGET_ASM_JUMP_ALIGN_MAX_SKIP			rx_max_skip_for_label
 #undef  TARGET_ASM_LOOP_ALIGN_MAX_SKIP
@@ -3277,6 +3554,12 @@ rx_adjust_insn_length (rtx insn, int current_length)
 
 #undef  TARGET_LEGITIMIZE_ADDRESS
 #define TARGET_LEGITIMIZE_ADDRESS		rx_legitimize_address
+
+#undef  TARGET_WARN_FUNC_RETURN
+#define TARGET_WARN_FUNC_RETURN 		rx_warn_func_return
+
+#undef  TARGET_LRA_P
+#define TARGET_LRA_P 				rx_enable_lra
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

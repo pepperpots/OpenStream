@@ -1,6 +1,5 @@
 /* Dead store elimination
-   Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -22,18 +21,58 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
-#include "ggc.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "fold-const.h"
 #include "tm_p.h"
+#include "predict.h"
+#include "hard-reg-set.h"
+#include "function.h"
+#include "dominance.h"
+#include "cfg.h"
 #include "basic-block.h"
-#include "timevar.h"
 #include "gimple-pretty-print.h"
-#include "tree-flow.h"
-#include "tree-pass.h"
-#include "tree-dump.h"
-#include "domwalk.h"
+#include "bitmap.h"
+#include "tree-ssa-alias.h"
+#include "internal-fn.h"
+#include "gimple-expr.h"
+#include "is-a.h"
+#include "gimple.h"
+#include "gimple-iterator.h"
+#include "gimple-ssa.h"
+#include "tree-cfg.h"
+#include "tree-phinodes.h"
+#include "ssa-iterators.h"
+#include "stringpool.h"
+#include "tree-ssanames.h"
+#include "hashtab.h"
+#include "rtl.h"
 #include "flags.h"
+#include "statistics.h"
+#include "real.h"
+#include "fixed-value.h"
+#include "insn-config.h"
+#include "expmed.h"
+#include "dojump.h"
+#include "explow.h"
+#include "calls.h"
+#include "emit-rtl.h"
+#include "varasm.h"
+#include "stmt.h"
+#include "expr.h"
+#include "tree-dfa.h"
+#include "tree-pass.h"
+#include "domwalk.h"
 #include "langhooks.h"
+#include "tree-cfgcleanup.h"
 
 /* This file implements dead store elimination.
 
@@ -69,18 +108,14 @@ along with GCC; see the file COPYING3.  If not see
    remove their dead edges eventually.  */
 static bitmap need_eh_cleanup;
 
-static bool gate_dse (void);
-static unsigned int tree_ssa_dse (void);
-static void dse_enter_block (struct dom_walk_data *, basic_block);
-
 
 /* A helper of dse_optimize_stmt.
-   Given a GIMPLE_ASSIGN in STMT, find a candidate statement *USE_STMT that
-   may prove STMT to be dead.
+   Given a GIMPLE_ASSIGN in STMT that writes to REF, find a candidate
+   statement *USE_STMT that may prove STMT to be dead.
    Return TRUE if the above conditions are met, otherwise FALSE.  */
 
 static bool
-dse_possible_dead_store_p (gimple stmt, gimple *use_stmt)
+dse_possible_dead_store_p (ao_ref *ref, gimple stmt, gimple *use_stmt)
 {
   gimple temp;
   unsigned cnt = 0;
@@ -94,7 +129,7 @@ dse_possible_dead_store_p (gimple stmt, gimple *use_stmt)
   temp = stmt;
   do
     {
-      gimple use_stmt;
+      gimple use_stmt, defvar_def;
       imm_use_iterator ui;
       bool fail = false;
       tree defvar;
@@ -108,6 +143,7 @@ dse_possible_dead_store_p (gimple stmt, gimple *use_stmt)
 	defvar = PHI_RESULT (temp);
       else
 	defvar = gimple_vdef (temp);
+      defvar_def = temp;
       temp = NULL;
       FOR_EACH_IMM_USE_STMT (use_stmt, ui, defvar)
 	{
@@ -139,11 +175,17 @@ dse_possible_dead_store_p (gimple stmt, gimple *use_stmt)
 		  fail = true;
 		  BREAK_FROM_IMM_USE_STMT (ui);
 		}
-	      temp = use_stmt;
+	      /* Do not consider the PHI as use if it dominates the 
+	         stmt defining the virtual operand we are processing,
+		 we have processed it already in this case.  */
+	      if (gimple_bb (defvar_def) != gimple_bb (use_stmt)
+		  && !dominated_by_p (CDI_DOMINATORS,
+				      gimple_bb (defvar_def),
+				      gimple_bb (use_stmt)))
+		temp = use_stmt;
 	    }
 	  /* If the statement is a use the store is not dead.  */
-	  else if (ref_maybe_used_by_stmt_p (use_stmt,
-					     gimple_assign_lhs (stmt)))
+	  else if (ref_maybe_used_by_stmt_p (use_stmt, ref))
 	    {
 	      fail = true;
 	      BREAK_FROM_IMM_USE_STMT (ui);
@@ -169,17 +211,15 @@ dse_possible_dead_store_p (gimple stmt, gimple *use_stmt)
 	 just pretend the stmt makes itself dead.  Otherwise fail.  */
       if (!temp)
 	{
-	  if (is_hidden_global_store (stmt))
+	  if (ref_may_alias_global_p (ref))
 	    return false;
 
 	  temp = stmt;
 	  break;
 	}
     }
-  /* We deliberately stop on clobbering statements and not only on
-     killing ones to make walking cheaper.  Otherwise we can just
-     continue walking until both stores have equal reference trees.  */
-  while (!stmt_may_clobber_ref_p (temp, gimple_assign_lhs (stmt)));
+  /* Continue walking until we reach a kill.  */
+  while (!stmt_kills_ref_p (temp, ref));
 
   *use_stmt = temp;
 
@@ -199,93 +239,172 @@ dse_possible_dead_store_p (gimple stmt, gimple *use_stmt)
    post dominates the first store, then the first store is dead.  */
 
 static void
-dse_optimize_stmt (gimple_stmt_iterator gsi)
+dse_optimize_stmt (gimple_stmt_iterator *gsi)
 {
-  gimple stmt = gsi_stmt (gsi);
+  gimple stmt = gsi_stmt (*gsi);
 
   /* If this statement has no virtual defs, then there is nothing
      to do.  */
   if (!gimple_vdef (stmt))
     return;
 
-  /* We know we have virtual definitions.  If this is a GIMPLE_ASSIGN
-     that's not also a function call, then record it into our table.  */
-  if (is_gimple_call (stmt) && gimple_call_fndecl (stmt))
+  /* Don't return early on *this_2(D) ={v} {CLOBBER}.  */
+  if (gimple_has_volatile_ops (stmt)
+      && (!gimple_clobber_p (stmt)
+	  || TREE_CODE (gimple_assign_lhs (stmt)) != MEM_REF))
     return;
 
-  if (gimple_has_volatile_ops (stmt))
-    return;
+  /* We know we have virtual definitions.  We can handle assignments and
+     some builtin calls.  */
+  if (gimple_call_builtin_p (stmt, BUILT_IN_NORMAL))
+    {
+      switch (DECL_FUNCTION_CODE (gimple_call_fndecl (stmt)))
+	{
+	  case BUILT_IN_MEMCPY:
+	  case BUILT_IN_MEMMOVE:
+	  case BUILT_IN_MEMSET:
+	    {
+	      gimple use_stmt;
+	      ao_ref ref;
+	      tree size = NULL_TREE;
+	      if (gimple_call_num_args (stmt) == 3)
+		size = gimple_call_arg (stmt, 2);
+	      tree ptr = gimple_call_arg (stmt, 0);
+	      ao_ref_init_from_ptr_and_size (&ref, ptr, size);
+	      if (!dse_possible_dead_store_p (&ref, stmt, &use_stmt))
+		return;
+
+	      if (dump_file && (dump_flags & TDF_DETAILS))
+		{
+		  fprintf (dump_file, "  Deleted dead call '");
+		  print_gimple_stmt (dump_file, gsi_stmt (*gsi), dump_flags, 0);
+		  fprintf (dump_file, "'\n");
+		}
+
+	      tree lhs = gimple_call_lhs (stmt);
+	      if (lhs)
+		{
+		  gimple new_stmt = gimple_build_assign (lhs, ptr);
+		  unlink_stmt_vdef (stmt);
+		  if (gsi_replace (gsi, new_stmt, true))
+		    bitmap_set_bit (need_eh_cleanup, gimple_bb (stmt)->index);
+		}
+	      else
+		{
+		  /* Then we need to fix the operand of the consuming stmt.  */
+		  unlink_stmt_vdef (stmt);
+
+		  /* Remove the dead store.  */
+		  if (gsi_remove (gsi, true))
+		    bitmap_set_bit (need_eh_cleanup, gimple_bb (stmt)->index);
+		}
+	      break;
+	    }
+	  default:
+	    return;
+	}
+    }
 
   if (is_gimple_assign (stmt))
     {
       gimple use_stmt;
 
-      if (!dse_possible_dead_store_p (stmt, &use_stmt))
+      /* Self-assignments are zombies.  */
+      if (operand_equal_p (gimple_assign_rhs1 (stmt),
+			   gimple_assign_lhs (stmt), 0))
+	use_stmt = stmt;
+      else
+	{
+	  ao_ref ref;
+	  ao_ref_init (&ref, gimple_assign_lhs (stmt));
+  	  if (!dse_possible_dead_store_p (&ref, stmt, &use_stmt))
+	    return;
+	}
+
+      /* Now we know that use_stmt kills the LHS of stmt.  */
+
+      /* But only remove *this_2(D) ={v} {CLOBBER} if killed by
+	 another clobber stmt.  */
+      if (gimple_clobber_p (stmt)
+	  && !gimple_clobber_p (use_stmt))
 	return;
 
-      /* If we have precisely one immediate use at this point and the
-	 stores are to the same memory location or there is a chain of
-	 virtual uses from stmt and the stmt which stores to that same
-	 memory location, then we may have found redundant store.  */
-      if ((gimple_has_lhs (use_stmt)
-	   && (operand_equal_p (gimple_assign_lhs (stmt),
-				gimple_get_lhs (use_stmt), 0)))
-	  || stmt_kills_ref_p (use_stmt, gimple_assign_lhs (stmt)))
+      if (dump_file && (dump_flags & TDF_DETAILS))
 	{
-	  /* If use_stmt is or might be a nop assignment, e.g. for
-	     struct { ... } S a, b, *p; ...
-	     b = a; b = b;
-	     or
-	     b = a; b = *p; where p might be &b,
-	     or
-	     *p = a; *p = b; where p might be &b,
-	     or
-	     *p = *u; *p = *v; where p might be v, then USE_STMT
-	     acts as a use as well as definition, so store in STMT
-	     is not dead.  */
-	  if (stmt != use_stmt
-	      && ref_maybe_used_by_stmt_p (use_stmt, gimple_assign_lhs (stmt)))
-	    return;
-
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-            {
-              fprintf (dump_file, "  Deleted dead store '");
-              print_gimple_stmt (dump_file, gsi_stmt (gsi), dump_flags, 0);
-              fprintf (dump_file, "'\n");
-            }
-
-	  /* Then we need to fix the operand of the consuming stmt.  */
-	  unlink_stmt_vdef (stmt);
-
-	  bitmap_set_bit (need_eh_cleanup, gimple_bb (stmt)->index);
-
-	  /* Remove the dead store.  */
-	  gsi_remove (&gsi, true);
-
-	  /* And release any SSA_NAMEs set in this statement back to the
-	     SSA_NAME manager.  */
-	  release_defs (stmt);
+	  fprintf (dump_file, "  Deleted dead store '");
+	  print_gimple_stmt (dump_file, gsi_stmt (*gsi), dump_flags, 0);
+	  fprintf (dump_file, "'\n");
 	}
+
+      /* Then we need to fix the operand of the consuming stmt.  */
+      unlink_stmt_vdef (stmt);
+
+      /* Remove the dead store.  */
+      basic_block bb = gimple_bb (stmt);
+      if (gsi_remove (gsi, true))
+	bitmap_set_bit (need_eh_cleanup, bb->index);
+
+      /* And release any SSA_NAMEs set in this statement back to the
+	 SSA_NAME manager.  */
+      release_defs (stmt);
     }
 }
 
-static void
-dse_enter_block (struct dom_walk_data *walk_data ATTRIBUTE_UNUSED,
-		 basic_block bb)
+class dse_dom_walker : public dom_walker
+{
+public:
+  dse_dom_walker (cdi_direction direction) : dom_walker (direction) {}
+
+  virtual void before_dom_children (basic_block);
+};
+
+void
+dse_dom_walker::before_dom_children (basic_block bb)
 {
   gimple_stmt_iterator gsi;
 
-  for (gsi = gsi_last (bb_seq (bb)); !gsi_end_p (gsi); gsi_prev (&gsi))
-    dse_optimize_stmt (gsi);
+  for (gsi = gsi_last_bb (bb); !gsi_end_p (gsi);)
+    {
+      dse_optimize_stmt (&gsi);
+      if (gsi_end_p (gsi))
+	gsi = gsi_last_bb (bb);
+      else
+	gsi_prev (&gsi);
+    }
 }
 
-/* Main entry point.  */
+namespace {
 
-static unsigned int
-tree_ssa_dse (void)
+const pass_data pass_data_dse =
 {
-  struct dom_walk_data walk_data;
+  GIMPLE_PASS, /* type */
+  "dse", /* name */
+  OPTGROUP_NONE, /* optinfo_flags */
+  TV_TREE_DSE, /* tv_id */
+  ( PROP_cfg | PROP_ssa ), /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  0, /* todo_flags_finish */
+};
 
+class pass_dse : public gimple_opt_pass
+{
+public:
+  pass_dse (gcc::context *ctxt)
+    : gimple_opt_pass (pass_data_dse, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  opt_pass * clone () { return new pass_dse (m_ctxt); }
+  virtual bool gate (function *) { return flag_tree_dse != 0; }
+  virtual unsigned int execute (function *);
+
+}; // class pass_dse
+
+unsigned int
+pass_dse::execute (function *fun)
+{
   need_eh_cleanup = BITMAP_ALLOC (NULL);
 
   renumber_gimple_stmt_uids ();
@@ -299,22 +418,7 @@ tree_ssa_dse (void)
 
   /* Dead store elimination is fundamentally a walk of the post-dominator
      tree and a backwards walk of statements within each block.  */
-  walk_data.dom_direction = CDI_POST_DOMINATORS;
-  walk_data.initialize_block_local_data = NULL;
-  walk_data.before_dom_children = dse_enter_block;
-  walk_data.after_dom_children = NULL;
-
-  walk_data.block_local_data_size = 0;
-  walk_data.global_data = NULL;
-
-  /* Initialize the dominator walker.  */
-  init_walk_dominator_tree (&walk_data);
-
-  /* Recursively walk the dominator tree.  */
-  walk_dominator_tree (&walk_data, EXIT_BLOCK_PTR);
-
-  /* Finalize the dominator walker.  */
-  fini_walk_dominator_tree (&walk_data);
+  dse_dom_walker (CDI_POST_DOMINATORS).walk (fun->cfg->x_exit_block_ptr);
 
   /* Removal of stores may make some EH edges dead.  Purge such edges from
      the CFG as needed.  */
@@ -331,28 +435,10 @@ tree_ssa_dse (void)
   return 0;
 }
 
-static bool
-gate_dse (void)
-{
-  return flag_tree_dse != 0;
-}
+} // anon namespace
 
-struct gimple_opt_pass pass_dse =
+gimple_opt_pass *
+make_pass_dse (gcc::context *ctxt)
 {
- {
-  GIMPLE_PASS,
-  "dse",			/* name */
-  gate_dse,			/* gate */
-  tree_ssa_dse,			/* execute */
-  NULL,				/* sub */
-  NULL,				/* next */
-  0,				/* static_pass_number */
-  TV_TREE_DSE,			/* tv_id */
-  PROP_cfg | PROP_ssa,		/* properties_required */
-  0,				/* properties_provided */
-  0,				/* properties_destroyed */
-  0,				/* todo_flags_start */
-  TODO_ggc_collect
-    | TODO_verify_ssa		/* todo_flags_finish */
- }
-};
+  return new pass_dse (ctxt);
+}

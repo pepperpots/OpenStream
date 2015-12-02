@@ -41,7 +41,7 @@ func TestLookupStaticHost(t *testing.T) {
 		if len(ips) != len(tt.ips) {
 			t.Errorf("# of hosts = %v; want %v",
 				len(ips), len(tt.ips))
-			return
+			continue
 		}
 		for k, v := range ips {
 			if tt.ips[k].String() != v {
@@ -50,6 +50,19 @@ func TestLookupStaticHost(t *testing.T) {
 			}
 		}
 	}
+	hostsPath = p
+}
+
+// https://code.google.com/p/go/issues/detail?id=6646
+func TestSingleLineHostsFile(t *testing.T) {
+	p := hostsPath
+	hostsPath = "testdata/hosts_singleline"
+
+	ips := lookupStaticHost("odin")
+	if len(ips) != 1 || ips[0] != "127.0.0.2" {
+		t.Errorf("lookupStaticHost = %v, want %v", ips, []string{"127.0.0.2"})
+	}
+
 	hostsPath = p
 }
 

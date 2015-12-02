@@ -1,5 +1,4 @@
-/* Copyright (C) 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2002-2015 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    F2003 I/O support contributed by Jerry DeLisle
 
@@ -27,7 +26,11 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include "io.h"
 #include "fbuf.h"
 #include "unix.h"
+
+#ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
+
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -153,8 +156,12 @@ static const st_option async_opt[] =
 static void
 test_endfile (gfc_unit * u)
 {
-  if (u->endfile == NO_ENDFILE && ssize (u->s) == stell (u->s))
-    u->endfile = AT_ENDFILE;
+  if (u->endfile == NO_ENDFILE)
+    { 
+      gfc_offset sz = ssize (u->s);
+      if (sz == 0 || sz == stell (u->s))
+	u->endfile = AT_ENDFILE;
+    }
 }
 
 
@@ -258,39 +265,39 @@ edit_modes (st_parameter_open *opp, gfc_unit * u, unit_flags * flags)
 	u->flags.round = flags->round;
       if (flags->sign != SIGN_UNSPECIFIED)
 	u->flags.sign = flags->sign;
-    }
 
-  /* Reposition the file if necessary.  */
-
-  switch (flags->position)
-    {
-    case POSITION_UNSPECIFIED:
-    case POSITION_ASIS:
-      break;
-
-    case POSITION_REWIND:
-      if (sseek (u->s, 0, SEEK_SET) != 0)
-	goto seek_error;
-
-      u->current_record = 0;
-      u->last_record = 0;
-
-      test_endfile (u);
-      break;
-
-    case POSITION_APPEND:
-      if (sseek (u->s, 0, SEEK_END) < 0)
-	goto seek_error;
-
-      if (flags->access != ACCESS_STREAM)
-	u->current_record = 0;
-
-      u->endfile = AT_ENDFILE;	/* We are at the end.  */
-      break;
-
-    seek_error:
-      generate_error (&opp->common, LIBERROR_OS, NULL);
-      break;
+      /* Reposition the file if necessary.  */
+    
+      switch (flags->position)
+	{
+	case POSITION_UNSPECIFIED:
+	case POSITION_ASIS:
+	  break;
+    
+	case POSITION_REWIND:
+	  if (sseek (u->s, 0, SEEK_SET) != 0)
+	    goto seek_error;
+    
+	  u->current_record = 0;
+	  u->last_record = 0;
+    
+	  test_endfile (u);
+	  break;
+    
+	case POSITION_APPEND:
+	  if (sseek (u->s, 0, SEEK_END) < 0)
+	    goto seek_error;
+    
+	  if (flags->access != ACCESS_STREAM)
+	    u->current_record = 0;
+    
+	  u->endfile = AT_ENDFILE;	/* We are at the end.  */
+	  break;
+    
+	seek_error:
+	  generate_error (&opp->common, LIBERROR_OS, NULL);
+	  break;
+	}
     }
 
   unlock_unit (u);
@@ -325,17 +332,13 @@ new_unit (st_parameter_open *opp, gfc_unit *u, unit_flags * flags)
 
   /* Checks.  */
 
-  if (flags->delim == DELIM_UNSPECIFIED)
-    flags->delim = DELIM_NONE;
-  else
+  if (flags->delim != DELIM_UNSPECIFIED
+      && flags->form == FORM_UNFORMATTED)
     {
-      if (flags->form == FORM_UNFORMATTED)
-	{
-	  generate_error (&opp->common, LIBERROR_OPTION_CONFLICT,
-			  "DELIM parameter conflicts with UNFORMATTED form in "
-			  "OPEN statement");
-	  goto fail;
-	}
+      generate_error (&opp->common, LIBERROR_OPTION_CONFLICT,
+		      "DELIM parameter conflicts with UNFORMATTED form in "
+		      "OPEN statement");
+      goto fail;
     }
 
   if (flags->blank == BLANK_UNSPECIFIED)
@@ -499,37 +502,15 @@ new_unit (st_parameter_open *opp, gfc_unit *u, unit_flags * flags)
   s = open_external (opp, flags);
   if (s == NULL)
     {
-      char *path, *msg;
-      size_t msglen;
-      path = (char *) gfc_alloca (opp->file_len + 1);
-      msglen = opp->file_len + 51;
-      msg = (char *) gfc_alloca (msglen);
-      unpack_filename (path, opp->file, opp->file_len);
-
-      switch (errno)
-	{
-	case ENOENT: 
-	  snprintf (msg, msglen, "File '%s' does not exist", path);
-	  break;
-
-	case EEXIST:
-	  snprintf (msg, msglen, "File '%s' already exists", path);
-	  break;
-
-	case EACCES:
-	  snprintf (msg, msglen, 
-		    "Permission denied trying to open file '%s'", path);
-	  break;
-
-	case EISDIR:
-	  snprintf (msg, msglen, "'%s' is a directory", path);
-	  break;
-
-	default:
-	  msg = NULL;
-	}
-
+      char errbuf[256];
+      char *path = fc_strdup (opp->file, opp->file_len);
+      size_t msglen = opp->file_len + 22 + sizeof (errbuf);
+      char *msg = xmalloc (msglen);
+      snprintf (msg, msglen, "Cannot open file '%s': %s", path,
+		gf_strerror (errno, errbuf, sizeof (errbuf)));
       generate_error (&opp->common, LIBERROR_OS, msg);
+      free (msg);
+      free (path);
       goto cleanup;
     }
 
@@ -538,7 +519,6 @@ new_unit (st_parameter_open *opp, gfc_unit *u, unit_flags * flags)
 
   /* Create the unit structure.  */
 
-  u->file = get_mem (opp->file_len);
   if (u->unit_number != opp->common.unit)
     internal_error (&opp->common, "Unit number changed");
   u->s = s;
@@ -555,7 +535,10 @@ new_unit (st_parameter_open *opp, gfc_unit *u, unit_flags * flags)
   if (flags->position == POSITION_APPEND)
     {
       if (sseek (u->s, 0, SEEK_END) < 0)
-	generate_error (&opp->common, LIBERROR_OS, NULL);
+	{
+	  generate_error (&opp->common, LIBERROR_OS, NULL);
+	  goto cleanup;
+	}
       u->endfile = AT_ENDFILE;
     }
 
@@ -612,8 +595,7 @@ new_unit (st_parameter_open *opp, gfc_unit *u, unit_flags * flags)
       u->strm_pos = stell (u->s) + 1;
     }
 
-  memmove (u->file, opp->file, opp->file_len);
-  u->file_len = opp->file_len;
+  u->filename = fc_strdup (opp->file, opp->file_len);
 
   /* Curiously, the standard requires that the
      position specifier be ignored for new files so a newly connected
@@ -670,15 +652,6 @@ already_open (st_parameter_open *opp, gfc_unit * u, unit_flags * flags)
 
   if (!compare_file_filename (u, opp->file, opp->file_len))
     {
-#if !HAVE_UNLINK_OPEN_FILE
-      char *path = NULL;
-      if (u->file && u->flags.status == STATUS_SCRATCH)
-	{
-	  path = (char *) gfc_alloca (u->file_len + 1);
-	  unpack_filename (path, u->file, u->file_len);
-	}
-#endif
-
       if (sclose (u->s) == -1)
 	{
 	  unlock_unit (u);
@@ -688,14 +661,13 @@ already_open (st_parameter_open *opp, gfc_unit * u, unit_flags * flags)
 	}
 
       u->s = NULL;
-      free (u->file);
-      u->file = NULL;
-      u->file_len = 0;
-
+ 
 #if !HAVE_UNLINK_OPEN_FILE
-      if (path != NULL)
-	unlink (path);
+      if (u->filename && u->flags.status == STATUS_SCRATCH)
+	unlink (u->filename);
 #endif
+     free (u->filename);
+     u->filename = NULL;
 
       u = new_unit (opp, u, flags);
       if (u != NULL)
@@ -815,10 +787,6 @@ st_open (st_parameter_open *opp)
 
   flags.convert = conv;
 
-  if (!(opp->common.flags & IOPARM_OPEN_HAS_NEWUNIT) && opp->common.unit < 0)
-    generate_error (&opp->common, LIBERROR_BAD_OPTION,
-		    "Bad unit number in OPEN statement");
-
   if (flags.position != POSITION_UNSPECIFIED
       && flags.access == ACCESS_DIRECT)
     generate_error (&opp->common, LIBERROR_BAD_OPTION,
@@ -844,12 +812,21 @@ st_open (st_parameter_open *opp)
   if ((opp->common.flags & IOPARM_LIBRETURN_MASK) == IOPARM_LIBRETURN_OK)
     {
       if ((opp->common.flags & IOPARM_OPEN_HAS_NEWUNIT))
+	opp->common.unit = get_unique_unit_number(opp);
+      else if (opp->common.unit < 0)
 	{
-	  *opp->newunit = get_unique_unit_number(opp);
-	  opp->common.unit = *opp->newunit;
+	  u = find_unit (opp->common.unit);
+	  if (u == NULL) /* Negative unit and no NEWUNIT-created unit found.  */
+	    {
+	      generate_error (&opp->common, LIBERROR_BAD_OPTION,
+			      "Bad unit number in OPEN statement");
+	      library_end ();
+	      return;
+	    }
 	}
 
-      u = find_or_create_unit (opp->common.unit);
+      if (u == NULL)
+	u = find_or_create_unit (opp->common.unit);
       if (u->s == NULL)
 	{
 	  u = new_unit (opp, u, &flags);
@@ -859,6 +836,10 @@ st_open (st_parameter_open *opp)
       else
 	already_open (opp, u, &flags);
     }
-
+    
+  if ((opp->common.flags & IOPARM_OPEN_HAS_NEWUNIT)
+      && (opp->common.flags & IOPARM_LIBRETURN_MASK) == IOPARM_LIBRETURN_OK)
+    *opp->newunit = opp->common.unit;
+  
   library_end ();
 }

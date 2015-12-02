@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -37,13 +37,13 @@
 --  initialized to non-tasking versions, and then if the tasking support is
 --  initialized, they are set to the real tasking versions.
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 with Ada.Exceptions;
 with System.Stack_Checking;
 
 package System.Soft_Links is
-   pragma Preelaborate_05;
+   pragma Preelaborate;
 
    subtype EOA is Ada.Exceptions.Exception_Occurrence_Access;
    subtype EO is Ada.Exceptions.Exception_Occurrence;
@@ -140,8 +140,8 @@ package System.Soft_Links is
    --  Undefer task abort (non-tasking case, does nothing)
 
    procedure Abort_Handler_NT;
-   --  Handle task abort (non-tasking case, does nothing). Currently, only VMS
-   --  uses this.
+   --  Handle task abort (non-tasking case, does nothing). Currently, no port
+   --  makes use of this, but we retain the interface for possible future use.
 
    procedure Update_Exception_NT (X : EO := Current_Target_Exception);
    --  Handle exception setting. This routine is provided for targets that
@@ -289,12 +289,10 @@ package System.Soft_Links is
    -------------------------------------
 
    Library_Exception : EO;
-   pragma Export (Ada, Library_Exception, "__gnat_library_exception");
    --  Library-level finalization routines use this common reference to store
    --  the first library-level exception which occurs during finalization.
 
    Library_Exception_Set : Boolean := False;
-   pragma Export (Ada, Library_Exception_Set, "__gnat_library_exception_set");
    --  Used in conjunction with Library_Exception, set when an exception has
    --  been stored.
 
@@ -302,7 +300,7 @@ package System.Soft_Links is
    --  Wrapper to the possible user specified traceback decorator to be
    --  called during automatic output of exception data.
 
-   --  The nullity of this wrapper shall correspond to the nullity of the
+   --  The null value of this wrapper correspond sto the null value of the
    --  current actual decorator. This is ensured first by the null initial
    --  value of the corresponding variables, and then by Set_Trace_Decorator
    --  in g-exctra.adb.
@@ -312,7 +310,7 @@ package System.Soft_Links is
    --  See the body of Tailored_Exception_Traceback in Ada.Exceptions for
    --  a more detailed description of the potential problems.
 
-   procedure Save_Library_Occurrence (E : Ada.Exceptions.Exception_Occurrence);
+   procedure Save_Library_Occurrence (E : EOA);
    --  When invoked, this routine saves an exception occurrence into a hidden
    --  reference. Subsequent calls will have no effect.
 

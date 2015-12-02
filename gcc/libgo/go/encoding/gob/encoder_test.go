@@ -13,6 +13,52 @@ import (
 	"testing"
 )
 
+// Test basic operations in a safe manner.
+func TestBasicEncoderDecoder(t *testing.T) {
+	var values = []interface{}{
+		true,
+		int(123),
+		int8(123),
+		int16(-12345),
+		int32(123456),
+		int64(-1234567),
+		uint(123),
+		uint8(123),
+		uint16(12345),
+		uint32(123456),
+		uint64(1234567),
+		uintptr(12345678),
+		float32(1.2345),
+		float64(1.2345678),
+		complex64(1.2345 + 2.3456i),
+		complex128(1.2345678 + 2.3456789i),
+		[]byte("hello"),
+		string("hello"),
+	}
+	for _, value := range values {
+		b := new(bytes.Buffer)
+		enc := NewEncoder(b)
+		err := enc.Encode(value)
+		if err != nil {
+			t.Error("encoder fail:", err)
+		}
+		dec := NewDecoder(b)
+		result := reflect.New(reflect.TypeOf(value))
+		err = dec.Decode(result.Interface())
+		if err != nil {
+			t.Fatalf("error decoding %T: %v:", reflect.TypeOf(value), err)
+		}
+		if !reflect.DeepEqual(value, result.Elem().Interface()) {
+			t.Fatalf("%T: expected %v got %v", value, value, result.Elem().Interface())
+		}
+	}
+}
+
+type ET0 struct {
+	A int
+	B string
+}
+
 type ET2 struct {
 	X string
 }
@@ -40,14 +86,40 @@ type ET4 struct {
 func TestEncoderDecoder(t *testing.T) {
 	b := new(bytes.Buffer)
 	enc := NewEncoder(b)
-	et1 := new(ET1)
-	et1.A = 7
-	et1.Et2 = new(ET2)
-	err := enc.Encode(et1)
+	et0 := new(ET0)
+	et0.A = 7
+	et0.B = "gobs of fun"
+	err := enc.Encode(et0)
 	if err != nil {
 		t.Error("encoder fail:", err)
 	}
+	//fmt.Printf("% x %q\n", b, b)
+	//Debug(b)
 	dec := NewDecoder(b)
+	newEt0 := new(ET0)
+	err = dec.Decode(newEt0)
+	if err != nil {
+		t.Fatal("error decoding ET0:", err)
+	}
+
+	if !reflect.DeepEqual(et0, newEt0) {
+		t.Fatalf("invalid data for et0: expected %+v; got %+v", *et0, *newEt0)
+	}
+	if b.Len() != 0 {
+		t.Error("not at eof;", b.Len(), "bytes left")
+	}
+	//	t.FailNow()
+
+	b = new(bytes.Buffer)
+	enc = NewEncoder(b)
+	et1 := new(ET1)
+	et1.A = 7
+	et1.Et2 = new(ET2)
+	err = enc.Encode(et1)
+	if err != nil {
+		t.Error("encoder fail:", err)
+	}
+	dec = NewDecoder(b)
 	newEt1 := new(ET1)
 	err = dec.Decode(newEt1)
 	if err != nil {
@@ -129,9 +201,11 @@ func TestBadData(t *testing.T) {
 	corruptDataCheck("", io.EOF, t)
 	corruptDataCheck("\x7Fhi", io.ErrUnexpectedEOF, t)
 	corruptDataCheck("\x03now is the time for all good men", errBadType, t)
+	// issue 6323.
+	corruptDataCheck("\x04\x24foo", errRange, t)
 }
 
-// Types not supported by the Encoder.
+// Types not supported at top level by the Encoder.
 var unsupportedValues = []interface{}{
 	make(chan int),
 	func(a int) bool { return true },
@@ -630,7 +704,7 @@ func TestSliceReusesMemory(t *testing.T) {
 // Used to crash: negative count in recvMessage.
 func TestBadCount(t *testing.T) {
 	b := []byte{0xfb, 0xa5, 0x82, 0x2f, 0xca, 0x1}
-	if err := NewDecoder(bytes.NewBuffer(b)).Decode(nil); err == nil {
+	if err := NewDecoder(bytes.NewReader(b)).Decode(nil); err == nil {
 		t.Error("expected error from bad count")
 	} else if err.Error() != errBadCount.Error() {
 		t.Error("expected bad count error; got", err)
@@ -662,19 +736,35 @@ func TestSequentialDecoder(t *testing.T) {
 	}
 }
 
-// Should be able to have unrepresentable fields (chan, func) as long as they
-// are unexported.
+// Should be able to have unrepresentable fields (chan, func, *chan etc.); we just ignore them.
 type Bug2 struct {
-	A int
-	b chan int
+	A   int
+	C   chan int
+	CP  *chan int
+	F   func()
+	FPP **func()
 }
 
-func TestUnexportedChan(t *testing.T) {
-	b := Bug2{23, make(chan int)}
-	var stream bytes.Buffer
-	enc := NewEncoder(&stream)
-	if err := enc.Encode(b); err != nil {
-		t.Fatalf("error encoding unexported channel: %s", err)
+func TestChanFuncIgnored(t *testing.T) {
+	c := make(chan int)
+	f := func() {}
+	fp := &f
+	b0 := Bug2{23, c, &c, f, &fp}
+	var buf bytes.Buffer
+	enc := NewEncoder(&buf)
+	if err := enc.Encode(b0); err != nil {
+		t.Fatal("error encoding:", err)
+	}
+	var b1 Bug2
+	err := NewDecoder(&buf).Decode(&b1)
+	if err != nil {
+		t.Fatal("decode:", err)
+	}
+	if b1.A != b0.A {
+		t.Fatalf("got %d want %d", b1.A, b0.A)
+	}
+	if b1.C != nil || b1.CP != nil || b1.F != nil || b1.FPP != nil {
+		t.Fatal("unexpected value for chan or func")
 	}
 }
 
@@ -694,8 +784,8 @@ type Bug3 struct {
 
 func TestGobPtrSlices(t *testing.T) {
 	in := []*Bug3{
-		&Bug3{1, nil},
-		&Bug3{2, nil},
+		{1, nil},
+		{2, nil},
 	}
 	b := new(bytes.Buffer)
 	err := NewEncoder(b).Encode(&in)
@@ -734,5 +824,133 @@ func TestPtrToMapOfMap(t *testing.T) {
 	}
 	if !reflect.DeepEqual(data, newData) {
 		t.Fatalf("expected %v got %v", data, newData)
+	}
+}
+
+// A top-level nil pointer generates a panic with a helpful string-valued message.
+func TestTopLevelNilPointer(t *testing.T) {
+	errMsg := topLevelNilPanic(t)
+	if errMsg == "" {
+		t.Fatal("top-level nil pointer did not panic")
+	}
+	if !strings.Contains(errMsg, "nil pointer") {
+		t.Fatal("expected nil pointer error, got:", errMsg)
+	}
+}
+
+func topLevelNilPanic(t *testing.T) (panicErr string) {
+	defer func() {
+		e := recover()
+		if err, ok := e.(string); ok {
+			panicErr = err
+		}
+	}()
+	var ip *int
+	buf := new(bytes.Buffer)
+	if err := NewEncoder(buf).Encode(ip); err != nil {
+		t.Fatal("error in encode:", err)
+	}
+	return
+}
+
+func TestNilPointerInsideInterface(t *testing.T) {
+	var ip *int
+	si := struct {
+		I interface{}
+	}{
+		I: ip,
+	}
+	buf := new(bytes.Buffer)
+	err := NewEncoder(buf).Encode(si)
+	if err == nil {
+		t.Fatal("expected error, got none")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "nil pointer") || !strings.Contains(errMsg, "interface") {
+		t.Fatal("expected error about nil pointer and interface, got:", errMsg)
+	}
+}
+
+type Bug4Public struct {
+	Name   string
+	Secret Bug4Secret
+}
+
+type Bug4Secret struct {
+	a int // error: no exported fields.
+}
+
+// Test that a failed compilation doesn't leave around an executable encoder.
+// Issue 3273.
+func TestMutipleEncodingsOfBadType(t *testing.T) {
+	x := Bug4Public{
+		Name:   "name",
+		Secret: Bug4Secret{1},
+	}
+	buf := new(bytes.Buffer)
+	enc := NewEncoder(buf)
+	err := enc.Encode(x)
+	if err == nil {
+		t.Fatal("first encoding: expected error")
+	}
+	buf.Reset()
+	enc = NewEncoder(buf)
+	err = enc.Encode(x)
+	if err == nil {
+		t.Fatal("second encoding: expected error")
+	}
+	if !strings.Contains(err.Error(), "no exported fields") {
+		t.Errorf("expected error about no exported fields; got %v", err)
+	}
+}
+
+// There was an error check comparing the length of the input with the
+// length of the slice being decoded. It was wrong because the next
+// thing in the input might be a type definition, which would lead to
+// an incorrect length check.  This test reproduces the corner case.
+
+type Z struct {
+}
+
+func Test29ElementSlice(t *testing.T) {
+	Register(Z{})
+	src := make([]interface{}, 100) // Size needs to be bigger than size of type definition.
+	for i := range src {
+		src[i] = Z{}
+	}
+	buf := new(bytes.Buffer)
+	err := NewEncoder(buf).Encode(src)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+		return
+	}
+
+	var dst []interface{}
+	err = NewDecoder(buf).Decode(&dst)
+	if err != nil {
+		t.Errorf("decode: %v", err)
+		return
+	}
+}
+
+// Don't crash, just give error when allocating a huge slice.
+// Issue 8084.
+func TestErrorForHugeSlice(t *testing.T) {
+	// Encode an int slice.
+	buf := new(bytes.Buffer)
+	slice := []int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+	err := NewEncoder(buf).Encode(slice)
+	if err != nil {
+		t.Fatal("encode:", err)
+	}
+	// Reach into the buffer and smash the count to make the encoded slice very long.
+	buf.Bytes()[buf.Len()-len(slice)-1] = 0xfa
+	// Decode and see error.
+	err = NewDecoder(buf).Decode(&slice)
+	if err == nil {
+		t.Fatal("decode: no error")
+	}
+	if !strings.Contains(err.Error(), "slice too big") {
+		t.Fatal("decode: expected slice too big error, got %s", err.Error())
 	}
 }

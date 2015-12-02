@@ -1,8 +1,7 @@
 /* Generate from machine description:
    - some macros CODE_FOR_... giving the insn_code_number value
    for each of the defined standard insn names.
-   Copyright (C) 1987, 1991, 1995, 1998, 1999, 2000, 2001, 2003,
-   2004, 2007, 2010  Free Software Foundation, Inc.
+   Copyright (C) 1987-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -51,6 +50,7 @@ int
 main (int argc, char **argv)
 {
   rtx desc;
+  int last = 1;
 
   progname = "gencodes";
 
@@ -68,7 +68,8 @@ main (int argc, char **argv)
 #ifndef GCC_INSN_CODES_H\n\
 #define GCC_INSN_CODES_H\n\
 \n\
-enum insn_code {");
+enum insn_code {\n\
+  CODE_FOR_nothing = 0,\n");
 
   /* Read the machine description.  */
 
@@ -82,13 +83,16 @@ enum insn_code {");
 	break;
 
       if (GET_CODE (desc) == DEFINE_INSN || GET_CODE (desc) == DEFINE_EXPAND)
-	gen_insn (desc, insn_code_number);
+	{
+	  gen_insn (desc, insn_code_number);
+	  last = insn_code_number + 1;
+	}
     }
 
-  puts ("  CODE_FOR_nothing\n\
+  printf ("  LAST_INSN_CODE = %d\n\
 };\n\
 \n\
-#endif /* GCC_INSN_CODES_H */");
+#endif /* GCC_INSN_CODES_H */\n", last);
 
   if (ferror (stdout) || fflush (stdout) || fclose (stdout))
     return FATAL_EXIT_CODE;

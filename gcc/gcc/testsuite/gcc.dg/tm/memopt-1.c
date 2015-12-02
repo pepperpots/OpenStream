@@ -2,10 +2,11 @@
 /* { dg-options "-fgnu-tm -O -fdump-tree-tmmemopt" } */
 
 long g, xxx, yyy;
-extern george() __attribute__((transaction_callable));
-extern ringo(long int);
+extern void george() __attribute__((transaction_safe));
+extern void ringo(long int) __attribute__((transaction_safe));
 int i;
 
+void
 f()
 {
   __transaction_relaxed {

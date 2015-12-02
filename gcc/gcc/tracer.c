@@ -1,8 +1,7 @@
 /* The tracer pass for the GNU compiler.
    Contributed by Jan Hubicka, SuSE Labs.
    Adapted to work on GIMPLE instead of RTL by Robert Kidd, UIUC.
-   Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008
-   Free Software Foundation, Inc.
+   Copyright (C) 2001-2015 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -38,20 +37,42 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "fold-const.h"
 #include "rtl.h"
 #include "hard-reg-set.h"
+#include "profile.h"
+#include "predict.h"
+#include "input.h"
+#include "function.h"
+#include "dominance.h"
+#include "cfg.h"
+#include "cfganal.h"
 #include "basic-block.h"
-#include "output.h"
-#include "cfglayout.h"
-#include "fibheap.h"
 #include "flags.h"
-#include "timevar.h"
 #include "params.h"
 #include "coverage.h"
 #include "tree-pass.h"
-#include "tree-flow.h"
+#include "tree-ssa-alias.h"
+#include "internal-fn.h"
+#include "gimple-expr.h"
+#include "is-a.h"
+#include "gimple.h"
+#include "gimple-iterator.h"
+#include "tree-cfg.h"
+#include "tree-ssa.h"
 #include "tree-inline.h"
+#include "cfgloop.h"
+#include "fibonacci_heap.h"
 
 static int count_insns (basic_block);
 static bool ignore_bb_p (const_basic_block);
@@ -59,7 +80,6 @@ static bool better_p (const_edge, const_edge);
 static edge find_best_successor (basic_block);
 static edge find_best_predecessor (basic_block);
 static int find_trace (basic_block, basic_block *);
-static void tail_duplicate (void);
 
 /* Minimal outgoing edge probability considered for superblock formation.  */
 static int probability_cutoff;
@@ -72,18 +92,18 @@ sbitmap bb_seen;
 static inline void
 mark_bb_seen (basic_block bb)
 {
-  unsigned int size = SBITMAP_SIZE_BYTES (bb_seen) * 8;
+  unsigned int size = SBITMAP_SIZE (bb_seen);
 
   if ((unsigned int)bb->index >= size)
     bb_seen = sbitmap_resize (bb_seen, size * 2, 0);
 
-  SET_BIT (bb_seen, bb->index);
+  bitmap_set_bit (bb_seen, bb->index);
 }
 
 static inline bool
 bb_seen_p (basic_block bb)
 {
-  return TEST_BIT (bb_seen, bb->index);
+  return bitmap_bit_p (bb_seen, bb->index);
 }
 
 /* Return true if we should ignore the basic block for purposes of tracing.  */
@@ -224,23 +244,26 @@ find_trace (basic_block bb, basic_block *trace)
 /* Look for basic blocks in frequency order, construct traces and tail duplicate
    if profitable.  */
 
-static void
+static bool
 tail_duplicate (void)
 {
-  fibnode_t *blocks = XCNEWVEC (fibnode_t, last_basic_block);
-  basic_block *trace = XNEWVEC (basic_block, n_basic_blocks);
-  int *counts = XNEWVEC (int, last_basic_block);
+  auto_vec<fibonacci_node<long, basic_block_def>*> blocks;
+  blocks.safe_grow_cleared (last_basic_block_for_fn (cfun));
+
+  basic_block *trace = XNEWVEC (basic_block, n_basic_blocks_for_fn (cfun));
+  int *counts = XNEWVEC (int, last_basic_block_for_fn (cfun));
   int ninsns = 0, nduplicated = 0;
   gcov_type weighted_insns = 0, traced_insns = 0;
-  fibheap_t heap = fibheap_new ();
+  fibonacci_heap<long, basic_block_def> heap (LONG_MIN);
   gcov_type cover_insns;
   int max_dup_insns;
   basic_block bb;
+  bool changed = false;
 
   /* Create an oversized sbitmap to reduce the chance that we need to
      resize it.  */
-  bb_seen = sbitmap_alloc (last_basic_block * 2);
-  sbitmap_zero (bb_seen);
+  bb_seen = sbitmap_alloc (last_basic_block_for_fn (cfun) * 2);
+  bitmap_clear (bb_seen);
   initialize_original_copy_tables ();
 
   if (profile_info && flag_branch_probabilities)
@@ -252,12 +275,11 @@ tail_duplicate (void)
   branch_ratio_cutoff =
     (REG_BR_PROB_BASE / 100 * PARAM_VALUE (TRACER_MIN_BRANCH_RATIO));
 
-  FOR_EACH_BB (bb)
+  FOR_EACH_BB_FN (bb, cfun)
     {
       int n = count_insns (bb);
       if (!ignore_bb_p (bb))
-	blocks[bb->index] = fibheap_insert (heap, -bb->frequency,
-					    bb);
+	blocks[bb->index] = heap.insert (-bb->frequency, bb);
 
       counts [bb->index] = n;
       ninsns += n;
@@ -272,9 +294,9 @@ tail_duplicate (void)
   max_dup_insns = (ninsns * PARAM_VALUE (TRACER_MAX_CODE_GROWTH) + 50) / 100;
 
   while (traced_insns < cover_insns && nduplicated < max_dup_insns
-         && !fibheap_empty (heap))
+         && !heap.empty ())
     {
-      basic_block bb = (basic_block) fibheap_extract_min (heap);
+      basic_block bb = heap.extract_min ();
       int n, pos;
 
       if (!bb)
@@ -292,7 +314,7 @@ tail_duplicate (void)
       traced_insns += bb->frequency * counts [bb->index];
       if (blocks[bb->index])
 	{
-	  fibheap_delete_node (heap, blocks[bb->index]);
+	  heap.delete_node (blocks[bb->index]);
 	  blocks[bb->index] = NULL;
 	}
 
@@ -302,12 +324,17 @@ tail_duplicate (void)
 
 	  if (blocks[bb2->index])
 	    {
-	      fibheap_delete_node (heap, blocks[bb2->index]);
+	      heap.delete_node (blocks[bb2->index]);
 	      blocks[bb2->index] = NULL;
 	    }
 	  traced_insns += bb2->frequency * counts [bb2->index];
 	  if (EDGE_COUNT (bb2->preds) > 1
-	      && can_duplicate_block_p (bb2))
+	      && can_duplicate_block_p (bb2)
+	      /* We have the tendency to duplicate the loop header
+	         of all do { } while loops.  Do not do that - it is
+		 not profitable and it might create a loop with multiple
+		 entries or at least rotate the loop.  */
+	      && bb2->loop_father->header != bb2)
 	    {
 	      edge e;
 	      basic_block copy;
@@ -324,14 +351,14 @@ tail_duplicate (void)
 	      /* Reconsider the original copy of block we've duplicated.
 	         Removing the most common predecessor may make it to be
 	         head.  */
-	      blocks[bb2->index] =
-		fibheap_insert (heap, -bb2->frequency, bb2);
+	      blocks[bb2->index] = heap.insert (-bb2->frequency, bb2);
 
 	      if (dump_file)
 		fprintf (dump_file, "Duplicated %i as %i [%i]\n",
 			 bb2->index, copy->index, copy->frequency);
 
 	      bb2 = copy;
+	      changed = true;
 	    }
 	  mark_bb_seen (bb2);
 	  bb = bb2;
@@ -349,60 +376,74 @@ tail_duplicate (void)
 
   free_original_copy_tables ();
   sbitmap_free (bb_seen);
-  free (blocks);
   free (trace);
   free (counts);
-  fibheap_delete (heap);
+
+  return changed;
 }
+
+namespace {
 
-/* Main entry point to this file.  */
-
-static unsigned int
-tracer (void)
+const pass_data pass_data_tracer =
 {
-  gcc_assert (current_ir_type () == IR_GIMPLE);
+  GIMPLE_PASS, /* type */
+  "tracer", /* name */
+  OPTGROUP_NONE, /* optinfo_flags */
+  TV_TRACER, /* tv_id */
+  0, /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  TODO_update_ssa, /* todo_flags_finish */
+};
 
-  if (n_basic_blocks <= NUM_FIXED_BLOCKS + 1)
+class pass_tracer : public gimple_opt_pass
+{
+public:
+  pass_tracer (gcc::context *ctxt)
+    : gimple_opt_pass (pass_data_tracer, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual bool gate (function *)
+    {
+      return (optimize > 0 && flag_tracer && flag_reorder_blocks);
+    }
+
+  virtual unsigned int execute (function *);
+
+}; // class pass_tracer
+
+unsigned int
+pass_tracer::execute (function *fun)
+{
+  bool changed;
+
+  if (n_basic_blocks_for_fn (fun) <= NUM_FIXED_BLOCKS + 1)
     return 0;
 
   mark_dfs_back_edges ();
   if (dump_file)
-    dump_flow_info (dump_file, dump_flags);
+    brief_dump_cfg (dump_file, dump_flags);
 
   /* Trace formation is done on the fly inside tail_duplicate */
-  tail_duplicate ();
+  changed = tail_duplicate ();
+  if (changed)
+    {
+      free_dominance_info (CDI_DOMINATORS);
+      /* If we changed the CFG schedule loops for fixup by cleanup_cfg.  */
+      loops_state_set (LOOPS_NEED_FIXUP);
+    }
 
-  /* FIXME: We really only need to do this when we know tail duplication
-            has altered the CFG. */
-  free_dominance_info (CDI_DOMINATORS);
   if (dump_file)
-    dump_flow_info (dump_file, dump_flags);
+    brief_dump_cfg (dump_file, dump_flags);
 
-  return 0;
+  return changed ? TODO_cleanup_cfg : 0;
 }
-
-static bool
-gate_tracer (void)
-{
-  return (optimize > 0 && flag_tracer && flag_reorder_blocks);
-}
+} // anon namespace
 
-struct gimple_opt_pass pass_tracer =
+gimple_opt_pass *
+make_pass_tracer (gcc::context *ctxt)
 {
- {
-  GIMPLE_PASS,
-  "tracer",                             /* name */
-  gate_tracer,                          /* gate */
-  tracer,                               /* execute */
-  NULL,                                 /* sub */
-  NULL,                                 /* next */
-  0,                                    /* static_pass_number */
-  TV_TRACER,                            /* tv_id */
-  0,                                    /* properties_required */
-  0,                                    /* properties_provided */
-  0,                                    /* properties_destroyed */
-  0,                                    /* todo_flags_start */
-  TODO_update_ssa
-    | TODO_verify_ssa                   /* todo_flags_finish */
- }
-};
+  return new pass_tracer (ctxt);
+}

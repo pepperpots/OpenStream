@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -22,6 +23,8 @@ type conversionTest struct {
 	wantint   int64
 	wantuint  uint64
 	wantstr   string
+	wantbytes []byte
+	wantraw   RawBytes
 	wantf32   float32
 	wantf64   float64
 	wanttime  time.Time
@@ -35,6 +38,8 @@ type conversionTest struct {
 // Target variables for scanning into.
 var (
 	scanstr    string
+	scanbytes  []byte
+	scanraw    RawBytes
 	scanint    int
 	scanint8   int8
 	scanint16  int16
@@ -56,6 +61,7 @@ var conversionTests = []conversionTest{
 	{s: someTime, d: &scantime, wanttime: someTime},
 
 	// To strings
+	{s: "string", d: &scanstr, wantstr: "string"},
 	{s: []byte("byteslice"), d: &scanstr, wantstr: "byteslice"},
 	{s: 123, d: &scanstr, wantstr: "123"},
 	{s: int8(123), d: &scanstr, wantstr: "123"},
@@ -65,6 +71,31 @@ var conversionTests = []conversionTest{
 	{s: uint32(123), d: &scanstr, wantstr: "123"},
 	{s: uint64(123), d: &scanstr, wantstr: "123"},
 	{s: 1.5, d: &scanstr, wantstr: "1.5"},
+
+	// To []byte
+	{s: nil, d: &scanbytes, wantbytes: nil},
+	{s: "string", d: &scanbytes, wantbytes: []byte("string")},
+	{s: []byte("byteslice"), d: &scanbytes, wantbytes: []byte("byteslice")},
+	{s: 123, d: &scanbytes, wantbytes: []byte("123")},
+	{s: int8(123), d: &scanbytes, wantbytes: []byte("123")},
+	{s: int64(123), d: &scanbytes, wantbytes: []byte("123")},
+	{s: uint8(123), d: &scanbytes, wantbytes: []byte("123")},
+	{s: uint16(123), d: &scanbytes, wantbytes: []byte("123")},
+	{s: uint32(123), d: &scanbytes, wantbytes: []byte("123")},
+	{s: uint64(123), d: &scanbytes, wantbytes: []byte("123")},
+	{s: 1.5, d: &scanbytes, wantbytes: []byte("1.5")},
+
+	// To RawBytes
+	{s: nil, d: &scanraw, wantraw: nil},
+	{s: []byte("byteslice"), d: &scanraw, wantraw: RawBytes("byteslice")},
+	{s: 123, d: &scanraw, wantraw: RawBytes("123")},
+	{s: int8(123), d: &scanraw, wantraw: RawBytes("123")},
+	{s: int64(123), d: &scanraw, wantraw: RawBytes("123")},
+	{s: uint8(123), d: &scanraw, wantraw: RawBytes("123")},
+	{s: uint16(123), d: &scanraw, wantraw: RawBytes("123")},
+	{s: uint32(123), d: &scanraw, wantraw: RawBytes("123")},
+	{s: uint64(123), d: &scanraw, wantraw: RawBytes("123")},
+	{s: 1.5, d: &scanraw, wantraw: RawBytes("1.5")},
 
 	// Strings to integers
 	{s: "255", d: &scanuint8, wantuint: 255},
@@ -113,6 +144,7 @@ var conversionTests = []conversionTest{
 	{s: []byte("byteslice"), d: &scaniface, wantiface: []byte("byteslice")},
 	{s: true, d: &scaniface, wantiface: true},
 	{s: nil, d: &scaniface},
+	{s: []byte(nil), d: &scaniface, wantiface: []byte(nil)},
 }
 
 func intPtrValue(intptr interface{}) interface{} {
@@ -191,7 +223,7 @@ func TestConversions(t *testing.T) {
 			}
 			if srcBytes, ok := ct.s.([]byte); ok {
 				dstBytes := (*ifptr).([]byte)
-				if &dstBytes[0] == &srcBytes[0] {
+				if len(srcBytes) > 0 && &dstBytes[0] == &srcBytes[0] {
 					errf("copy into interface{} didn't copy []byte data")
 				}
 			}
@@ -236,15 +268,81 @@ func TestValueConverters(t *testing.T) {
 			goterr = err.Error()
 		}
 		if goterr != tt.err {
-			t.Errorf("test %d: %s(%T(%v)) error = %q; want error = %q",
+			t.Errorf("test %d: %T(%T(%v)) error = %q; want error = %q",
 				i, tt.c, tt.in, tt.in, goterr, tt.err)
 		}
 		if tt.err != "" {
 			continue
 		}
 		if !reflect.DeepEqual(out, tt.out) {
-			t.Errorf("test %d: %s(%T(%v)) = %v (%T); want %v (%T)",
+			t.Errorf("test %d: %T(%T(%v)) = %v (%T); want %v (%T)",
 				i, tt.c, tt.in, tt.in, out, out, tt.out, tt.out)
 		}
+	}
+}
+
+// Tests that assigning to RawBytes doesn't allocate (and also works).
+func TestRawBytesAllocs(t *testing.T) {
+	var tests = []struct {
+		name string
+		in   interface{}
+		want string
+	}{
+		{"uint64", uint64(12345678), "12345678"},
+		{"uint32", uint32(1234), "1234"},
+		{"uint16", uint16(12), "12"},
+		{"uint8", uint8(1), "1"},
+		{"uint", uint(123), "123"},
+		{"int", int(123), "123"},
+		{"int8", int8(1), "1"},
+		{"int16", int16(12), "12"},
+		{"int32", int32(1234), "1234"},
+		{"int64", int64(12345678), "12345678"},
+		{"float32", float32(1.5), "1.5"},
+		{"float64", float64(64), "64"},
+		{"bool", false, "false"},
+	}
+
+	buf := make(RawBytes, 10)
+	test := func(name string, in interface{}, want string) {
+		if err := convertAssign(&buf, in); err != nil {
+			t.Fatalf("%s: convertAssign = %v", name, err)
+		}
+		match := len(buf) == len(want)
+		if match {
+			for i, b := range buf {
+				if want[i] != b {
+					match = false
+					break
+				}
+			}
+		}
+		if !match {
+			t.Fatalf("%s: got %q (len %d); want %q (len %d)", name, buf, len(buf), want, len(want))
+		}
+	}
+
+	n := testing.AllocsPerRun(100, func() {
+		for _, tt := range tests {
+			test(tt.name, tt.in, tt.want)
+		}
+	})
+
+	// The numbers below are only valid for 64-bit interface word sizes,
+	// and gc. With 32-bit words there are more convT2E allocs, and
+	// with gccgo, only pointers currently go in interface data.
+	// So only care on amd64 gc for now.
+	measureAllocs := runtime.GOARCH == "amd64" && runtime.Compiler == "gc"
+
+	if n > 0.5 && measureAllocs {
+		t.Fatalf("allocs = %v; want 0", n)
+	}
+
+	// This one involves a convT2E allocation, string -> interface{}
+	n = testing.AllocsPerRun(100, func() {
+		test("string", "foo", "foo")
+	})
+	if n > 1.5 && measureAllocs {
+		t.Fatalf("allocs = %v; want max 1", n)
 	}
 }

@@ -1,6 +1,5 @@
 /* RTL dead code elimination.
-   Copyright (C) 2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2005-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -24,15 +23,31 @@ along with GCC; see the file COPYING3.  If not see
 #include "hashtab.h"
 #include "tm.h"
 #include "rtl.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
 #include "regs.h"
 #include "hard-reg-set.h"
 #include "flags.h"
 #include "except.h"
+#include "dominance.h"
+#include "cfg.h"
+#include "cfgrtl.h"
+#include "cfgbuild.h"
+#include "cfgcleanup.h"
+#include "predict.h"
+#include "basic-block.h"
 #include "df.h"
 #include "cselib.h"
 #include "dce.h"
-#include "timevar.h"
+#include "valtrack.h"
 #include "tree-pass.h"
 #include "dbgcnt.h"
 #include "tm_p.h"
@@ -47,9 +62,12 @@ along with GCC; see the file COPYING3.  If not see
    we don't want to reenter it.  */
 static bool df_in_progress = false;
 
+/* True if we are allowed to alter the CFG in this pass.  */
+static bool can_alter_cfg = false;
+
 /* Instructions that have been marked but whose dependencies have not
    yet been processed.  */
-static VEC(rtx,heap) *worklist;
+static vec<rtx_insn *> worklist;
 
 /* Bitmap of instructions marked as needed indexed by INSN_UID.  */
 static sbitmap marked;
@@ -58,7 +76,7 @@ static sbitmap marked;
 static bitmap_obstack dce_blocks_bitmap_obstack;
 static bitmap_obstack dce_tmp_bitmap_obstack;
 
-static bool find_call_stack_args (rtx, bool, bool, bitmap);
+static bool find_call_stack_args (rtx_call_insn *, bool, bool, bitmap);
 
 /* A subroutine for which BODY is part of the instruction being tested;
    either the top-level pattern, or an element of a PARALLEL.  The
@@ -90,10 +108,11 @@ deletable_insn_p_1 (rtx body)
    the DCE pass.  */
 
 static bool
-deletable_insn_p (rtx insn, bool fast, bitmap arg_stores)
+deletable_insn_p (rtx_insn *insn, bool fast, bitmap arg_stores)
 {
   rtx body, x;
   int i;
+  df_ref def;
 
   if (CALL_P (insn)
       /* We cannot delete calls inside of the recursive dce because
@@ -107,15 +126,27 @@ deletable_insn_p (rtx insn, bool fast, bitmap arg_stores)
          infinite loop.  */
       && (RTL_CONST_OR_PURE_CALL_P (insn)
 	  && !RTL_LOOPING_CONST_OR_PURE_CALL_P (insn)))
-    return find_call_stack_args (insn, false, fast, arg_stores);
+    return find_call_stack_args (as_a <rtx_call_insn *> (insn), false,
+				 fast, arg_stores);
 
   /* Don't delete jumps, notes and the like.  */
   if (!NONJUMP_INSN_P (insn))
     return false;
 
-  /* Don't delete insns that can throw.  */
-  if (!insn_nothrow_p (insn))
+  /* Don't delete insns that may throw if we cannot do so.  */
+  if (!(cfun->can_delete_dead_exceptions && can_alter_cfg)
+      && !insn_nothrow_p (insn))
     return false;
+
+  /* If INSN sets a global_reg, leave it untouched.  */
+  FOR_EACH_INSN_DEF (def, insn)
+    if (HARD_REGISTER_NUM_P (DF_REF_REGNO (def))
+	&& global_regs[DF_REF_REGNO (def)])
+      return false;
+    /* Initialization of pseudo PIC register should never be removed.  */
+    else if (DF_REF_REG (def) == pic_offset_table_rtx
+	     && REGNO (pic_offset_table_rtx) >= FIRST_PSEUDO_REGISTER)
+      return false;
 
   body = PATTERN (insn);
   switch (GET_CODE (body))
@@ -154,12 +185,12 @@ deletable_insn_p (rtx insn, bool fast, bitmap arg_stores)
 /* Return true if INSN has been marked as needed.  */
 
 static inline int
-marked_insn_p (rtx insn)
+marked_insn_p (rtx_insn *insn)
 {
   /* Artificial defs are always needed and they do not have an insn.
      We should never see them here.  */
   gcc_assert (insn);
-  return TEST_BIT (marked, INSN_UID (insn));
+  return bitmap_bit_p (marked, INSN_UID (insn));
 }
 
 
@@ -167,13 +198,13 @@ marked_insn_p (rtx insn)
    the worklist.  */
 
 static void
-mark_insn (rtx insn, bool fast)
+mark_insn (rtx_insn *insn, bool fast)
 {
   if (!marked_insn_p (insn))
     {
       if (!fast)
-	VEC_safe_push (rtx, heap, worklist, insn);
-      SET_BIT (marked, INSN_UID (insn));
+	worklist.safe_push (insn);
+      bitmap_set_bit (marked, INSN_UID (insn));
       if (dump_file)
 	fprintf (dump_file, "  Adding insn %d to worklist\n", INSN_UID (insn));
       if (CALL_P (insn)
@@ -181,7 +212,7 @@ mark_insn (rtx insn, bool fast)
 	  && !SIBLING_CALL_P (insn)
 	  && (RTL_CONST_OR_PURE_CALL_P (insn)
 	      && !RTL_LOOPING_CONST_OR_PURE_CALL_P (insn)))
-	find_call_stack_args (insn, true, fast, NULL);
+	find_call_stack_args (as_a <rtx_call_insn *> (insn), true, fast, NULL);
     }
 }
 
@@ -193,7 +224,7 @@ static void
 mark_nonreg_stores_1 (rtx dest, const_rtx pattern, void *data)
 {
   if (GET_CODE (pattern) != CLOBBER && !REG_P (dest))
-    mark_insn ((rtx) data, true);
+    mark_insn ((rtx_insn *) data, true);
 }
 
 
@@ -204,14 +235,14 @@ static void
 mark_nonreg_stores_2 (rtx dest, const_rtx pattern, void *data)
 {
   if (GET_CODE (pattern) != CLOBBER && !REG_P (dest))
-    mark_insn ((rtx) data, false);
+    mark_insn ((rtx_insn *) data, false);
 }
 
 
 /* Mark INSN if BODY stores to a non-register destination.  */
 
 static void
-mark_nonreg_stores (rtx body, rtx insn, bool fast)
+mark_nonreg_stores (rtx body, rtx_insn *insn, bool fast)
 {
   if (fast)
     note_stores (body, mark_nonreg_stores_1, insn);
@@ -248,10 +279,11 @@ check_argument_store (rtx mem, HOST_WIDE_INT off, HOST_WIDE_INT min_sp_off,
    going to be marked called again with DO_MARK true.  */
 
 static bool
-find_call_stack_args (rtx call_insn, bool do_mark, bool fast,
+find_call_stack_args (rtx_call_insn *call_insn, bool do_mark, bool fast,
 		      bitmap arg_stores)
 {
-  rtx p, insn, prev_insn;
+  rtx p;
+  rtx_insn *insn, *prev_insn;
   bool ret;
   HOST_WIDE_INT min_sp_off, max_sp_off;
   bitmap sp_bytes;
@@ -296,18 +328,18 @@ find_call_stack_args (rtx call_insn, bool do_mark, bool fast,
 	       sp + offset.  */
 	    if (!fast)
 	      {
-		df_ref *use_rec;
+		df_ref use;
 		struct df_link *defs;
 		rtx set;
 
-		for (use_rec = DF_INSN_USES (call_insn); *use_rec; use_rec++)
-		  if (rtx_equal_p (addr, DF_REF_REG (*use_rec)))
+		FOR_EACH_INSN_USE (use, call_insn)
+		  if (rtx_equal_p (addr, DF_REF_REG (use)))
 		    break;
 
-		if (*use_rec == NULL)
+		if (use == NULL)
 		  return false;
 
-		for (defs = DF_REF_CHAIN (*use_rec); defs; defs = defs->next)
+		for (defs = DF_REF_CHAIN (use); defs; defs = defs->next)
 		  if (! DF_REF_IS_ARTIFICIAL (defs->ref))
 		    break;
 
@@ -355,15 +387,15 @@ find_call_stack_args (rtx call_insn, bool do_mark, bool fast,
 	  }
 	if (addr != stack_pointer_rtx)
 	  {
-	    df_ref *use_rec;
+	    df_ref use;
 	    struct df_link *defs;
 	    rtx set;
 
-	    for (use_rec = DF_INSN_USES (call_insn); *use_rec; use_rec++)
-	      if (rtx_equal_p (addr, DF_REF_REG (*use_rec)))
+	    FOR_EACH_INSN_USE (use, call_insn)
+	      if (rtx_equal_p (addr, DF_REF_REG (use)))
 		break;
 
-	    for (defs = DF_REF_CHAIN (*use_rec); defs; defs = defs->next)
+	    for (defs = DF_REF_CHAIN (use); defs; defs = defs->next)
 	      if (! DF_REF_IS_ARTIFICIAL (defs->ref))
 		break;
 
@@ -387,7 +419,7 @@ find_call_stack_args (rtx call_insn, bool do_mark, bool fast,
       HOST_WIDE_INT off;
 
       if (insn == BB_HEAD (BLOCK_FOR_INSN (call_insn)))
-	prev_insn = NULL_RTX;
+	prev_insn = NULL;
       else
 	prev_insn = PREV_INSN (insn);
 
@@ -420,18 +452,18 @@ find_call_stack_args (rtx call_insn, bool do_mark, bool fast,
 	    break;
 	  if (!fast)
 	    {
-	      df_ref *use_rec;
+	      df_ref use;
 	      struct df_link *defs;
 	      rtx set;
 
-	      for (use_rec = DF_INSN_USES (insn); *use_rec; use_rec++)
-		if (rtx_equal_p (addr, DF_REF_REG (*use_rec)))
+	      FOR_EACH_INSN_USE (use, insn)
+		if (rtx_equal_p (addr, DF_REF_REG (use)))
 		  break;
 
-	      if (*use_rec == NULL)
+	      if (use == NULL)
 		break;
 
-	      for (defs = DF_REF_CHAIN (*use_rec); defs; defs = defs->next)
+	      for (defs = DF_REF_CHAIN (use); defs; defs = defs->next)
 		if (! DF_REF_IS_ARTIFICIAL (defs->ref))
 		  break;
 
@@ -485,12 +517,12 @@ find_call_stack_args (rtx call_insn, bool do_mark, bool fast,
    writes to.  */
 
 static void
-remove_reg_equal_equiv_notes_for_defs (rtx insn)
+remove_reg_equal_equiv_notes_for_defs (rtx_insn *insn)
 {
-  df_ref *def_rec;
+  df_ref def;
 
-  for (def_rec = DF_INSN_DEFS (insn); *def_rec; def_rec++)
-    remove_reg_equal_equiv_notes_for_regno (DF_REF_REGNO (*def_rec));
+  FOR_EACH_INSN_DEF (def, insn)
+    remove_reg_equal_equiv_notes_for_regno (DF_REF_REGNO (def));
 }
 
 /* Scan all BBs for debug insns and reset those that reference values
@@ -500,21 +532,20 @@ static void
 reset_unmarked_insns_debug_uses (void)
 {
   basic_block bb;
-  rtx insn, next;
+  rtx_insn *insn, *next;
 
-  FOR_EACH_BB_REVERSE (bb)
+  FOR_EACH_BB_REVERSE_FN (bb, cfun)
     FOR_BB_INSNS_REVERSE_SAFE (bb, insn, next)
       if (DEBUG_INSN_P (insn))
 	{
-	  df_ref *use_rec;
+	  df_ref use;
 
-	  for (use_rec = DF_INSN_USES (insn); *use_rec; use_rec++)
+	  FOR_EACH_INSN_USE (use, insn)
 	    {
-	      df_ref use = *use_rec;
 	      struct df_link *defs;
 	      for (defs = DF_REF_CHAIN (use); defs; defs = defs->next)
 		{
-		  rtx ref_insn;
+		  rtx_insn *ref_insn;
 		  if (DF_REF_IS_ARTIFICIAL (defs->ref))
 		    continue;
 		  ref_insn = DF_REF_INSN (defs->ref);
@@ -538,10 +569,10 @@ static void
 delete_unmarked_insns (void)
 {
   basic_block bb;
-  rtx insn, next;
+  rtx_insn *insn, *next;
   bool must_clean = false;
 
-  FOR_EACH_BB_REVERSE (bb)
+  FOR_EACH_BB_REVERSE_FN (bb, cfun)
     FOR_BB_INSNS_REVERSE_SAFE (bb, insn, next)
       if (NONDEBUG_INSN_P (insn))
 	{
@@ -605,7 +636,7 @@ static void
 prescan_insns_for_dce (bool fast)
 {
   basic_block bb;
-  rtx insn, prev;
+  rtx_insn *insn, *prev;
   bitmap arg_stores = NULL;
 
   if (dump_file)
@@ -614,7 +645,7 @@ prescan_insns_for_dce (bool fast)
   if (!df_in_progress && ACCUMULATE_OUTGOING_ARGS)
     arg_stores = BITMAP_ALLOC (NULL);
 
-  FOR_EACH_BB (bb)
+  FOR_EACH_BB_FN (bb, cfun)
     {
       FOR_BB_INSNS_REVERSE_SAFE (bb, insn, prev)
 	if (NONDEBUG_INSN_P (insn))
@@ -652,33 +683,29 @@ mark_artificial_uses (void)
 {
   basic_block bb;
   struct df_link *defs;
-  df_ref *use_rec;
+  df_ref use;
 
-  FOR_ALL_BB (bb)
-    {
-      for (use_rec = df_get_artificial_uses (bb->index);
-	   *use_rec; use_rec++)
-	for (defs = DF_REF_CHAIN (*use_rec); defs; defs = defs->next)
-	  if (! DF_REF_IS_ARTIFICIAL (defs->ref))
-	    mark_insn (DF_REF_INSN (defs->ref), false);
-    }
+  FOR_ALL_BB_FN (bb, cfun)
+    FOR_EACH_ARTIFICIAL_USE (use, bb->index)
+      for (defs = DF_REF_CHAIN (use); defs; defs = defs->next)
+	if (!DF_REF_IS_ARTIFICIAL (defs->ref))
+	  mark_insn (DF_REF_INSN (defs->ref), false);
 }
 
 
 /* Mark every instruction that defines a register value that INSN uses.  */
 
 static void
-mark_reg_dependencies (rtx insn)
+mark_reg_dependencies (rtx_insn *insn)
 {
   struct df_link *defs;
-  df_ref *use_rec;
+  df_ref use;
 
   if (DEBUG_INSN_P (insn))
     return;
 
-  for (use_rec = DF_INSN_USES (insn); *use_rec; use_rec++)
+  FOR_EACH_INSN_USE (use, insn)
     {
-      df_ref use = *use_rec;
       if (dump_file)
 	{
 	  fprintf (dump_file, "Processing use of ");
@@ -700,7 +727,10 @@ init_dce (bool fast)
   if (!df_in_progress)
     {
       if (!fast)
-	df_chain_add_problem (DF_UD_CHAIN);
+	{
+	  df_set_flags (DF_RD_PRUNE_DEAD_DEFS);
+	  df_chain_add_problem (DF_UD_CHAIN);
+	}
       df_analyze ();
     }
 
@@ -711,10 +741,13 @@ init_dce (bool fast)
     {
       bitmap_obstack_initialize (&dce_blocks_bitmap_obstack);
       bitmap_obstack_initialize (&dce_tmp_bitmap_obstack);
+      can_alter_cfg = false;
     }
+  else
+    can_alter_cfg = true;
 
   marked = sbitmap_alloc (get_max_uid () + 1);
-  sbitmap_zero (marked);
+  bitmap_clear (marked);
 }
 
 
@@ -738,18 +771,18 @@ fini_dce (bool fast)
 static unsigned int
 rest_of_handle_ud_dce (void)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   init_dce (false);
 
   prescan_insns_for_dce (false);
   mark_artificial_uses ();
-  while (VEC_length (rtx, worklist) > 0)
+  while (worklist.length () > 0)
     {
-      insn = VEC_pop (rtx, worklist);
+      insn = worklist.pop ();
       mark_reg_dependencies (insn);
     }
-  VEC_free (rtx, heap, worklist);
+  worklist.release ();
 
   if (MAY_HAVE_DEBUG_INSNS)
     reset_unmarked_insns_debug_uses ();
@@ -764,32 +797,48 @@ rest_of_handle_ud_dce (void)
 }
 
 
-static bool
-gate_ud_dce (void)
-{
-  return optimize > 1 && flag_dce
-    && dbg_cnt (dce_ud);
-}
+namespace {
 
-struct rtl_opt_pass pass_ud_rtl_dce =
+const pass_data pass_data_ud_rtl_dce =
 {
- {
-  RTL_PASS,
-  "ud_dce",                             /* name */
-  gate_ud_dce,                          /* gate */
-  rest_of_handle_ud_dce,                /* execute */
-  NULL,                                 /* sub */
-  NULL,                                 /* next */
-  0,                                    /* static_pass_number */
-  TV_DCE,                               /* tv_id */
-  0,                                    /* properties_required */
-  0,                                    /* properties_provided */
-  0,                                    /* properties_destroyed */
-  0,                                    /* todo_flags_start */
-  TODO_df_finish | TODO_verify_rtl_sharing |
-  TODO_ggc_collect                     /* todo_flags_finish */
- }
+  RTL_PASS, /* type */
+  "ud_dce", /* name */
+  OPTGROUP_NONE, /* optinfo_flags */
+  TV_DCE, /* tv_id */
+  0, /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  TODO_df_finish, /* todo_flags_finish */
 };
+
+class pass_ud_rtl_dce : public rtl_opt_pass
+{
+public:
+  pass_ud_rtl_dce (gcc::context *ctxt)
+    : rtl_opt_pass (pass_data_ud_rtl_dce, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual bool gate (function *)
+    {
+      return optimize > 1 && flag_dce && dbg_cnt (dce_ud);
+    }
+
+  virtual unsigned int execute (function *)
+    {
+      return rest_of_handle_ud_dce ();
+    }
+
+}; // class pass_ud_rtl_dce
+
+} // anon namespace
+
+rtl_opt_pass *
+make_pass_ud_rtl_dce (gcc::context *ctxt)
+{
+  return new pass_ud_rtl_dce (ctxt);
+}
 
 
 /* -------------------------------------------------------------------------
@@ -799,14 +848,17 @@ struct rtl_opt_pass pass_ud_rtl_dce =
 /* Process basic block BB.  Return true if the live_in set has
    changed. REDO_OUT is true if the info at the bottom of the block
    needs to be recalculated before starting.  AU is the proper set of
-   artificial uses. */
+   artificial uses.  Track global substitution of uses of dead pseudos
+   in debug insns using GLOBAL_DEBUG.  */
 
 static bool
-word_dce_process_block (basic_block bb, bool redo_out)
+word_dce_process_block (basic_block bb, bool redo_out,
+			struct dead_debug_global *global_debug)
 {
   bitmap local_live = BITMAP_ALLOC (&dce_tmp_bitmap_obstack);
-  rtx insn;
+  rtx_insn *insn;
   bool block_changed;
+  struct dead_debug_local debug;
 
   if (redo_out)
     {
@@ -828,11 +880,24 @@ word_dce_process_block (basic_block bb, bool redo_out)
     }
 
   bitmap_copy (local_live, DF_WORD_LR_OUT (bb));
+  dead_debug_local_init (&debug, NULL, global_debug);
 
   FOR_BB_INSNS_REVERSE (bb, insn)
-    if (NONDEBUG_INSN_P (insn))
+    if (DEBUG_INSN_P (insn))
+      {
+	df_ref use;
+	FOR_EACH_INSN_USE (use, insn)
+	  if (DF_REF_REGNO (use) >= FIRST_PSEUDO_REGISTER
+	      && (GET_MODE_SIZE (GET_MODE (DF_REF_REAL_REG (use)))
+		  == 2 * UNITS_PER_WORD)
+	      && !bitmap_bit_p (local_live, 2 * DF_REF_REGNO (use))
+	      && !bitmap_bit_p (local_live, 2 * DF_REF_REGNO (use) + 1))
+	    dead_debug_add (&debug, use, DF_REF_REGNO (use));
+      }
+    else if (INSN_P (insn))
       {
 	bool any_changed;
+
 	/* No matter if the instruction is needed or not, we remove
 	   any regno in the defs from the live set.  */
 	any_changed = df_word_lr_simulate_defs (insn, local_live);
@@ -843,6 +908,22 @@ word_dce_process_block (basic_block bb, bool redo_out)
 	   anything in local_live.  */
 	if (marked_insn_p (insn))
 	  df_word_lr_simulate_uses (insn, local_live);
+
+	/* Insert debug temps for dead REGs used in subsequent debug
+	   insns.  We may have to emit a debug temp even if the insn
+	   was marked, in case the debug use was after the point of
+	   death.  */
+	if (debug.used && !bitmap_empty_p (debug.used))
+	  {
+	    df_ref def;
+
+	    FOR_EACH_INSN_DEF (def, insn)
+	      dead_debug_insert_temp (&debug, DF_REF_REGNO (def), insn,
+				      marked_insn_p (insn)
+				      && !control_flow_insn_p (insn)
+				      ? DEBUG_TEMP_AFTER_WITH_REG_FORCE
+				      : DEBUG_TEMP_BEFORE_WITH_VALUE);
+	  }
 
 	if (dump_file)
 	  {
@@ -856,6 +937,7 @@ word_dce_process_block (basic_block bb, bool redo_out)
   if (block_changed)
     bitmap_copy (DF_WORD_LR_IN (bb), local_live);
 
+  dead_debug_local_finish (&debug, NULL);
   BITMAP_FREE (local_live);
   return block_changed;
 }
@@ -864,15 +946,18 @@ word_dce_process_block (basic_block bb, bool redo_out)
 /* Process basic block BB.  Return true if the live_in set has
    changed. REDO_OUT is true if the info at the bottom of the block
    needs to be recalculated before starting.  AU is the proper set of
-   artificial uses. */
+   artificial uses.  Track global substitution of uses of dead pseudos
+   in debug insns using GLOBAL_DEBUG.  */
 
 static bool
-dce_process_block (basic_block bb, bool redo_out, bitmap au)
+dce_process_block (basic_block bb, bool redo_out, bitmap au,
+		   struct dead_debug_global *global_debug)
 {
   bitmap local_live = BITMAP_ALLOC (&dce_tmp_bitmap_obstack);
-  rtx insn;
+  rtx_insn *insn;
   bool block_changed;
-  df_ref *def_rec;
+  df_ref def;
+  struct dead_debug_local debug;
 
   if (redo_out)
     {
@@ -896,17 +981,26 @@ dce_process_block (basic_block bb, bool redo_out, bitmap au)
   bitmap_copy (local_live, DF_LR_OUT (bb));
 
   df_simulate_initialize_backwards (bb, local_live);
+  dead_debug_local_init (&debug, NULL, global_debug);
 
   FOR_BB_INSNS_REVERSE (bb, insn)
-    if (INSN_P (insn))
+    if (DEBUG_INSN_P (insn))
+      {
+	df_ref use;
+	FOR_EACH_INSN_USE (use, insn)
+	  if (!bitmap_bit_p (local_live, DF_REF_REGNO (use))
+	      && !bitmap_bit_p (au, DF_REF_REGNO (use)))
+	    dead_debug_add (&debug, use, DF_REF_REGNO (use));
+      }
+    else if (INSN_P (insn))
       {
 	bool needed = marked_insn_p (insn);
 
 	/* The insn is needed if there is someone who uses the output.  */
 	if (!needed)
-	  for (def_rec = DF_INSN_DEFS (insn); *def_rec; def_rec++)
-	    if (bitmap_bit_p (local_live, DF_REF_REGNO (*def_rec))
-		|| bitmap_bit_p (au, DF_REF_REGNO (*def_rec)))
+	  FOR_EACH_INSN_DEF (def, insn)
+	    if (bitmap_bit_p (local_live, DF_REF_REGNO (def))
+		|| bitmap_bit_p (au, DF_REF_REGNO (def)))
 	      {
 		needed = true;
 		mark_insn (insn, true);
@@ -921,8 +1015,20 @@ dce_process_block (basic_block bb, bool redo_out, bitmap au)
 	   anything in local_live.  */
 	if (needed)
 	  df_simulate_uses (insn, local_live);
+
+	/* Insert debug temps for dead REGs used in subsequent debug
+	   insns.  We may have to emit a debug temp even if the insn
+	   was marked, in case the debug use was after the point of
+	   death.  */
+	if (debug.used && !bitmap_empty_p (debug.used))
+	  FOR_EACH_INSN_DEF (def, insn)
+	    dead_debug_insert_temp (&debug, DF_REF_REGNO (def), insn,
+				    needed && !control_flow_insn_p (insn)
+				    ? DEBUG_TEMP_AFTER_WITH_REG_FORCE
+				    : DEBUG_TEMP_BEFORE_WITH_VALUE);
       }
 
+  dead_debug_local_finish (&debug, NULL);
   df_simulate_finalize_backwards (bb, local_live);
 
   block_changed = !bitmap_equal_p (local_live, DF_LR_IN (bb));
@@ -959,11 +1065,14 @@ fast_dce (bool word_level)
   bitmap au = &df->regular_block_artificial_uses;
   bitmap au_eh = &df->eh_block_artificial_uses;
   int i;
+  struct dead_debug_global global_debug;
 
   prescan_insns_for_dce (true);
 
   for (i = 0; i < n_blocks; i++)
     bitmap_set_bit (all_blocks, postorder[i]);
+
+  dead_debug_global_init (&global_debug, NULL);
 
   while (global_changed)
     {
@@ -972,7 +1081,7 @@ fast_dce (bool word_level)
       for (i = 0; i < n_blocks; i++)
 	{
 	  int index = postorder[i];
-	  basic_block bb = BASIC_BLOCK (index);
+	  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, index);
 	  bool local_changed;
 
 	  if (index < NUM_FIXED_BLOCKS)
@@ -983,11 +1092,13 @@ fast_dce (bool word_level)
 
 	  if (word_level)
 	    local_changed
-	      = word_dce_process_block (bb, bitmap_bit_p (redo_out, index));
+	      = word_dce_process_block (bb, bitmap_bit_p (redo_out, index),
+					&global_debug);
 	  else
 	    local_changed
 	      = dce_process_block (bb, bitmap_bit_p (redo_out, index),
-				   bb_has_eh_pred (bb) ? au_eh : au);
+				   bb_has_eh_pred (bb) ? au_eh : au,
+				   &global_debug);
 	  bitmap_set_bit (processed, index);
 
 	  if (local_changed)
@@ -1015,7 +1126,7 @@ fast_dce (bool word_level)
 	  /* So something was deleted that requires a redo.  Do it on
 	     the cheap.  */
 	  delete_unmarked_insns ();
-	  sbitmap_zero (marked);
+	  bitmap_clear (marked);
 	  bitmap_clear (processed);
 	  bitmap_clear (redo_out);
 
@@ -1034,6 +1145,8 @@ fast_dce (bool word_level)
 	  prescan_insns_for_dce (true);
 	}
     }
+
+  dead_debug_global_finish (&global_debug, NULL);
 
   delete_unmarked_insns ();
 
@@ -1115,29 +1228,45 @@ run_fast_dce (void)
 }
 
 
-static bool
-gate_fast_dce (void)
-{
-  return optimize > 0 && flag_dce
-    && dbg_cnt (dce_fast);
-}
+namespace {
 
-struct rtl_opt_pass pass_fast_rtl_dce =
+const pass_data pass_data_fast_rtl_dce =
 {
- {
-  RTL_PASS,
-  "rtl_dce",                            /* name */
-  gate_fast_dce,                        /* gate */
-  rest_of_handle_fast_dce,              /* execute */
-  NULL,                                 /* sub */
-  NULL,                                 /* next */
-  0,                                    /* static_pass_number */
-  TV_DCE,                               /* tv_id */
-  0,                                    /* properties_required */
-  0,                                    /* properties_provided */
-  0,                                    /* properties_destroyed */
-  0,                                    /* todo_flags_start */
-  TODO_df_finish | TODO_verify_rtl_sharing |
-  TODO_ggc_collect                      /* todo_flags_finish */
- }
+  RTL_PASS, /* type */
+  "rtl_dce", /* name */
+  OPTGROUP_NONE, /* optinfo_flags */
+  TV_DCE, /* tv_id */
+  0, /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  TODO_df_finish, /* todo_flags_finish */
 };
+
+class pass_fast_rtl_dce : public rtl_opt_pass
+{
+public:
+  pass_fast_rtl_dce (gcc::context *ctxt)
+    : rtl_opt_pass (pass_data_fast_rtl_dce, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual bool gate (function *)
+    {
+      return optimize > 0 && flag_dce && dbg_cnt (dce_fast);
+    }
+
+  virtual unsigned int execute (function *)
+    {
+      return rest_of_handle_fast_dce ();
+    }
+
+}; // class pass_fast_rtl_dce
+
+} // anon namespace
+
+rtl_opt_pass *
+make_pass_fast_rtl_dce (gcc::context *ctxt)
+{
+  return new pass_fast_rtl_dce (ctxt);
+}

@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *                     Copyright (C) 2008-2011, AdaCore                     *
+ *                     Copyright (C) 2008-2015, AdaCore                     *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -31,26 +31,111 @@
 
 /* First all usupported platforms. Add stubs for exported routines. */
 
-#if defined (VMS) || defined (__vxworks) || defined (__Lynx__)
+#if defined (VMS) || defined (__vxworks) || defined (__Lynx__) \
+  || defined (__ANDROID__) || defined (__PikeOS__)
 
-void * __gnat_new_tty (void) { return (void*)0; }
-char * __gnat_tty_name (void* t) { return (char*)0; }
-int    __gnat_interrupt_pid (int pid) { return -1; }
-int    __gnat_interrupt_process (void* desc) { return -1; }
-int    __gnat_setup_communication (void** desc) { return -1; }
-void   __gnat_setup_parent_communication
-         (void* d, int* i, int* o, int*e, int*p) { return -1; }
-int    __gnat_setup_child_communication
-         (void* d, char **n, int u) { return -1; }
-int    __gnat_terminate_process (void *desc) { return -1; }
-int    __gnat_tty_fd (void* t) { return -1; }
-int    __gnat_tty_supported (void) { return 0; }
-int    __gnat_tty_waitpid (void *desc) { return 1; }
-void   __gnat_close_tty (void* t) {}
-void   __gnat_free_process (void** process) {}
-void   __gnat_reset_tty (void* t) {}
-void   __gnat_send_header (void* d, char h[5], int s, int *r) {}
-void   __gnat_setup_winsize (void *desc, int rows, int columns) {}
+#define ATTRIBUTE_UNUSED __attribute__((unused))
+
+void *
+__gnat_new_tty (void)
+{
+  return (void*)0;
+}
+
+char *
+__gnat_tty_name (void* t ATTRIBUTE_UNUSED)
+{
+  return (char*)0;
+}
+
+int
+__gnat_interrupt_pid (int pid ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+int
+__gnat_interrupt_process (void* desc ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+int
+__gnat_setup_communication (void** desc ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+void
+__gnat_setup_parent_communication (void *d ATTRIBUTE_UNUSED,
+				   int *i ATTRIBUTE_UNUSED,
+				   int *o ATTRIBUTE_UNUSED,
+				   int *e ATTRIBUTE_UNUSED,
+				   int *p ATTRIBUTE_UNUSED)
+{
+}
+
+int
+__gnat_setup_child_communication (void *d ATTRIBUTE_UNUSED,
+				  char **n ATTRIBUTE_UNUSED,
+				  int u ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+int
+__gnat_terminate_process (void *desc ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+int
+__gnat_tty_fd (void* t ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+int
+__gnat_tty_supported (void)
+{
+  return 0;
+}
+
+int
+__gnat_tty_waitpid (void *desc ATTRIBUTE_UNUSED)
+{
+  return 1;
+}
+
+void
+__gnat_close_tty (void* t ATTRIBUTE_UNUSED)
+{
+}
+
+void
+__gnat_free_process (void** process ATTRIBUTE_UNUSED)
+{
+}
+
+void
+__gnat_reset_tty (void* t ATTRIBUTE_UNUSED)
+{
+}
+
+void
+__gnat_send_header (void* d ATTRIBUTE_UNUSED,
+		    char h[5] ATTRIBUTE_UNUSED,
+		    int s ATTRIBUTE_UNUSED,
+		    int *r ATTRIBUTE_UNUSED)
+{
+}
+
+void
+__gnat_setup_winsize (void *desc ATTRIBUTE_UNUSED,
+		      int rows ATTRIBUTE_UNUSED,
+		      int columns ATTRIBUTE_UNUSED)
+{
+}
 
 /* For Windows platforms. */
 
@@ -294,7 +379,7 @@ nt_spawnve (char *exe, char **argv, char *env, struct TTY_Process *process)
 
      Note that using backslash to escape embedded quotes requires
      additional special handling if an embedded quote is already
-     preceeded by backslash, or if an arg requiring quoting ends with
+     preceded by backslash, or if an arg requiring quoting ends with
      backslash.  In such cases, the run of escape characters needs to be
      doubled.  For consistency, we apply this special handling as long
      as the escape character is not quote.
@@ -976,12 +1061,6 @@ __gnat_setup_winsize (void *desc, int rows, int columns)
  || defined (__DragonFly__)
 #   define FREEBSD
 #endif
-#if defined (__alpha__) && defined (__osf__)
-#   define OSF1
-#endif
-#if defined (__mips) && defined (__sgi)
-#   define IRIX
-#endif
 
 /* Include every system header we need */
 #define _GNU_SOURCE
@@ -1028,7 +1107,6 @@ __gnat_setup_winsize (void *desc, int rows, int columns)
       1- using a cloning device (USE_CLONE_DEVICE)
       2- getpt                  (USE_GETPT)
       3- openpty                (USE_OPENPTY)
-      4- _getpty                (USE_GETPTY)
 
    When using the cloning device method, the macro USE_CLONE_DEVICE should
    contains a full path to the adequate device.
@@ -1040,26 +1118,12 @@ __gnat_setup_winsize (void *desc, int rows, int columns)
 /* Configurable part */
 #if defined (__APPLE__) || defined (FREEBSD)
 #define USE_OPENPTY
-#elif defined (IRIX)
-#define USE_GETPTY
 #elif defined (linux)
 #define USE_GETPT
 #elif defined (sun)
 #define USE_CLONE_DEVICE "/dev/ptmx"
 #elif defined (_AIX)
 #define USE_CLONE_DEVICE "/dev/ptc"
-#elif defined (OSF1)
-/* On Tru64, the systems offers various interfaces to open a terminal:
-    - /dev/ptmx: this the system V driver (stream based),
-    - /dev/ptmx_bsd: the non stream based clone device,
-    - the openpty function which use BSD interface.
-
-   Using directly /dev/ptmx_bsd on Tru64 5.1B seems to consume all the
-   available slave ptys (why ?). When using openpty it seems that the function
-   handles the creation of entries in /dev/pts when necessary and so avoid this
-   starvation issue. The pty man entry suggests also to use openpty.
-*/
-#define USE_OPENPTY
 #elif defined (__hpux__)
 /* On HP-UX we use the streamed version. Using the non streamed version is not
    recommanded (through "/dev/ptym/clone"). Indeed it seems that there are
@@ -1108,9 +1172,6 @@ allocate_pty_desc (pty_desc **desc) {
   master_fd = getpt ();
 #elif defined (USE_OPENPTY)
   status = openpty (&master_fd, &slave_fd, NULL, NULL, NULL);
-#elif defined (USE_GETPTY)
-  slave_name = _getpty (&master_fd, O_RDWR | O_NDELAY, 0600, 0);
-  if (slave_name == NULL) status = -1;
 #elif defined (USE_CLONE_DEVICE)
   master_fd = open (USE_CLONE_DEVICE, O_RDWR | O_NONBLOCK, 0);
 #else
@@ -1202,7 +1263,7 @@ child_setup_tty (int fd)
   int    status;
 
   /* ensure that s is filled with 0 */
-  bzero (&s, sizeof (&s));
+  bzero (&s, sizeof (s));
 
   /* Get the current terminal settings */
   status = tcgetattr (fd, &s);
@@ -1355,7 +1416,7 @@ __gnat_setup_child_communication
 #endif
 
 #ifdef TIOCSCTTY
-  /* make the tty the controling terminal */
+  /* make the tty the controlling terminal */
   status = ioctl (desc->slave_fd, TIOCSCTTY, 0);
 #endif
 
@@ -1443,7 +1504,7 @@ int __gnat_terminate_process (pty_desc *desc)
   return kill (desc->child_pid, SIGKILL);
 }
 
-/* __gnat_tty_waitpid - wait for the child proces to die
+/* __gnat_tty_waitpid - wait for the child process to die
  *
  * PARAMETERS
  *   desc pty_desc structure

@@ -41,6 +41,9 @@ go_add_search_path(const char* path)
 // When FILENAME is not an absolute path and does not start with ./ or
 // ../, we use the search path provided by -I and -L options.
 
+// When FILENAME does start with ./ or ../, we use
+// RELATIVE_IMPORT_PATH as a prefix.
+
 // When FILENAME does not exist, we try modifying FILENAME to find the
 // file.  We use the first of these which exists:
 //   * We append ".gox".
@@ -55,19 +58,35 @@ go_add_search_path(const char* path)
 // later in the search path.
 
 Import::Stream*
-Import::open_package(const std::string& filename, Location location)
+Import::open_package(const std::string& filename, Location location,
+		     const std::string& relative_import_path)
 {
   bool is_local;
   if (IS_ABSOLUTE_PATH(filename))
     is_local = true;
-  else if (filename[0] == '.' && IS_DIR_SEPARATOR(filename[1]))
+  else if (filename[0] == '.'
+	   && (filename[1] == '\0' || IS_DIR_SEPARATOR(filename[1])))
     is_local = true;
   else if (filename[0] == '.'
 	   && filename[1] == '.'
-	   && IS_DIR_SEPARATOR(filename[2]))
+	   && (filename[2] == '\0' || IS_DIR_SEPARATOR(filename[2])))
     is_local = true;
   else
     is_local = false;
+
+  std::string fn = filename;
+  if (is_local && !IS_ABSOLUTE_PATH(filename) && !relative_import_path.empty())
+    {
+      if (fn == ".")
+	{
+	  // A special case.
+	  fn = relative_import_path;
+	}
+      else
+	fn = relative_import_path + '/' + fn;
+      is_local = false;
+    }
+
   if (!is_local)
     {
       for (std::vector<std::string>::const_iterator p = search_path.begin();
@@ -77,14 +96,14 @@ Import::open_package(const std::string& filename, Location location)
 	  std::string indir = *p;
 	  if (!indir.empty() && indir[indir.size() - 1] != '/')
 	    indir += '/';
-	  indir += filename;
+	  indir += fn;
 	  Stream* s = Import::try_package_in_directory(indir, location);
 	  if (s != NULL)
 	    return s;
 	}
     }
 
-  Stream* s = Import::try_package_in_directory(filename, location);
+  Stream* s = Import::try_package_in_directory(fn, location);
   if (s != NULL)
     return s;
 
@@ -281,13 +300,28 @@ Import::import(Gogo* gogo, const std::string& local_name,
       std::string package_name = this->read_identifier();
       this->require_c_string(";\n");
 
-      this->require_c_string("prefix ");
-      std::string unique_prefix = this->read_identifier();
-      this->require_c_string(";\n");
+      std::string pkgpath;
+      std::string pkgpath_symbol;
+      if (this->match_c_string("prefix "))
+	{
+	  this->advance(7);
+	  std::string unique_prefix = this->read_identifier();
+	  this->require_c_string(";\n");
+	  pkgpath = unique_prefix + '.' + package_name;
+	  pkgpath_symbol = (Gogo::pkgpath_for_symbol(unique_prefix) + '.'
+			    + Gogo::pkgpath_for_symbol(package_name));
+	}
+      else
+	{
+	  this->require_c_string("pkgpath ");
+	  pkgpath = this->read_identifier();
+	  this->require_c_string(";\n");
+	  pkgpath_symbol = Gogo::pkgpath_for_symbol(pkgpath);
+	}
 
       this->package_ = gogo->add_imported_package(package_name, local_name,
 						  is_local_name_exported,
-						  unique_prefix,
+						  pkgpath, pkgpath_symbol,
 						  this->location_,
 						  &this->add_to_globals_);
       if (this->package_ == NULL)
@@ -303,6 +337,9 @@ Import::import(Gogo* gogo, const std::string& local_name,
 	return NULL;
       this->package_->set_priority(prio);
       this->require_c_string(";\n");
+
+      while (stream->match_c_string("package"))
+	this->read_one_package();
 
       while (stream->match_c_string("import"))
 	this->read_one_import();
@@ -347,16 +384,43 @@ Import::import(Gogo* gogo, const std::string& local_name,
   return this->package_;
 }
 
+// Read a package line.  This let us reliably determine the pkgpath
+// symbol, even if the package was compiled with a -fgo-prefix option.
+
+void
+Import::read_one_package()
+{
+  this->require_c_string("package ");
+  std::string package_name = this->read_identifier();
+  this->require_c_string(" ");
+  std::string pkgpath = this->read_identifier();
+  this->require_c_string(" ");
+  std::string pkgpath_symbol = this->read_identifier();
+  this->require_c_string(";\n");
+
+  Package* p = this->gogo_->register_package(pkgpath, pkgpath_symbol,
+					     Linemap::unknown_location());
+  p->set_package_name(package_name, this->location());
+}
+
 // Read an import line.  We don't actually care about these.
 
 void
 Import::read_one_import()
 {
   this->require_c_string("import ");
+  std::string package_name = this->read_identifier();
+  this->require_c_string(" ");
+  std::string pkgpath = this->read_identifier();
+  this->require_c_string(" \"");
   Stream* stream = this->stream_;
-  while (stream->peek_char() != ';')
+  while (stream->peek_char() != '"')
     stream->advance(1);
-  this->require_c_string(";\n");
+  this->require_c_string("\";\n");
+
+  Package* p = this->gogo_->register_package(pkgpath, "",
+					     Linemap::unknown_location());
+  p->set_package_name(package_name, this->location());
 }
 
 // Read the list of import control functions.
@@ -393,7 +457,7 @@ Import::import_const()
   Typed_identifier tid(name, type, this->location_);
   Named_object* no = this->package_->add_constant(tid, expr);
   if (this->add_to_globals_)
-    this->gogo_->add_named_object(no);
+    this->gogo_->add_dot_import_object(no);
 }
 
 // Import a type.
@@ -426,7 +490,7 @@ Import::import_var()
   Named_object* no;
   no = this->package_->add_variable(name, var);
   if (this->add_to_globals_)
-    this->gogo_->add_named_object(no);
+    this->gogo_->add_dot_import_object(no);
 }
 
 // Import a function into PACKAGE.  PACKAGE is normally
@@ -480,7 +544,7 @@ Import::import_func(Package* package)
     {
       no = package->add_function_declaration(name, fntype, loc);
       if (this->add_to_globals_)
-	this->gogo_->add_named_object(no);
+	this->gogo_->add_dot_import_object(no);
     }
   return no;
 }
@@ -572,55 +636,50 @@ Import::read_type()
   while ((c = stream->get_char()) != '"')
     type_name += c;
 
-  // If this type is in the current package, the name will be
-  // .PREFIX.PACKAGE.NAME or simply NAME with no dots.  Otherwise, a
-  // non-hidden symbol will be PREFIX.PACKAGE.NAME and a hidden symbol
-  // will be .PREFIX.PACKAGE.NAME.
-  std::string package_name;
-  std::string unique_prefix;
+  // If this type is in the package we are currently importing, the
+  // name will be .PKGPATH.NAME or simply NAME with no dots.
+  // Otherwise, a non-hidden symbol will be PKGPATH.NAME and a hidden
+  // symbol will be .PKGPATH.NAME.
+  std::string pkgpath;
   if (type_name.find('.') != std::string::npos)
     {
-      bool is_hidden = false;
       size_t start = 0;
       if (type_name[0] == '.')
-	{
-	  ++start;
-	  is_hidden = true;
-	}
-      size_t dot1 = type_name.find('.', start);
-      size_t dot2;
-      if (dot1 == std::string::npos)
-	dot2 = std::string::npos;
-      else
-	dot2 = type_name.find('.', dot1 + 1);
-      if (dot1 == std::string::npos || dot2 == std::string::npos)
-	{
-	  error_at(this->location_,
-		   ("error at import data at %d: missing dot in type name"),
-		   stream->pos());
-	  stream->set_saw_error();
-	}
-      else
-	{
-	  unique_prefix = type_name.substr(start, dot1 - start);
-	  package_name = type_name.substr(dot1 + 1, dot2 - (dot1 + 1));
-	}
-      if (!is_hidden)
-	type_name.erase(0, dot2 + 1);
+	start = 1;
+      size_t dot = type_name.rfind('.');
+      pkgpath = type_name.substr(start, dot - start);
+      if (type_name[0] != '.')
+	type_name.erase(0, dot + 1);
     }
 
   this->require_c_string(" ");
+
+  // The package name may follow.  This is the name of the package in
+  // the package clause of that package.  The type name will include
+  // the pkgpath, which may be different.
+  std::string package_name;
+  if (stream->peek_char() == '"')
+    {
+      stream->advance(1);
+      while ((c = stream->get_char()) != '"')
+	package_name += c;
+      this->require_c_string(" ");
+    }
 
   // Declare the type in the appropriate package.  If we haven't seen
   // it before, mark it as invisible.  We declare it before we read
   // the actual definition of the type, since the definition may refer
   // to the type itself.
   Package* package;
-  if (package_name.empty())
+  if (pkgpath.empty() || pkgpath == this->gogo_->pkgpath())
     package = this->package_;
   else
-    package = this->gogo_->register_package(package_name, unique_prefix,
-					    Linemap::unknown_location());
+    {
+      package = this->gogo_->register_package(pkgpath, "",
+					      Linemap::unknown_location());
+      if (!package_name.empty())
+	package->set_package_name(package_name, this->location());
+    }
 
   Named_object* no = package->bindings()->lookup(type_name);
   if (no == NULL)
@@ -628,8 +687,7 @@ Import::read_type()
   else if (!no->is_type_declaration() && !no->is_type())
     {
       error_at(this->location_, "imported %<%s.%s%> both type and non-type",
-	       Gogo::message_name(package->name()).c_str(),
-	       Gogo::message_name(type_name).c_str());
+	       pkgpath.c_str(), Gogo::message_name(type_name).c_str());
       stream->set_saw_error();
       return Type::make_error_type();
     }
@@ -668,6 +726,9 @@ Import::read_type()
 
 	  // This type has not yet been imported.
 	  ntype->clear_is_visible();
+
+	  if (!type->is_undefined() && type->interface_type() != NULL)
+	    this->gogo_->record_interface_type(type->interface_type());
 
 	  type = ntype;
 	}
@@ -769,9 +830,7 @@ Import::read_name()
   if (ret == "?")
     ret.clear();
   else if (!Lex::is_exported_name(ret))
-    ret = ('.' + this->package_->unique_prefix()
-	   + '.' + this->package_->name()
-	   + '.' + ret);
+    ret = '.' + this->package_->pkgpath() + '.' + ret;
   return ret;
 }
 

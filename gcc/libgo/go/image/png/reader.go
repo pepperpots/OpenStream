@@ -57,6 +57,29 @@ const (
 	nFilter   = 5
 )
 
+// Interlace type.
+const (
+	itNone  = 0
+	itAdam7 = 1
+)
+
+// interlaceScan defines the placement and size of a pass for Adam7 interlacing.
+type interlaceScan struct {
+	xFactor, yFactor, xOffset, yOffset int
+}
+
+// interlacing defines Adam7 interlacing, with 7 passes of reduced images.
+// See http://www.w3.org/TR/PNG/#8Interlace
+var interlacing = []interlaceScan{
+	{8, 8, 0, 0},
+	{8, 8, 4, 0},
+	{4, 8, 0, 4},
+	{4, 4, 2, 0},
+	{2, 4, 0, 2},
+	{2, 2, 1, 0},
+	{1, 2, 0, 1},
+}
+
 // Decoding stage.
 // The PNG specification says that the IHDR, PLTE (if present), IDAT and IEND
 // chunks must appear in that order. There may be multiple IDAT chunks, and
@@ -84,6 +107,7 @@ type decoder struct {
 	stage         int
 	idatLength    uint32
 	tmp           [3 * 256]byte
+	interlace     int
 }
 
 // A FormatError reports that the input is not a valid PNG.
@@ -97,13 +121,6 @@ var chunkOrderError = FormatError("chunk out of order")
 type UnsupportedError string
 
 func (e UnsupportedError) Error() string { return "png: unsupported feature: " + string(e) }
-
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
 
 func min(a, b int) int {
 	if a < b {
@@ -120,9 +137,16 @@ func (d *decoder) parseIHDR(length uint32) error {
 		return err
 	}
 	d.crc.Write(d.tmp[:13])
-	if d.tmp[10] != 0 || d.tmp[11] != 0 || d.tmp[12] != 0 {
-		return UnsupportedError("compression, filter or interlace method")
+	if d.tmp[10] != 0 {
+		return UnsupportedError("compression method")
 	}
+	if d.tmp[11] != 0 {
+		return UnsupportedError("filter method")
+	}
+	if d.tmp[12] != itNone && d.tmp[12] != itAdam7 {
+		return FormatError("invalid interlace method")
+	}
+	d.interlace = int(d.tmp[12])
 	w := int32(binary.BigEndian.Uint32(d.tmp[0:4]))
 	h := int32(binary.BigEndian.Uint32(d.tmp[4:8]))
 	if w < 0 || h < 0 {
@@ -200,10 +224,19 @@ func (d *decoder) parsePLTE(length uint32) error {
 	d.crc.Write(d.tmp[:n])
 	switch d.cb {
 	case cbP1, cbP2, cbP4, cbP8:
-		d.palette = color.Palette(make([]color.Color, np))
+		d.palette = make(color.Palette, 256)
 		for i := 0; i < np; i++ {
 			d.palette[i] = color.RGBA{d.tmp[3*i+0], d.tmp[3*i+1], d.tmp[3*i+2], 0xff}
 		}
+		for i := np; i < 256; i++ {
+			// Initialize the rest of the palette to opaque black. The spec (section
+			// 11.2.3) says that "any out-of-range pixel value found in the image data
+			// is an error", but some real-world PNG files have out-of-range pixel
+			// values. We fall back to opaque black, the same as libpng 1.5.13;
+			// ImageMagick 6.5.7 returns an error.
+			d.palette[i] = color.RGBA{0x00, 0x00, 0x00, 0xff}
+		}
+		d.palette = d.palette[:np]
 	case cbTC8, cbTCA8, cbTC16, cbTCA16:
 		// As per the PNG spec, a PLTE chunk is optional (and for practical purposes,
 		// ignorable) for the ctTrueColor and ctTrueColorAlpha color types (section 4.1.2).
@@ -228,31 +261,17 @@ func (d *decoder) parsetRNS(length uint32) error {
 	case cbTC8, cbTC16:
 		return UnsupportedError("truecolor transparency")
 	case cbP1, cbP2, cbP4, cbP8:
-		if n > len(d.palette) {
-			return FormatError("bad tRNS length")
+		if len(d.palette) < n {
+			d.palette = d.palette[:n]
 		}
 		for i := 0; i < n; i++ {
 			rgba := d.palette[i].(color.RGBA)
-			d.palette[i] = color.RGBA{rgba.R, rgba.G, rgba.B, d.tmp[i]}
+			d.palette[i] = color.NRGBA{rgba.R, rgba.G, rgba.B, d.tmp[i]}
 		}
 	case cbGA8, cbGA16, cbTCA8, cbTCA16:
 		return FormatError("tRNS, color type mismatch")
 	}
 	return d.verifyChecksum()
-}
-
-// The Paeth filter function, as per the PNG specification.
-func paeth(a, b, c uint8) uint8 {
-	p := int(a) + int(b) - int(c)
-	pa := abs(p - int(a))
-	pb := abs(p - int(b))
-	pc := abs(p - int(c))
-	if pa <= pb && pa <= pc {
-		return a
-	} else if pb <= pc {
-		return b
-	}
-	return c
 }
 
 // Read presents one or more IDAT chunks as one continuous stream (minus the
@@ -299,8 +318,43 @@ func (d *decoder) decode() (image.Image, error) {
 		return nil, err
 	}
 	defer r.Close()
-	bitsPerPixel := 0
-	maxPalette := uint8(0)
+	var img image.Image
+	if d.interlace == itNone {
+		img, err = d.readImagePass(r, 0, false)
+	} else if d.interlace == itAdam7 {
+		// Allocate a blank image of the full size.
+		img, err = d.readImagePass(nil, 0, true)
+		for pass := 0; pass < 7; pass++ {
+			imagePass, err := d.readImagePass(r, pass, false)
+			if err != nil {
+				return nil, err
+			}
+			d.mergePassInto(img, imagePass, pass)
+		}
+	}
+
+	// Check for EOF, to verify the zlib checksum.
+	n := 0
+	for i := 0; n == 0 && err == nil; i++ {
+		if i == 100 {
+			return nil, io.ErrNoProgress
+		}
+		n, err = r.Read(d.tmp[:1])
+	}
+	if err != nil && err != io.EOF {
+		return nil, FormatError(err.Error())
+	}
+	if n != 0 || d.idatLength != 0 {
+		return nil, FormatError("too much pixel data")
+	}
+
+	return img, nil
+}
+
+// readImagePass reads a single image pass, sized according to the pass number.
+func (d *decoder) readImagePass(r io.Reader, pass int, allocateOnly bool) (image.Image, error) {
+	var bitsPerPixel int = 0
+	pixOffset := 0
 	var (
 		gray     *image.Gray
 		rgba     *image.RGBA
@@ -311,53 +365,63 @@ func (d *decoder) decode() (image.Image, error) {
 		nrgba64  *image.NRGBA64
 		img      image.Image
 	)
+	width, height := d.width, d.height
+	if d.interlace == itAdam7 && !allocateOnly {
+		p := interlacing[pass]
+		// Add the multiplication factor and subtract one, effectively rounding up.
+		width = (width - p.xOffset + p.xFactor - 1) / p.xFactor
+		height = (height - p.yOffset + p.yFactor - 1) / p.yFactor
+	}
 	switch d.cb {
 	case cbG1, cbG2, cbG4, cbG8:
 		bitsPerPixel = d.depth
-		gray = image.NewGray(image.Rect(0, 0, d.width, d.height))
+		gray = image.NewGray(image.Rect(0, 0, width, height))
 		img = gray
 	case cbGA8:
 		bitsPerPixel = 16
-		nrgba = image.NewNRGBA(image.Rect(0, 0, d.width, d.height))
+		nrgba = image.NewNRGBA(image.Rect(0, 0, width, height))
 		img = nrgba
 	case cbTC8:
 		bitsPerPixel = 24
-		rgba = image.NewRGBA(image.Rect(0, 0, d.width, d.height))
+		rgba = image.NewRGBA(image.Rect(0, 0, width, height))
 		img = rgba
 	case cbP1, cbP2, cbP4, cbP8:
 		bitsPerPixel = d.depth
-		paletted = image.NewPaletted(image.Rect(0, 0, d.width, d.height), d.palette)
+		paletted = image.NewPaletted(image.Rect(0, 0, width, height), d.palette)
 		img = paletted
-		maxPalette = uint8(len(d.palette) - 1)
 	case cbTCA8:
 		bitsPerPixel = 32
-		nrgba = image.NewNRGBA(image.Rect(0, 0, d.width, d.height))
+		nrgba = image.NewNRGBA(image.Rect(0, 0, width, height))
 		img = nrgba
 	case cbG16:
 		bitsPerPixel = 16
-		gray16 = image.NewGray16(image.Rect(0, 0, d.width, d.height))
+		gray16 = image.NewGray16(image.Rect(0, 0, width, height))
 		img = gray16
 	case cbGA16:
 		bitsPerPixel = 32
-		nrgba64 = image.NewNRGBA64(image.Rect(0, 0, d.width, d.height))
+		nrgba64 = image.NewNRGBA64(image.Rect(0, 0, width, height))
 		img = nrgba64
 	case cbTC16:
 		bitsPerPixel = 48
-		rgba64 = image.NewRGBA64(image.Rect(0, 0, d.width, d.height))
+		rgba64 = image.NewRGBA64(image.Rect(0, 0, width, height))
 		img = rgba64
 	case cbTCA16:
 		bitsPerPixel = 64
-		nrgba64 = image.NewNRGBA64(image.Rect(0, 0, d.width, d.height))
+		nrgba64 = image.NewNRGBA64(image.Rect(0, 0, width, height))
 		img = nrgba64
+	}
+	if allocateOnly {
+		return img, nil
 	}
 	bytesPerPixel := (bitsPerPixel + 7) / 8
 
-	// cr and pr are the bytes for the current and previous row.
 	// The +1 is for the per-row filter type, which is at cr[0].
-	cr := make([]uint8, 1+(bitsPerPixel*d.width+7)/8)
-	pr := make([]uint8, 1+(bitsPerPixel*d.width+7)/8)
+	rowSize := 1 + (bitsPerPixel*width+7)/8
+	// cr and pr are the bytes for the current and previous row.
+	cr := make([]uint8, rowSize)
+	pr := make([]uint8, rowSize)
 
-	for y := 0; y < d.height; y++ {
+	for y := 0; y < height; y++ {
 		// Read the decompressed bytes.
 		_, err := io.ReadFull(r, cr)
 		if err != nil {
@@ -375,8 +439,8 @@ func (d *decoder) decode() (image.Image, error) {
 				cdat[i] += cdat[i-bytesPerPixel]
 			}
 		case ftUp:
-			for i := 0; i < len(cdat); i++ {
-				cdat[i] += pdat[i]
+			for i, p := range pdat {
+				cdat[i] += p
 			}
 		case ftAverage:
 			for i := 0; i < bytesPerPixel; i++ {
@@ -386,12 +450,7 @@ func (d *decoder) decode() (image.Image, error) {
 				cdat[i] += uint8((int(cdat[i-bytesPerPixel]) + int(pdat[i])) / 2)
 			}
 		case ftPaeth:
-			for i := 0; i < bytesPerPixel; i++ {
-				cdat[i] += paeth(0, pdat[i], 0)
-			}
-			for i := bytesPerPixel; i < len(cdat); i++ {
-				cdat[i] += paeth(cdat[i-bytesPerPixel], pdat[i], pdat[i-bytesPerPixel])
-			}
+			filterPaeth(cdat, pdat, bytesPerPixel)
 		default:
 			return nil, FormatError("bad filter type")
 		}
@@ -399,109 +458,117 @@ func (d *decoder) decode() (image.Image, error) {
 		// Convert from bytes to colors.
 		switch d.cb {
 		case cbG1:
-			for x := 0; x < d.width; x += 8 {
+			for x := 0; x < width; x += 8 {
 				b := cdat[x/8]
-				for x2 := 0; x2 < 8 && x+x2 < d.width; x2++ {
+				for x2 := 0; x2 < 8 && x+x2 < width; x2++ {
 					gray.SetGray(x+x2, y, color.Gray{(b >> 7) * 0xff})
 					b <<= 1
 				}
 			}
 		case cbG2:
-			for x := 0; x < d.width; x += 4 {
+			for x := 0; x < width; x += 4 {
 				b := cdat[x/4]
-				for x2 := 0; x2 < 4 && x+x2 < d.width; x2++ {
+				for x2 := 0; x2 < 4 && x+x2 < width; x2++ {
 					gray.SetGray(x+x2, y, color.Gray{(b >> 6) * 0x55})
 					b <<= 2
 				}
 			}
 		case cbG4:
-			for x := 0; x < d.width; x += 2 {
+			for x := 0; x < width; x += 2 {
 				b := cdat[x/2]
-				for x2 := 0; x2 < 2 && x+x2 < d.width; x2++ {
+				for x2 := 0; x2 < 2 && x+x2 < width; x2++ {
 					gray.SetGray(x+x2, y, color.Gray{(b >> 4) * 0x11})
 					b <<= 4
 				}
 			}
 		case cbG8:
-			for x := 0; x < d.width; x++ {
-				gray.SetGray(x, y, color.Gray{cdat[x]})
-			}
+			copy(gray.Pix[pixOffset:], cdat)
+			pixOffset += gray.Stride
 		case cbGA8:
-			for x := 0; x < d.width; x++ {
+			for x := 0; x < width; x++ {
 				ycol := cdat[2*x+0]
 				nrgba.SetNRGBA(x, y, color.NRGBA{ycol, ycol, ycol, cdat[2*x+1]})
 			}
 		case cbTC8:
-			for x := 0; x < d.width; x++ {
-				rgba.SetRGBA(x, y, color.RGBA{cdat[3*x+0], cdat[3*x+1], cdat[3*x+2], 0xff})
+			pix, i, j := rgba.Pix, pixOffset, 0
+			for x := 0; x < width; x++ {
+				pix[i+0] = cdat[j+0]
+				pix[i+1] = cdat[j+1]
+				pix[i+2] = cdat[j+2]
+				pix[i+3] = 0xff
+				i += 4
+				j += 3
 			}
+			pixOffset += rgba.Stride
 		case cbP1:
-			for x := 0; x < d.width; x += 8 {
+			for x := 0; x < width; x += 8 {
 				b := cdat[x/8]
-				for x2 := 0; x2 < 8 && x+x2 < d.width; x2++ {
+				for x2 := 0; x2 < 8 && x+x2 < width; x2++ {
 					idx := b >> 7
-					if idx > maxPalette {
-						return nil, FormatError("palette index out of range")
+					if len(paletted.Palette) <= int(idx) {
+						paletted.Palette = paletted.Palette[:int(idx)+1]
 					}
 					paletted.SetColorIndex(x+x2, y, idx)
 					b <<= 1
 				}
 			}
 		case cbP2:
-			for x := 0; x < d.width; x += 4 {
+			for x := 0; x < width; x += 4 {
 				b := cdat[x/4]
-				for x2 := 0; x2 < 4 && x+x2 < d.width; x2++ {
+				for x2 := 0; x2 < 4 && x+x2 < width; x2++ {
 					idx := b >> 6
-					if idx > maxPalette {
-						return nil, FormatError("palette index out of range")
+					if len(paletted.Palette) <= int(idx) {
+						paletted.Palette = paletted.Palette[:int(idx)+1]
 					}
 					paletted.SetColorIndex(x+x2, y, idx)
 					b <<= 2
 				}
 			}
 		case cbP4:
-			for x := 0; x < d.width; x += 2 {
+			for x := 0; x < width; x += 2 {
 				b := cdat[x/2]
-				for x2 := 0; x2 < 2 && x+x2 < d.width; x2++ {
+				for x2 := 0; x2 < 2 && x+x2 < width; x2++ {
 					idx := b >> 4
-					if idx > maxPalette {
-						return nil, FormatError("palette index out of range")
+					if len(paletted.Palette) <= int(idx) {
+						paletted.Palette = paletted.Palette[:int(idx)+1]
 					}
 					paletted.SetColorIndex(x+x2, y, idx)
 					b <<= 4
 				}
 			}
 		case cbP8:
-			for x := 0; x < d.width; x++ {
-				if cdat[x] > maxPalette {
-					return nil, FormatError("palette index out of range")
+			if len(paletted.Palette) != 255 {
+				for x := 0; x < width; x++ {
+					if len(paletted.Palette) <= int(cdat[x]) {
+						paletted.Palette = paletted.Palette[:int(cdat[x])+1]
+					}
 				}
-				paletted.SetColorIndex(x, y, cdat[x])
 			}
+			copy(paletted.Pix[pixOffset:], cdat)
+			pixOffset += paletted.Stride
 		case cbTCA8:
-			for x := 0; x < d.width; x++ {
-				nrgba.SetNRGBA(x, y, color.NRGBA{cdat[4*x+0], cdat[4*x+1], cdat[4*x+2], cdat[4*x+3]})
-			}
+			copy(nrgba.Pix[pixOffset:], cdat)
+			pixOffset += nrgba.Stride
 		case cbG16:
-			for x := 0; x < d.width; x++ {
+			for x := 0; x < width; x++ {
 				ycol := uint16(cdat[2*x+0])<<8 | uint16(cdat[2*x+1])
 				gray16.SetGray16(x, y, color.Gray16{ycol})
 			}
 		case cbGA16:
-			for x := 0; x < d.width; x++ {
+			for x := 0; x < width; x++ {
 				ycol := uint16(cdat[4*x+0])<<8 | uint16(cdat[4*x+1])
 				acol := uint16(cdat[4*x+2])<<8 | uint16(cdat[4*x+3])
 				nrgba64.SetNRGBA64(x, y, color.NRGBA64{ycol, ycol, ycol, acol})
 			}
 		case cbTC16:
-			for x := 0; x < d.width; x++ {
+			for x := 0; x < width; x++ {
 				rcol := uint16(cdat[6*x+0])<<8 | uint16(cdat[6*x+1])
 				gcol := uint16(cdat[6*x+2])<<8 | uint16(cdat[6*x+3])
 				bcol := uint16(cdat[6*x+4])<<8 | uint16(cdat[6*x+5])
 				rgba64.SetRGBA64(x, y, color.RGBA64{rcol, gcol, bcol, 0xffff})
 			}
 		case cbTCA16:
-			for x := 0; x < d.width; x++ {
+			for x := 0; x < width; x++ {
 				rcol := uint16(cdat[8*x+0])<<8 | uint16(cdat[8*x+1])
 				gcol := uint16(cdat[8*x+2])<<8 | uint16(cdat[8*x+3])
 				bcol := uint16(cdat[8*x+4])<<8 | uint16(cdat[8*x+5])
@@ -514,16 +581,66 @@ func (d *decoder) decode() (image.Image, error) {
 		pr, cr = cr, pr
 	}
 
-	// Check for EOF, to verify the zlib checksum.
-	n, err := r.Read(pr[:1])
-	if err != io.EOF {
-		return nil, FormatError(err.Error())
-	}
-	if n != 0 || d.idatLength != 0 {
-		return nil, FormatError("too much pixel data")
-	}
-
 	return img, nil
+}
+
+// mergePassInto merges a single pass into a full sized image.
+func (d *decoder) mergePassInto(dst image.Image, src image.Image, pass int) {
+	p := interlacing[pass]
+	var (
+		srcPix        []uint8
+		dstPix        []uint8
+		stride        int
+		rect          image.Rectangle
+		bytesPerPixel int
+	)
+	switch target := dst.(type) {
+	case *image.Alpha:
+		srcPix = src.(*image.Alpha).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 1
+	case *image.Alpha16:
+		srcPix = src.(*image.Alpha16).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 2
+	case *image.Gray:
+		srcPix = src.(*image.Gray).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 1
+	case *image.Gray16:
+		srcPix = src.(*image.Gray16).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 2
+	case *image.NRGBA:
+		srcPix = src.(*image.NRGBA).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 4
+	case *image.NRGBA64:
+		srcPix = src.(*image.NRGBA64).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 8
+	case *image.Paletted:
+		srcPix = src.(*image.Paletted).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 1
+	case *image.RGBA:
+		srcPix = src.(*image.RGBA).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 4
+	case *image.RGBA64:
+		srcPix = src.(*image.RGBA64).Pix
+		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
+		bytesPerPixel = 8
+	}
+	s, bounds := 0, src.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		dBase := (y*p.yFactor+p.yOffset-rect.Min.Y)*stride + (p.xOffset-rect.Min.X)*bytesPerPixel
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			d := dBase + x*p.xFactor*bytesPerPixel
+			copy(dstPix[d:], srcPix[s:s+bytesPerPixel])
+			s += bytesPerPixel
+		}
+	}
 }
 
 func (d *decoder) parseIDAT(length uint32) (err error) {
@@ -662,10 +779,11 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 			}
 			return image.Config{}, err
 		}
-		if d.stage == dsSeenIHDR && d.cb != cbP8 {
+		paletted := d.cb == cbP8 || d.cb == cbP4 || d.cb == cbP2 || d.cb == cbP1
+		if d.stage == dsSeenIHDR && !paletted {
 			break
 		}
-		if d.stage == dsSeenPLTE && d.cb == cbP8 {
+		if d.stage == dsSeenPLTE && paletted {
 			break
 		}
 	}

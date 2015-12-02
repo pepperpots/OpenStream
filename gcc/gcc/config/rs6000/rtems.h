@@ -1,6 +1,5 @@
 /* Definitions for rtems targeting a PowerPC using elf.
-   Copyright (C) 1996, 1997, 2000, 2001, 2002, 2003, 2004, 2005, 2007
-   Free Software Foundation, Inc.
+   Copyright (C) 1996-2015 Free Software Foundation, Inc.
    Contributed by Joel Sherrill (joel@OARcorp.com).
 
    This file is part of GCC.
@@ -35,6 +34,9 @@
     }                                     \
   while (0)
 
+#undef TARGET_LIBGCC_SDATA_SECTION
+#define TARGET_LIBGCC_SDATA_SECTION ".sdata"
+
 #undef CPP_OS_DEFAULT_SPEC
 #define CPP_OS_DEFAULT_SPEC "%(cpp_os_rtems)"
 
@@ -50,22 +52,9 @@
 %{mcpu=750:  %{!Dppc*: %{!Dmpc*: -Dmpc750}  } } \
 %{mcpu=821:  %{!Dppc*: %{!Dmpc*: -Dmpc821}  } } \
 %{mcpu=860:  %{!Dppc*: %{!Dmpc*: -Dmpc860}  } } \
-%{mcpu=8540: %{!Dppc*: %{!Dmpc*: -Dppc8540}  } }" 
+%{mcpu=8540: %{!Dppc*: %{!Dmpc*: -Dppc8540}  } } \
+%{mcpu=e6500: -D__PPC_CPU_E6500__}"
 
 #undef  SUBSUBTARGET_EXTRA_SPECS
 #define SUBSUBTARGET_EXTRA_SPECS \
   { "cpp_os_rtems",		CPP_OS_RTEMS_SPEC }
-
-#undef SUBSUBTARGET_OVERRIDE_OPTIONS
-#define SUBSUBTARGET_OVERRIDE_OPTIONS                                     \
-  do {                                                                    \
-   if (TARGET_E500)                                                       \
-      {                                                                   \
-        if (TARGET_HARD_FLOAT && !global_options_set.x_rs6000_float_gprs) \
-          rs6000_float_gprs = 1;                                          \
-        if (rs6000_float_gprs != 0 && !global_options_set.x_rs6000_spe)   \
-          rs6000_spe = 1;                                                 \
-        if (rs6000_spe && !global_options_set.x_rs6000_spe_abi)           \
-          rs6000_spe_abi = 1;                                             \
-      }                                                                   \
-  } while(0)

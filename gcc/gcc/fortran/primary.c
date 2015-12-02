@@ -1,7 +1,5 @@
 /* Primary expression subroutines
-   Copyright (C) 2000, 2001, 2002, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-   2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -22,6 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "config.h"
 #include "system.h"
+#include "coretypes.h"
 #include "flags.h"
 #include "gfortran.h"
 #include "arith.h"
@@ -144,8 +143,8 @@ gfc_check_digit (char c, int radix)
 
 
 /* Match the digit string part of an integer if signflag is not set,
-   the signed digit string part if signflag is set.  If the buffer 
-   is NULL, we just count characters for the resolution pass.  Returns 
+   the signed digit string part if signflag is set.  If the buffer
+   is NULL, we just count characters for the resolution pass.  Returns
    the number of characters matched, -1 for no match.  */
 
 static int
@@ -193,7 +192,7 @@ match_digits (int signflag, int radix, char *buffer)
 }
 
 
-/* Match an integer (digit string and optional kind).  
+/* Match an integer (digit string and optional kind).
    A sign will be accepted if signflag is set.  */
 
 static match
@@ -225,7 +224,7 @@ match_integer_constant (gfc_expr **result, int signflag)
   if (kind == -1)
     return MATCH_ERROR;
 
-  if (kind == 4 && gfc_option.flag_integer4_kind == 8)
+  if (kind == 4 && flag_integer4_kind == 8)
     kind = 8;
 
   if (gfc_validate_kind (BT_INTEGER, kind, true) < 0)
@@ -260,7 +259,7 @@ match_hollerith_constant (gfc_expr **result)
   gfc_expr *e = NULL;
   const char *msg;
   int num, pad;
-  int i;  
+  int i;
 
   old_loc = gfc_current_locus;
   gfc_gobble_whitespace ();
@@ -268,8 +267,7 @@ match_hollerith_constant (gfc_expr **result)
   if (match_integer_constant (&e, 0) == MATCH_YES
       && gfc_match_char ('h') == MATCH_YES)
     {
-      if (gfc_notify_std (GFC_STD_LEGACY, "Extension: Hollerith constant "
-			  "at %C") == FAILURE)
+      if (!gfc_notify_std (GFC_STD_LEGACY, "Hollerith constant at %C"))
 	goto cleanup;
 
       msg = gfc_extract_int (e, &num);
@@ -392,9 +390,8 @@ match_boz_constant (gfc_expr **result)
     goto backup;
 
   if (x_hex
-      && (gfc_notify_std (GFC_STD_GNU, "Extension: Hexadecimal "
-			  "constant at %C uses non-standard syntax")
-	  == FAILURE))
+      && (!gfc_notify_std(GFC_STD_GNU, "Hexadecimal "
+			  "constant at %C uses non-standard syntax")))
       return MATCH_ERROR;
 
   old_loc = gfc_current_locus;
@@ -431,9 +428,8 @@ match_boz_constant (gfc_expr **result)
 	  goto backup;
 	}
 
-      if (gfc_notify_std (GFC_STD_GNU, "Extension: BOZ constant "
-			  "at %C uses non-standard postfix syntax")
-	  == FAILURE)
+      if (!gfc_notify_std (GFC_STD_GNU, "BOZ constant "
+			   "at %C uses non-standard postfix syntax"))
 	return MATCH_ERROR;
     }
 
@@ -468,9 +464,8 @@ match_boz_constant (gfc_expr **result)
     }
 
   if (!gfc_in_match_data ()
-      && (gfc_notify_std (GFC_STD_F2003, "Fortran 2003: BOZ used outside a DATA "
-			  "statement at %C")
-	  == FAILURE))
+      && (!gfc_notify_std(GFC_STD_F2003, "BOZ used outside a DATA "
+			  "statement at %C")))
       return MATCH_ERROR;
 
   *result = e;
@@ -523,7 +518,7 @@ match_real_constant (gfc_expr **result, int signflag)
 	  if (seen_dp)
 	    goto done;
 
-	  /* Check to see if "." goes with a following operator like 
+	  /* Check to see if "." goes with a following operator like
 	     ".eq.".  */
 	  temp_loc = gfc_current_locus;
 	  c = gfc_next_ascii_char ();
@@ -559,12 +554,13 @@ match_real_constant (gfc_expr **result, int signflag)
 
   if (c == 'q')
     {
-      if (gfc_notify_std (GFC_STD_GNU, "Extension: exponent-letter 'q' in "
-			 "real-literal-constant at %C") == FAILURE)
+      if (!gfc_notify_std (GFC_STD_GNU, "exponent-letter 'q' in "
+			   "real-literal-constant at %C"))
 	return MATCH_ERROR;
-      else if (gfc_option.warn_real_q_constant)
-	gfc_warning("Extension: exponent-letter 'q' in real-literal-constant "
-		    "at %C");
+      else if (warn_real_q_constant)
+	gfc_warning (OPT_Wreal_q_constant,
+		     "Extension: exponent-letter %<q%> in real-literal-constant "
+		     "at %C");
     }
 
   /* Scan exponent.  */
@@ -635,7 +631,7 @@ done:
     case 'd':
       if (kind != -2)
 	{
-	  gfc_error ("Real number at %C has a 'd' exponent and an explicit "
+	  gfc_error ("Real number at %C has a %<d%> exponent and an explicit "
 		     "kind");
 	  goto cleanup;
 	}
@@ -643,21 +639,21 @@ done:
 
       if (kind == 4)
 	{
-	  if (gfc_option.flag_real4_kind == 8)
+	  if (flag_real4_kind == 8)
 	    kind = 8;
-	  if (gfc_option.flag_real4_kind == 10)
+	  if (flag_real4_kind == 10)
 	    kind = 10;
-	  if (gfc_option.flag_real4_kind == 16)
+	  if (flag_real4_kind == 16)
 	    kind = 16;
 	}
 
       if (kind == 8)
 	{
-	  if (gfc_option.flag_real8_kind == 4)
+	  if (flag_real8_kind == 4)
 	    kind = 4;
-	  if (gfc_option.flag_real8_kind == 10)
+	  if (flag_real8_kind == 10)
 	    kind = 10;
-	  if (gfc_option.flag_real8_kind == 16)
+	  if (flag_real8_kind == 16)
 	    kind = 16;
 	}
       break;
@@ -665,7 +661,7 @@ done:
     case 'q':
       if (kind != -2)
 	{
-	  gfc_error ("Real number at %C has a 'q' exponent and an explicit "
+	  gfc_error ("Real number at %C has a %<q%> exponent and an explicit "
 		     "kind");
 	  goto cleanup;
 	}
@@ -679,7 +675,7 @@ done:
 	  kind = 10;
           if (gfc_validate_kind (BT_REAL, kind, true) < 0)
 	    {
-	      gfc_error ("Invalid exponent-letter 'q' in "
+	      gfc_error ("Invalid exponent-letter %<q%> in "
 			 "real-literal-constant at %C");
 	      goto cleanup;
 	    }
@@ -692,21 +688,21 @@ done:
 
       if (kind == 4)
 	{
-	  if (gfc_option.flag_real4_kind == 8)
+	  if (flag_real4_kind == 8)
 	    kind = 8;
-	  if (gfc_option.flag_real4_kind == 10)
+	  if (flag_real4_kind == 10)
 	    kind = 10;
-	  if (gfc_option.flag_real4_kind == 16)
+	  if (flag_real4_kind == 16)
 	    kind = 16;
 	}
 
       if (kind == 8)
 	{
-	  if (gfc_option.flag_real8_kind == 4)
+	  if (flag_real8_kind == 4)
 	    kind = 4;
-	  if (gfc_option.flag_real8_kind == 10)
+	  if (flag_real8_kind == 10)
 	    kind = 10;
-	  if (gfc_option.flag_real8_kind == 16)
+	  if (flag_real8_kind == 16)
 	    kind = 16;
 	}
 
@@ -731,8 +727,8 @@ done:
       goto cleanup;
 
     case ARITH_UNDERFLOW:
-      if (gfc_option.warn_underflow)
-	gfc_warning ("Real constant underflows its kind at %C");
+      if (warn_underflow)
+	gfc_warning (OPT_Wunderflow, "Real constant underflows its kind at %C");
       mpfr_set_ui (e->value.real, 0, GFC_RND_MODE);
       break;
 
@@ -861,7 +857,7 @@ next_string_char (gfc_char_t delimiter, int *ret)
       return 0;
     }
 
-  if (gfc_option.flag_backslash && c == '\\')
+  if (flag_backslash && c == '\\')
     {
       old_locus = gfc_current_locus;
 
@@ -869,7 +865,7 @@ next_string_char (gfc_char_t delimiter, int *ret)
 	gfc_current_locus = old_locus;
 
       if (!(gfc_option.allow_std & GFC_STD_GNU) && !inhibit_warnings)
-	gfc_warning ("Extension: backslash character at %C");
+	gfc_warning (0, "Extension: backslash character at %C");
     }
 
   if (c != delimiter)
@@ -933,7 +929,7 @@ match_charkind_name (char *name)
 
       if (!ISALNUM (c)
 	  && c != '_'
-	  && (c != '$' || !gfc_option.flag_dollar_ok))
+	  && (c != '$' || !flag_dollar_ok))
 	break;
 
       *name++ = c;
@@ -956,7 +952,7 @@ static match
 match_string_constant (gfc_expr **result)
 {
   char name[GFC_MAX_SYMBOL_LEN + 1], peek;
-  int i, kind, length, warn_ampersand, ret;
+  int i, kind, length, save_warn_ampersand, ret;
   locus old_locus, start_locus;
   gfc_symbol *sym;
   gfc_expr *e;
@@ -1076,8 +1072,8 @@ got_delim:
 
   /* We disable the warning for the following loop as the warning has already
      been printed in the loop above.  */
-  warn_ampersand = gfc_option.warn_ampersand;
-  gfc_option.warn_ampersand = 0;
+  save_warn_ampersand = warn_ampersand;
+  warn_ampersand = false;
 
   p = e->value.character.string;
   for (i = 0; i < length; i++)
@@ -1086,7 +1082,8 @@ got_delim:
 
       if (!gfc_check_character_range (c, kind))
 	{
-	  gfc_error ("Character '%s' in string at %C is not representable "
+	  gfc_free_expr (e);
+	  gfc_error ("Character %qs in string at %C is not representable "
 		     "in character kind %d", gfc_print_wide_char (c), kind);
 	  return MATCH_ERROR;
 	}
@@ -1095,7 +1092,7 @@ got_delim:
     }
 
   *p = '\0';	/* TODO: C-style string is for development/debug purposes.  */
-  gfc_option.warn_ampersand = warn_ampersand;
+  warn_ampersand = save_warn_ampersand;
 
   next_string_char (delimiter, &ret);
   if (ret != -1)
@@ -1217,8 +1214,8 @@ match_sym_complex_part (gfc_expr **result)
       return MATCH_ERROR;
     }
 
-  if (gfc_notify_std (GFC_STD_F2003, "Fortran 2003: PARAMETER symbol in "
-		      "complex constant at %C") == FAILURE)
+  if (!gfc_notify_std (GFC_STD_F2003, "PARAMETER symbol in "
+		       "complex constant at %C"))
     return MATCH_ERROR;
 
   switch (sym->value->ts.type)
@@ -1277,7 +1274,8 @@ static match
 match_complex_constant (gfc_expr **result)
 {
   gfc_expr *e, *real, *imag;
-  gfc_error_buf old_error;
+  gfc_error_buf old_error_1;
+  output_buffer old_error;
   gfc_typespec target;
   locus old_loc;
   int kind;
@@ -1290,18 +1288,18 @@ match_complex_constant (gfc_expr **result)
   if (m != MATCH_YES)
     return m;
 
-  gfc_push_error (&old_error);
+  gfc_push_error (&old_error, &old_error_1);
 
   m = match_complex_part (&real);
   if (m == MATCH_NO)
     {
-      gfc_free_error (&old_error);
+      gfc_free_error (&old_error, &old_error_1);
       goto cleanup;
     }
 
   if (gfc_match_char (',') == MATCH_NO)
     {
-      gfc_pop_error (&old_error);
+      gfc_pop_error (&old_error, &old_error_1);
       m = MATCH_NO;
       goto cleanup;
     }
@@ -1313,10 +1311,10 @@ match_complex_constant (gfc_expr **result)
 
   if (m == MATCH_ERROR)
     {
-      gfc_free_error (&old_error);
+      gfc_free_error (&old_error, &old_error_1);
       goto cleanup;
     }
-  gfc_pop_error (&old_error);
+  gfc_pop_error (&old_error, &old_error_1);
 
   m = match_complex_part (&imag);
   if (m == MATCH_NO)
@@ -1506,8 +1504,9 @@ match_actual_arg (gfc_expr **result)
 
 	  if (sym->attr.in_common && !sym->attr.proc_pointer)
 	    {
-	      gfc_add_flavor (&sym->attr, FL_VARIABLE, sym->name,
-			      &sym->declared_at);
+	      if (!gfc_add_flavor (&sym->attr, FL_VARIABLE,
+				   sym->name, &sym->declared_at))
+		return MATCH_ERROR;
 	      break;
 	    }
 
@@ -1581,7 +1580,7 @@ match_keyword_arg (gfc_actual_arglist *actual, gfc_actual_arglist *base)
       for (a = base; a; a = a->next)
 	if (a->name != NULL && strcmp (a->name, name) == 0)
 	  {
-	    gfc_error ("Keyword '%s' at %C has already appeared in the "
+	    gfc_error ("Keyword %qs at %C has already appeared in the "
 		       "current argument list", name);
 	    return MATCH_ERROR;
 	  }
@@ -1645,8 +1644,7 @@ match_arg_list_function (gfc_actual_arglist *result)
 	}
     }
 
-  if (gfc_notify_std (GFC_STD_GNU, "Extension: argument list "
-		      "function at %C") == FAILURE)
+  if (!gfc_notify_std (GFC_STD_GNU, "argument list function at %C"))
     {
       m = MATCH_ERROR;
       goto cleanup;
@@ -1716,6 +1714,10 @@ gfc_match_actual_arglist (int sub_flag, gfc_actual_arglist **argp)
 	  if (m == MATCH_NO)
 	    gfc_error ("Expected alternate return label at %C");
 	  if (m != MATCH_YES)
+	    goto cleanup;
+
+	  if (!gfc_notify_std (GFC_STD_F95_OBS, "Alternate-return argument "
+			       "at %C"))
 	    goto cleanup;
 
 	  tail->label = label;
@@ -1845,7 +1847,7 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 	  || (sym->ts.type == BT_CLASS && CLASS_DATA (sym)
 	      && !CLASS_DATA (sym)->attr.codimension))
 	{
-	  gfc_error ("Coarray designator at %C but '%s' is not a coarray",
+	  gfc_error ("Coarray designator at %C but %qs is not a coarray",
 		     sym->name);
 	  return MATCH_ERROR;
 	}
@@ -1855,13 +1857,16 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
      Thus if we have one and parentheses follow, we have to assume that it
      actually is one for now.  The final decision will be made at
      resolution time, of course.  */
-  if (sym->assoc && gfc_peek_ascii_char () == '(')
+  if (sym->assoc && gfc_peek_ascii_char () == '('
+      && !(sym->assoc->dangling && sym->assoc->st
+	   && sym->assoc->st->n.sym
+	   && sym->assoc->st->n.sym->attr.dimension == 0))
     sym->attr.dimension = 1;
 
   if ((equiv_flag && gfc_peek_ascii_char () == '(')
       || gfc_peek_ascii_char () == '[' || sym->attr.codimension
       || (sym->attr.dimension && sym->ts.type != BT_CLASS
-	  && !sym->attr.proc_pointer && !gfc_is_proc_ptr_comp (primary, NULL)
+	  && !sym->attr.proc_pointer && !gfc_is_proc_ptr_comp (primary)
 	  && !(gfc_matching_procptr_assignment
 	       && sym->attr.flavor == FL_PROCEDURE))
       || (sym->ts.type == BT_CLASS && sym->attr.class_ok
@@ -1910,6 +1915,19 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
       && gfc_get_default_type (sym->name, sym->ns)->type == BT_DERIVED)
     gfc_set_default_type (sym, 0, sym->ns);
 
+  if (sym->ts.type == BT_UNKNOWN && gfc_match_char ('%') == MATCH_YES)
+    {
+      gfc_error ("Symbol %qs at %C has no IMPLICIT type", sym->name);
+      return MATCH_ERROR;
+    }
+  else if ((sym->ts.type != BT_DERIVED && sym->ts.type != BT_CLASS)
+	   && gfc_match_char ('%') == MATCH_YES)
+    {
+      gfc_error ("Unexpected %<%%%> for nonderived-type variable %qs at %C",
+		 sym->name);
+      return MATCH_ERROR;
+    }
+
   if ((sym->ts.type != BT_DERIVED && sym->ts.type != BT_CLASS)
       || gfc_match_char ('%') != MATCH_YES)
     goto check_substring;
@@ -1918,7 +1936,7 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 
   for (;;)
     {
-      gfc_try t;
+      bool t;
       gfc_symtree *tbp;
 
       m = gfc_match_name (name);
@@ -1936,14 +1954,16 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 	{
 	  gfc_symbol* tbp_sym;
 
-	  if (t == FAILURE)
+	  if (!t)
 	    return MATCH_ERROR;
 
 	  gcc_assert (!tail || !tail->next);
-	  gcc_assert (primary->expr_type == EXPR_VARIABLE
-		      || (primary->expr_type == EXPR_STRUCTURE
-			  && primary->symtree && primary->symtree->n.sym
-			  && primary->symtree->n.sym->attr.flavor));
+
+	  if (!(primary->expr_type == EXPR_VARIABLE
+		|| (primary->expr_type == EXPR_STRUCTURE
+		    && primary->symtree && primary->symtree->n.sym
+		    && primary->symtree->n.sym->attr.flavor)))
+	    return MATCH_ERROR;
 
 	  if (tbp->n.tb->is_generic)
 	    tbp_sym = NULL;
@@ -1959,6 +1979,8 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 	  gcc_assert (primary->symtree->n.sym->attr.referenced);
 	  if (tbp_sym)
 	    primary->ts = tbp_sym->ts;
+	  else
+	    gfc_clear_ts (&primary->ts);
 
 	  m = gfc_match_actual_arglist (tbp->n.tb->subroutine,
 					&primary->value.compcall.actual);
@@ -1990,8 +2012,7 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 
       primary->ts = component->ts;
 
-      if (component->attr.proc_pointer && ppc_arg
-	  && !gfc_matching_procptr_assignment)
+      if (component->attr.proc_pointer && ppc_arg)
 	{
 	  /* Procedure pointer component call: Look for argument list.  */
 	  m = gfc_match_actual_arglist (sub_flag,
@@ -2000,9 +2021,9 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 	    return MATCH_ERROR;
 
 	  if (m == MATCH_NO && !gfc_matching_ptr_assignment
-	      && !matching_actual_arglist)
+	      && !gfc_matching_procptr_assignment && !matching_actual_arglist)
 	    {
-	      gfc_error ("Procedure pointer component '%s' requires an "
+	      gfc_error ("Procedure pointer component %qs requires an "
 			 "argument list at %C", component->name);
 	      return MATCH_ERROR;
 	    }
@@ -2023,9 +2044,8 @@ gfc_match_varspec (gfc_expr *primary, int equiv_flag, bool sub_flag,
 	  if (m != MATCH_YES)
 	    return m;
 	}
-      else if (component->ts.type == BT_CLASS
-	       && CLASS_DATA (component)->as != NULL
-	       && !component->attr.proc_pointer)
+      else if (component->ts.type == BT_CLASS && component->attr.class_ok
+	       && CLASS_DATA (component)->as && !component->attr.proc_pointer)
 	{
 	  tail = extend_ref (primary, tail);
 	  tail->type = REF_ARRAY;
@@ -2118,7 +2138,7 @@ check_substring:
 symbol_attribute
 gfc_variable_attr (gfc_expr *expr, gfc_typespec *ts)
 {
-  int dimension, pointer, allocatable, target;
+  int dimension, codimension, pointer, allocatable, target, n;
   symbol_attribute attr;
   gfc_ref *ref;
   gfc_symbol *sym;
@@ -2133,12 +2153,14 @@ gfc_variable_attr (gfc_expr *expr, gfc_typespec *ts)
   if (sym->ts.type == BT_CLASS && sym->attr.class_ok)
     {
       dimension = CLASS_DATA (sym)->attr.dimension;
+      codimension = CLASS_DATA (sym)->attr.codimension;
       pointer = CLASS_DATA (sym)->attr.class_pointer;
       allocatable = CLASS_DATA (sym)->attr.allocatable;
     }
   else
     {
       dimension = attr.dimension;
+      codimension = attr.codimension;
       pointer = attr.pointer;
       allocatable = attr.allocatable;
     }
@@ -2173,7 +2195,25 @@ gfc_variable_attr (gfc_expr *expr, gfc_typespec *ts)
 	    break;
 
 	  case AR_UNKNOWN:
-	    gfc_internal_error ("gfc_variable_attr(): Bad array reference");
+	    /* If any of start, end or stride is not integer, there will
+	       already have been an error issued.  */
+	    for (n = 0; n < ref->u.ar.as->rank; n++)
+	      {
+		int errors;
+		gfc_get_errors (NULL, &errors);
+		if (((ref->u.ar.start[n]
+		      && ref->u.ar.start[n]->ts.type == BT_UNKNOWN)
+		     ||
+		     (ref->u.ar.end[n]
+		      && ref->u.ar.end[n]->ts.type == BT_UNKNOWN)
+		     ||
+		     (ref->u.ar.stride[n]
+		      && ref->u.ar.stride[n]->ts.type == BT_UNKNOWN))
+		    && errors > 0)
+		  break;
+	      }
+	    if (n == ref->u.ar.as->rank)
+	      gfc_internal_error ("gfc_variable_attr(): Bad array reference");
 	  }
 
 	break;
@@ -2193,11 +2233,13 @@ gfc_variable_attr (gfc_expr *expr, gfc_typespec *ts)
 
 	if (comp->ts.type == BT_CLASS)
 	  {
+	    codimension = CLASS_DATA (comp)->attr.codimension;
 	    pointer = CLASS_DATA (comp)->attr.class_pointer;
 	    allocatable = CLASS_DATA (comp)->attr.allocatable;
 	  }
 	else
 	  {
+	    codimension = comp->attr.codimension;
 	    pointer = comp->attr.pointer;
 	    allocatable = comp->attr.allocatable;
 	  }
@@ -2212,6 +2254,7 @@ gfc_variable_attr (gfc_expr *expr, gfc_typespec *ts)
       }
 
   attr.dimension = dimension;
+  attr.codimension = codimension;
   attr.pointer = pointer;
   attr.allocatable = allocatable;
   attr.target = target;
@@ -2237,7 +2280,7 @@ gfc_expr_attr (gfc_expr *e)
     case EXPR_FUNCTION:
       gfc_clear_attr (&attr);
 
-      if (e->value.function.esym != NULL)
+      if (e->value.function.esym && e->value.function.esym->result)
 	{
 	  gfc_symbol *sym = e->value.function.esym->result;
 	  attr = sym->attr;
@@ -2292,7 +2335,7 @@ gfc_free_structure_ctor_component (gfc_structure_ctor_component *comp)
    the order required; this also checks along the way that each and every
    component actually has an initializer and handles default initializers
    for components without explicit value given.  */
-static gfc_try
+static bool
 build_actual_constructor (gfc_structure_ctor_component **comp_head,
 			  gfc_constructor_base *ctor_head, gfc_symbol *sym)
 {
@@ -2322,11 +2365,12 @@ build_actual_constructor (gfc_structure_ctor_component **comp_head,
 						      &gfc_current_locus);
 	  value->ts = comp->ts;
 
-	  if (build_actual_constructor (comp_head, &value->value.constructor,
-					comp->ts.u.derived) == FAILURE)
+	  if (!build_actual_constructor (comp_head,
+					 &value->value.constructor,
+					 comp->ts.u.derived))
 	    {
 	      gfc_free_expr (value);
-	      return FAILURE;
+	      return false;
 	    }
 
 	  gfc_constructor_append_expr (ctor_head, value, NULL);
@@ -2334,22 +2378,30 @@ build_actual_constructor (gfc_structure_ctor_component **comp_head,
 	}
 
       /* If it was not found, try the default initializer if there's any;
-	 otherwise, it's an error.  */
+	 otherwise, it's an error unless this is a deferred parameter.  */
       if (!comp_iter)
 	{
 	  if (comp->initializer)
 	    {
-	      if (gfc_notify_std (GFC_STD_F2003, "Fortran 2003: Structure"
-				  " constructor with missing optional arguments"
-				  " at %C") == FAILURE)
-		return FAILURE;
+	      if (!gfc_notify_std (GFC_STD_F2003, "Structure constructor "
+				   "with missing optional arguments at %C"))
+		return false;
 	      value = gfc_copy_expr (comp->initializer);
 	    }
-	  else
+	  else if (comp->attr.allocatable
+		   || (comp->ts.type == BT_CLASS
+		       && CLASS_DATA (comp)->attr.allocatable))
 	    {
-	      gfc_error ("No initializer for component '%s' given in the"
+	      if (!gfc_notify_std (GFC_STD_F2008, "No initializer for "
+				   "allocatable component '%qs' given in the "
+				   "structure constructor at %C", comp->name))
+		return false;
+	    }
+	  else if (!comp->attr.artificial)
+	    {
+	      gfc_error ("No initializer for component %qs given in the"
 			 " structure constructor at %C!", comp->name);
-	      return FAILURE;
+	      return false;
 	    }
 	}
       else
@@ -2367,11 +2419,11 @@ build_actual_constructor (gfc_structure_ctor_component **comp_head,
 	  gfc_free_structure_ctor_component (comp_iter);
 	}
     }
-  return SUCCESS;
+  return true;
 }
 
 
-gfc_try
+bool
 gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **cexpr,
 				      gfc_actual_arglist **arglist,
 				      bool parent)
@@ -2395,7 +2447,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
 
   if (!parent && sym->attr.abstract)
     {
-      gfc_error ("Can't construct ABSTRACT type '%s' at %L",
+      gfc_error ("Can't construct ABSTRACT type %qs at %L",
 		 sym->name, &expr->where);
       goto cleanup;
     }
@@ -2415,9 +2467,8 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
        	}
       if (actual->name)
 	{
-	  if (gfc_notify_std (GFC_STD_F2003, "Fortran 2003: Structure"
-			      " constructor with named arguments at %C")
-	      == FAILURE)
+	  if (!gfc_notify_std (GFC_STD_F2003, "Structure"
+			       " constructor with named arguments at %C"))
 	    goto cleanup;
 
 	  comp_tail->name = xstrdup (actual->name);
@@ -2428,7 +2479,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
 	{
 	  /* Components without name are not allowed after the first named
 	     component initializer!  */
-	  if (!comp)
+	  if (!comp || comp->attr.artificial)
 	    {
 	      if (last_name)
 		gfc_error ("Component initializer without name after component"
@@ -2467,13 +2518,13 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
       actual->expr = NULL;
 
       /* Check if this component is already given a value.  */
-      for (comp_iter = comp_head; comp_iter != comp_tail; 
+      for (comp_iter = comp_head; comp_iter != comp_tail;
 	   comp_iter = comp_iter->next)
 	{
 	  gcc_assert (comp_iter);
 	  if (!strcmp (comp_iter->name, comp_tail->name))
 	    {
-	      gfc_error ("Component '%s' is initialized twice in the structure"
+	      gfc_error ("Component %qs is initialized twice in the structure"
 			 " constructor at %L!", comp_tail->name,
 			 comp_tail->val ? &comp_tail->where
 					: &gfc_current_locus);
@@ -2485,7 +2536,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
       if (this_comp->attr.pointer && comp_tail->val
 	  && gfc_is_coindexed (comp_tail->val))
      	{
-       	  gfc_error ("Coindexed expression to pointer component '%s' in "
+	  gfc_error ("Coindexed expression to pointer component %qs in "
 		     "structure constructor at %L!", comp_tail->name,
 		     &comp_tail->where);
 	  goto cleanup;
@@ -2500,7 +2551,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
                       ||
                     comp_tail->val->ts.u.derived != this_comp->ts.u.derived))
             {
-              gfc_try m;
+              bool m;
 	      gfc_actual_arglist *arg_null = NULL;
 
 	      actual->expr = comp_tail->val;
@@ -2510,7 +2561,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
 					comp->ts.u.derived, &comp_tail->val,
 					comp->ts.u.derived->attr.zero_comp
 					  ? &arg_null : &actual, true);
-              if (m == FAILURE)
+              if (!m)
                 goto cleanup;
 
 	      if (comp->ts.u.derived->attr.zero_comp)
@@ -2525,10 +2576,11 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
       if (parent && !comp)
 	break;
 
-      actual = actual->next;
+      if (actual)
+	actual = actual->next;
     }
 
-  if (build_actual_constructor (&comp_head, &ctor_head, sym) == FAILURE)
+  if (!build_actual_constructor (&comp_head, &ctor_head, sym))
     goto cleanup;
 
   /* No component should be left, as this should have caused an error in the
@@ -2538,7 +2590,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
     {
       for (comp_iter = comp_head; comp_iter; comp_iter = comp_iter->next)
 	{
-	  gfc_error ("component '%s' at %L has already been set by a "
+	  gfc_error ("component %qs at %L has already been set by a "
 		     "parent derived type constructor", comp_iter->name,
 		     &comp_iter->where);
 	}
@@ -2563,13 +2615,13 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
       expr->expr_type = EXPR_STRUCTURE;
     }
 
-  gfc_current_locus = old_locus; 
+  gfc_current_locus = old_locus;
   if (parent)
     *arglist = actual;
-  return SUCCESS;
+  return true;
 
   cleanup:
-  gfc_current_locus = old_locus; 
+  gfc_current_locus = old_locus;
 
   for (comp_iter = comp_head; comp_iter; )
     {
@@ -2579,7 +2631,7 @@ gfc_convert_to_structure_constructor (gfc_expr *e, gfc_symbol *sym, gfc_expr **c
     }
   gfc_constructor_free (ctor_head);
 
-  return FAILURE;
+  return false;
 }
 
 
@@ -2608,8 +2660,7 @@ gfc_match_structure_constructor (gfc_symbol *sym, gfc_expr **result)
        return m;
      }
 
-   if (gfc_convert_to_structure_constructor (e, sym, NULL, NULL, false)
-       != SUCCESS)
+   if (!gfc_convert_to_structure_constructor (e, sym, NULL, NULL, false))
      {
        gfc_free_expr (e);
        return MATCH_ERROR;
@@ -2645,7 +2696,7 @@ check_for_implicit_index (gfc_symtree **st, gfc_symbol **sym)
 /* Procedure pointer as function result: Replace the function symbol by the
    auto-generated hidden result variable named "ppr@".  */
 
-static gfc_try
+static bool
 replace_hidden_procptr_result (gfc_symbol **sym, gfc_symtree **st)
 {
   /* Check for procedure pointer result variable.  */
@@ -2660,9 +2711,9 @@ replace_hidden_procptr_result (gfc_symbol **sym, gfc_symtree **st)
       (*sym)->result->attr.referenced = (*sym)->attr.referenced;
       *sym = (*sym)->result;
       *st = gfc_find_symtree ((*sym)->ns->sym_root, (*sym)->name);
-      return SUCCESS;
+      return true;
     }
-  return FAILURE;
+  return false;
 }
 
 
@@ -2689,7 +2740,7 @@ gfc_match_rvalue (gfc_expr **result)
   if (m != MATCH_YES)
     return m;
 
-  if (gfc_find_state (COMP_INTERFACE) == SUCCESS
+  if (gfc_find_state (COMP_INTERFACE)
       && !gfc_current_ns->has_import_set)
     i = gfc_get_sym_tree (name, NULL, &symtree, false);
   else
@@ -2722,7 +2773,7 @@ gfc_match_rvalue (gfc_expr **result)
 	  && gfc_current_ns->proc_name == sym
 	  && !sym->attr.dimension)
 	{
-	  gfc_error ("'%s' at %C is the name of a recursive function "
+	  gfc_error ("%qs at %C is the name of a recursive function "
 		     "and so refers to the result variable. Use an "
 		     "explicit RESULT variable for direct recursion "
 		     "(12.5.2.1)", sym->name);
@@ -2737,7 +2788,7 @@ gfc_match_rvalue (gfc_expr **result)
 	      || sym->ns == gfc_current_ns->parent))
 	{
 	  gfc_entry_list *el = NULL;
-	  
+
 	  for (el = sym->ns->entries; el; el = el->next)
 	    if (sym == el->sym)
 	      goto variable;
@@ -2767,7 +2818,7 @@ gfc_match_rvalue (gfc_expr **result)
 
     case FL_PARAMETER:
       /* A statement of the form "REAL, parameter :: a(0:10) = 1" will
-	 end up here.  Unfortunately, sym->value->expr_type is set to 
+	 end up here.  Unfortunately, sym->value->expr_type is set to
 	 EXPR_CONSTANT, and so the if () branch would be followed without
 	 the !sym->as check.  */
       if (sym->value && sym->value->expr_type != EXPR_ARRAY && !sym->as)
@@ -2820,7 +2871,7 @@ gfc_match_rvalue (gfc_expr **result)
        procedure, yet it is not sure to be the name of a function.  */
     case FL_PROCEDURE:
 
-    /* Procedure Pointer Assignments. */
+    /* Procedure Pointer Assignments.  */
     procptr0:
       if (gfc_matching_procptr_assignment)
 	{
@@ -2829,19 +2880,23 @@ gfc_match_rvalue (gfc_expr **result)
 	    /* Parse functions returning a procptr.  */
 	    goto function0;
 
-	  if (gfc_is_intrinsic (sym, 0, gfc_current_locus)
-	      || gfc_is_intrinsic (sym, 1, gfc_current_locus))
-	    sym->attr.intrinsic = 1;
 	  e = gfc_get_expr ();
 	  e->expr_type = EXPR_VARIABLE;
 	  e->symtree = symtree;
 	  m = gfc_match_varspec (e, 0, false, true);
+	  if (!e->ref && sym->attr.flavor == FL_UNKNOWN
+	      && sym->ts.type == BT_UNKNOWN
+	      && !gfc_add_flavor (&sym->attr, FL_PROCEDURE, sym->name, NULL))
+	    {
+	      m = MATCH_ERROR;
+	      break;
+	    }
 	  break;
 	}
 
       if (sym->attr.subroutine)
 	{
-	  gfc_error ("Unexpected use of subroutine name '%s' at %C",
+	  gfc_error ("Unexpected use of subroutine name %qs at %C",
 		     sym->name);
 	  m = MATCH_ERROR;
 	  break;
@@ -2872,10 +2927,10 @@ gfc_match_rvalue (gfc_expr **result)
       if (m == MATCH_NO)
 	{
 	  if (sym->attr.proc == PROC_ST_FUNCTION)
-	    gfc_error ("Statement function '%s' requires argument list at %C",
+	    gfc_error ("Statement function %qs requires argument list at %C",
 		       sym->name);
 	  else
-	    gfc_error ("Function '%s' requires an argument list at %C",
+	    gfc_error ("Function %qs requires an argument list at %C",
 		       sym->name);
 
 	  m = MATCH_ERROR;
@@ -2906,7 +2961,7 @@ gfc_match_rvalue (gfc_expr **result)
 	e->rank = sym->as->rank;
 
       if (!sym->attr.function
-	  && gfc_add_function (&sym->attr, sym->name, NULL) == FAILURE)
+	  && !gfc_add_function (&sym->attr, sym->name, NULL))
 	{
 	  m = MATCH_ERROR;
 	  break;
@@ -2925,7 +2980,7 @@ gfc_match_rvalue (gfc_expr **result)
           /* make sure we were given a param */
           if (actual_arglist == NULL)
             {
-              gfc_error ("Missing argument to '%s' at %C", sym->name);
+              gfc_error ("Missing argument to %qs at %C", sym->name);
               m = MATCH_ERROR;
               break;
             }
@@ -2953,8 +3008,7 @@ gfc_match_rvalue (gfc_expr **result)
 
       if (sym->attr.dimension || sym->attr.codimension)
 	{
-	  if (gfc_add_flavor (&sym->attr, FL_VARIABLE,
-			      sym->name, NULL) == FAILURE)
+	  if (!gfc_add_flavor (&sym->attr, FL_VARIABLE, sym->name, NULL))
 	    {
 	      m = MATCH_ERROR;
 	      break;
@@ -2971,8 +3025,7 @@ gfc_match_rvalue (gfc_expr **result)
 	  && (CLASS_DATA (sym)->attr.dimension
 	      || CLASS_DATA (sym)->attr.codimension))
 	{
-	  if (gfc_add_flavor (&sym->attr, FL_VARIABLE,
-			      sym->name, NULL) == FAILURE)
+	  if (!gfc_add_flavor (&sym->attr, FL_VARIABLE, sym->name, NULL))
 	    {
 	      m = MATCH_ERROR;
 	      break;
@@ -2997,8 +3050,7 @@ gfc_match_rvalue (gfc_expr **result)
 	  e->symtree = symtree;
 	  e->expr_type = EXPR_VARIABLE;
 
-	  if (gfc_add_flavor (&sym->attr, FL_VARIABLE,
-			      sym->name, NULL) == FAILURE)
+	  if (!gfc_add_flavor (&sym->attr, FL_VARIABLE, sym->name, NULL))
 	    {
 	      m = MATCH_ERROR;
 	      break;
@@ -3024,7 +3076,7 @@ gfc_match_rvalue (gfc_expr **result)
       if (m2 != MATCH_YES)
 	{
 	  /* Try to figure out whether we're dealing with a character type.
-	     We're peeking ahead here, because we don't want to call 
+	     We're peeking ahead here, because we don't want to call
 	     match_substring if we're dealing with an implicitly typed
 	     non-character variable.  */
 	  implicit_char = false;
@@ -3045,15 +3097,15 @@ gfc_match_rvalue (gfc_expr **result)
 	      e->expr_type = EXPR_VARIABLE;
 
 	      if (sym->attr.flavor != FL_VARIABLE
-		  && gfc_add_flavor (&sym->attr, FL_VARIABLE,
-				     sym->name, NULL) == FAILURE)
+		  && !gfc_add_flavor (&sym->attr, FL_VARIABLE,
+				      sym->name, NULL))
 		{
 		  m = MATCH_ERROR;
 		  break;
 		}
 
 	      if (sym->ts.type == BT_UNKNOWN
-		  && gfc_set_default_type (sym, 1, NULL) == FAILURE)
+		  && !gfc_set_default_type (sym, 1, NULL))
 		{
 		  m = MATCH_ERROR;
 		  break;
@@ -3074,7 +3126,7 @@ gfc_match_rvalue (gfc_expr **result)
       e->expr_type = EXPR_FUNCTION;
 
       if (!sym->attr.function
-	  && gfc_add_function (&sym->attr, sym->name, NULL) == FAILURE)
+	  && !gfc_add_function (&sym->attr, sym->name, NULL))
 	{
 	  m = MATCH_ERROR;
 	  break;
@@ -3084,7 +3136,7 @@ gfc_match_rvalue (gfc_expr **result)
 
       m = gfc_match_actual_arglist (0, &e->value.function.actual);
       if (m == MATCH_NO)
-	gfc_error ("Missing argument list in function '%s' at %C", sym->name);
+	gfc_error ("Missing argument list in function %qs at %C", sym->name);
 
       if (m != MATCH_YES)
 	{
@@ -3209,7 +3261,7 @@ match_variable (gfc_expr **result, int equiv_flag, int host_flag)
 	  flavor = FL_VARIABLE;
 
 	if (flavor != FL_UNKNOWN
-	    && gfc_add_flavor (&sym->attr, flavor, sym->name, NULL) == FAILURE)
+	    && !gfc_add_flavor (&sym->attr, flavor, sym->name, NULL))
 	  return MATCH_ERROR;
       }
       break;
@@ -3245,13 +3297,13 @@ match_variable (gfc_expr **result, int equiv_flag, int host_flag)
 	}
 
       if (sym->attr.proc_pointer
-	  || replace_hidden_procptr_result (&sym, &st) == SUCCESS)
+	  || replace_hidden_procptr_result (&sym, &st))
 	break;
 
       /* Fall through to error */
 
     default:
-      gfc_error ("'%s' at %C is not a variable", sym->name);
+      gfc_error ("%qs at %C is not a variable", sym->name);
       return MATCH_ERROR;
     }
 
@@ -3266,7 +3318,7 @@ match_variable (gfc_expr **result, int equiv_flag, int host_flag)
 	implicit_ns = gfc_current_ns;
       else
 	implicit_ns = sym->ns;
-	
+
       if (gfc_peek_ascii_char () == '%'
 	  && sym->ts.type == BT_UNKNOWN
 	  && gfc_get_default_type (sym->name, implicit_ns)->type == BT_DERIVED)

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -52,10 +52,6 @@ package body Bindgen is
    Last : Natural := 0;
    --  Last location in Statement_Buffer currently set
 
-   With_DECGNAT : Boolean := False;
-   --  Flag which indicates whether the program uses the DECGNAT library
-   --  (presence of the unit DEC).
-
    With_GNARL : Boolean := False;
    --  Flag which indicates whether the program uses the GNARL library
    --  (presence of the unit System.OS_Interface)
@@ -63,20 +59,32 @@ package body Bindgen is
    Num_Elab_Calls : Nat := 0;
    --  Number of generated calls to elaboration routines
 
-   System_Restrictions_Used : Boolean;
+   System_Restrictions_Used : Boolean := False;
    --  Flag indicating whether the unit System.Restrictions is in the closure
-   --  of the partition. This is set by Check_System_Restrictions_Used, and
-   --  is used to determine whether or not to initialize the restrictions
-   --  information in the body of the binder generated file (we do not want
-   --  to do this unconditionally, since it drags in the System.Restrictions
-   --  unit unconditionally, which is unpleasand, especially for ZFP etc.)
+   --  of the partition. This is set by Resolve_Binder_Options, and is used
+   --  to determine whether or not to initialize the restrictions information
+   --  in the body of the binder generated file (we do not want to do this
+   --  unconditionally, since it drags in the System.Restrictions unit
+   --  unconditionally, which is unpleasand, especially for ZFP etc.)
 
-   Dispatching_Domains_Used : Boolean;
+   Dispatching_Domains_Used : Boolean := False;
    --  Flag indicating whether multiprocessor dispatching domains are used in
-   --  the closure of the partition. This is set by
-   --  Check_Dispatching_Domains_Used, and is used to call the routine to
-   --  disallow the creation of new dispatching domains just before calling
-   --  the main procedure from the environment task.
+   --  the closure of the partition. This is set by Resolve_Binder_Options, and
+   --  is used to call the routine to disallow the creation of new dispatching
+   --  domains just before calling the main procedure from the environment
+   --  task.
+
+   System_Tasking_Restricted_Stages_Used : Boolean := False;
+   --  Flag indicating whether the unit System.Tasking.Restricted.Stages is in
+   --  the closure of the partition. This is set by Resolve_Binder_Options,
+   --  and it used to call a routine to active all the tasks at the end of
+   --  the elaboration when partition elaboration policy is sequential.
+
+   System_Interrupts_Used : Boolean := False;
+   --  Flag indicating whether the unit System.Interrups is in the closure of
+   --  the partition. This is set by Resolve_Binder_Options, and it used to
+   --  attach interrupt handlers at the end of the elaboration when partition
+   --  elaboration policy is sequential.
 
    Lib_Final_Built : Boolean := False;
    --  Flag indicating whether the finalize_library rountine has been built
@@ -120,7 +128,7 @@ package body Bindgen is
    -- Run-Time Globals --
    ----------------------
 
-   --  This section documents the global variables that set from the
+   --  This section documents the global variables that are set from the
    --  generated binder file.
 
    --     Main_Priority                 : Integer;
@@ -137,7 +145,6 @@ package body Bindgen is
    --     Num_Interrupt_States          : Integer;
    --     Unreserve_All_Interrupts      : Integer;
    --     Exception_Tracebacks          : Integer;
-   --     Zero_Cost_Exceptions          : Integer;
    --     Detect_Blocking               : Integer;
    --     Default_Stack_Size            : Integer;
    --     Leap_Seconds_Support          : Integer;
@@ -151,10 +158,6 @@ package body Bindgen is
    --  are present, the binder value overrides). The value is in milliseconds.
    --  A value of zero indicates that time slicing should be suppressed. If no
    --  pragma is present, and no -T switch was used, the value is -1.
-
-   --  Heap_Size is the heap to use for memory allocations set by use of a
-   --  -Hnn parameter for the binder or by the GNAT$NO_MALLOC_64 logical.
-   --  Valid values are 32 and 64. This switch is only effective on VMS.
 
    --  WC_Encoding shows the wide character encoding method used for the main
    --  program. This is one of the encoding letters defined in
@@ -216,9 +219,6 @@ package body Bindgen is
    --  tracebacks are provided by default, so a value of zero for this
    --  parameter does not necessarily mean no trace backs are available.
 
-   --  Zero_Cost_Exceptions is set to one if zero cost exceptions are used for
-   --  this partition, and to zero if longjmp/setjmp exceptions are used.
-
    --  Detect_Blocking indicates whether pragma Detect_Blocking is active or
    --  not. A value of zero indicates that the pragma is not present, while a
    --  value of 1 signals its presence in the partition.
@@ -239,21 +239,6 @@ package body Bindgen is
    -----------------------
    -- Local Subprograms --
    -----------------------
-
-   procedure Check_File_In_Partition
-     (File_Name : String;
-      Flag      : out Boolean);
-   --  If the file indicated by File_Name is in the partition the Flag is set
-   --  to True, False otherwise.
-
-   procedure Check_System_Restrictions_Used;
-   --  Sets flag System_Restrictions_Used (Set to True if and only if the unit
-   --  System.Restrictions is present in the partition, otherwise False).
-
-   procedure Check_Dispatching_Domains_Used;
-   --  Sets flag Dispatching_Domains_Used to True when using the unit
-   --  System.Multiprocessors.Dispatching_Domains is present in the partition,
-   --  otherwise set to False.
 
    procedure Gen_Adainit;
    --  Generates the Adainit procedure
@@ -329,18 +314,16 @@ package body Bindgen is
    --  Move routine for sorting linker options
 
    procedure Resolve_Binder_Options;
-   --  Set the value of With_GNARL and With_DECGNAT. The latter only on VMS
-   --  since it tests for a package named "dec" which might cause a conflict
-   --  on non-VMS systems.
+   --  Set the value of With_GNARL
 
    procedure Set_Char (C : Character);
    --  Set given character in Statement_Buffer at the Last + 1 position
    --  and increment Last by one to reflect the stored character.
 
    procedure Set_Int (N : Int);
-   --  Set given value in decimal in Statement_Buffer with no spaces
-   --  starting at the Last + 1 position, and updating Last past the value.
-   --  A minus sign is output for a negative value.
+   --  Set given value in decimal in Statement_Buffer with no spaces starting
+   --  at the Last + 1 position, and updating Last past the value. A minus sign
+   --  is output for a negative value.
 
    procedure Set_Boolean (B : Boolean);
    --  Set given boolean value in Statement_Buffer at the Last + 1 position
@@ -350,9 +333,9 @@ package body Bindgen is
    --  Initializes contents of IS_Pragma_Settings table from ALI table
 
    procedure Set_Main_Program_Name;
-   --  Given the main program name in Name_Buffer (length in Name_Len)
-   --  generate the name of the routine to be used in the call. The name
-   --  is generated starting at Last + 1, and Last is updated past it.
+   --  Given the main program name in Name_Buffer (length in Name_Len) generate
+   --  the name of the routine to be used in the call. The name is generated
+   --  starting at Last + 1, and Last is updated past it.
 
    procedure Set_Name_Buffer;
    --  Set the value stored in positions 1 .. Name_Len of the Name_Buffer
@@ -365,9 +348,9 @@ package body Bindgen is
    --  Last + 1 position, and updating last past the string value.
 
    procedure Set_String_Replace (S : String);
-   --  Replaces the last S'Length characters in the Statement_Buffer with
-   --  the characters of S. The caller must ensure that these characters do
-   --  in fact exist in the Statement_Buffer.
+   --  Replaces the last S'Length characters in the Statement_Buffer with the
+   --  characters of S. The caller must ensure that these characters do in fact
+   --  exist in the Statement_Buffer.
 
    type Qualification_Mode is (Dollar_Sign, Dot, Double_Underscores);
 
@@ -378,9 +361,9 @@ package body Bindgen is
    --  underscores (__), a dollar sign ($) or left as is.
 
    procedure Set_Unit_Number (U : Unit_Id);
-   --  Sets unit number (first unit is 1, leading zeroes output to line
-   --  up all output unit numbers nicely as required by the value, and
-   --  by the total number of units.
+   --  Sets unit number (first unit is 1, leading zeroes output to line up all
+   --  output unit numbers nicely as required by the value, and by the total
+   --  number of units.
 
    procedure Write_Statement_Buffer;
    --  Write out contents of statement buffer up to Last, and reset Last to 0
@@ -388,43 +371,6 @@ package body Bindgen is
    procedure Write_Statement_Buffer (S : String);
    --  First writes its argument (using Set_String (S)), then writes out the
    --  contents of statement buffer up to Last, and reset Last to 0
-
-   ------------------------------------
-   -- Check_Dispatching_Domains_Used --
-   ------------------------------------
-
-   procedure Check_Dispatching_Domains_Used is
-   begin
-      Check_File_In_Partition ("s-mudido.ads", Dispatching_Domains_Used);
-   end Check_Dispatching_Domains_Used;
-
-   -----------------------------
-   -- Check_File_In_Partition --
-   -----------------------------
-
-   procedure Check_File_In_Partition
-     (File_Name : String;
-      Flag      : out Boolean)
-   is
-   begin
-      for J in Units.First .. Units.Last loop
-         if Get_Name_String (Units.Table (J).Sfile) = File_Name then
-            Flag := True;
-            return;
-         end if;
-      end loop;
-
-      Flag := False;
-   end Check_File_In_Partition;
-
-   ------------------------------------
-   -- Check_System_Restrictions_Used --
-   ------------------------------------
-
-   procedure Check_System_Restrictions_Used is
-   begin
-      Check_File_In_Partition ("s-restri.ads", System_Restrictions_Used);
-   end Check_System_Restrictions_Used;
 
    ------------------
    -- Gen_Adafinal --
@@ -444,6 +390,11 @@ package body Bindgen is
          Write_Statement_Buffer;
       end if;
 
+      WBI ("");
+      WBI ("      procedure Runtime_Finalize;");
+      WBI ("      pragma Import (C, Runtime_Finalize, " &
+             """__gnat_runtime_finalize"");");
+      WBI ("");
       WBI ("   begin");
 
       if not CodePeer_Mode then
@@ -452,6 +403,8 @@ package body Bindgen is
          WBI ("      end if;");
          WBI ("      Is_Elaborated := False;");
       end if;
+
+      WBI ("      Runtime_Finalize;");
 
       --  On non-virtual machine targets, finalization is done differently
       --  depending on whether this is the main program or a library.
@@ -511,6 +464,14 @@ package body Bindgen is
       if CodePeer_Mode then
          WBI ("   begin");
 
+      --  When compiling for the AAMP small library, where the standard library
+      --  is no longer suppressed, we still want to exclude the setting of the
+      --  various imported globals, which aren't present for that library.
+
+      elsif AAMP_On_Target and then Configurable_Run_Time_On_Target then
+         WBI ("   begin");
+         WBI ("      null;");
+
       --  If the standard library is suppressed, then the only global variables
       --  that might be needed (by the Ravenscar profile) are the priority and
       --  the processor for the environment task.
@@ -530,6 +491,28 @@ package body Bindgen is
             WBI ("");
          end if;
 
+         if System_Interrupts_Used
+           and then Partition_Elaboration_Policy_Specified = 'S'
+         then
+            WBI ("      procedure Install_Restricted_Handlers_Sequential;");
+            WBI ("      pragma Import (C," &
+                 "Install_Restricted_Handlers_Sequential," &
+                 " ""__gnat_attach_all_handlers"");");
+            WBI ("");
+         end if;
+
+         if System_Tasking_Restricted_Stages_Used
+           and then Partition_Elaboration_Policy_Specified = 'S'
+         then
+            WBI ("      Partition_Elaboration_Policy : Character;");
+            WBI ("      pragma Import (C, Partition_Elaboration_Policy," &
+                 " ""__gnat_partition_elaboration_policy"");");
+            WBI ("");
+            WBI ("      procedure Activate_All_Tasks_Sequential;");
+            WBI ("      pragma Import (C, Activate_All_Tasks_Sequential," &
+                 " ""__gnat_activate_all_tasks"");");
+         end if;
+
          WBI ("   begin");
 
          if Main_Priority /= No_Main_Priority then
@@ -546,8 +529,18 @@ package body Bindgen is
             Write_Statement_Buffer;
          end if;
 
+         if System_Tasking_Restricted_Stages_Used
+           and then Partition_Elaboration_Policy_Specified = 'S'
+         then
+            Set_String ("      Partition_Elaboration_Policy := '");
+            Set_Char   (Partition_Elaboration_Policy_Specified);
+            Set_String ("';");
+            Write_Statement_Buffer;
+         end if;
+
          if Main_Priority = No_Main_Priority
            and then Main_CPU = No_Main_CPU
+           and then not System_Tasking_Restricted_Stages_Used
          then
             WBI ("      null;");
          end if;
@@ -599,9 +592,6 @@ package body Bindgen is
                  """__gl_exception_tracebacks"");");
          end if;
 
-         WBI ("      Zero_Cost_Exceptions : Integer;");
-         WBI ("      pragma Import (C, Zero_Cost_Exceptions, " &
-              """__gl_zero_cost_exceptions"");");
          WBI ("      Detect_Blocking : Integer;");
          WBI ("      pragma Import (C, Detect_Blocking, " &
               """__gl_detect_blocking"");");
@@ -616,13 +606,37 @@ package body Bindgen is
          --  installation, and indication of if it's been called previously.
 
          WBI ("");
-         WBI ("      procedure Install_Handler;");
-         WBI ("      pragma Import (C, Install_Handler, " &
-              """__gnat_install_handler"");");
-         WBI ("");
-         WBI ("      Handler_Installed : Integer;");
-         WBI ("      pragma Import (C, Handler_Installed, " &
-              """__gnat_handler_installed"");");
+         WBI ("      procedure Runtime_Initialize " &
+              "(Install_Handler : Integer);");
+         WBI ("      pragma Import (C, Runtime_Initialize, " &
+              """__gnat_runtime_initialize"");");
+
+         --  Import handlers attach procedure for sequential elaboration policy
+
+         if System_Interrupts_Used
+           and then Partition_Elaboration_Policy_Specified = 'S'
+         then
+            WBI ("      procedure Install_Restricted_Handlers_Sequential;");
+            WBI ("      pragma Import (C," &
+                 "Install_Restricted_Handlers_Sequential," &
+                 " ""__gnat_attach_all_handlers"");");
+            WBI ("");
+         end if;
+
+         --  Import task activation procedure for sequential elaboration
+         --  policy.
+
+         if System_Tasking_Restricted_Stages_Used
+           and then Partition_Elaboration_Policy_Specified = 'S'
+         then
+            WBI ("      Partition_Elaboration_Policy : Character;");
+            WBI ("      pragma Import (C, Partition_Elaboration_Policy," &
+                 " ""__gnat_partition_elaboration_policy"");");
+            WBI ("");
+            WBI ("      procedure Activate_All_Tasks_Sequential;");
+            WBI ("      pragma Import (C, Activate_All_Tasks_Sequential," &
+                 " ""__gnat_activate_all_tasks"");");
+         end if;
 
          --  The import of the soft link which performs library-level object
          --  finalization is not needed for VM targets; regular Ada is used in
@@ -634,29 +648,6 @@ package body Bindgen is
             WBI ("      Finalize_Library_Objects : No_Param_Proc;");
             WBI ("      pragma Import (C, Finalize_Library_Objects, " &
                  """__gnat_finalize_library_objects"");");
-         end if;
-
-         --  Import entry point for environment feature enable/disable
-         --  routine, and indication that it's been called previously.
-
-         if OpenVMS_On_Target then
-            WBI ("");
-            WBI ("      procedure Set_Features;");
-            WBI ("      pragma Import (C, Set_Features, " &
-                 """__gnat_set_features"");");
-            WBI ("");
-            WBI ("      Features_Set : Integer;");
-            WBI ("      pragma Import (C, Features_Set, " &
-                 """__gnat_features_set"");");
-
-            if Opt.Heap_Size /= 0 then
-               WBI ("");
-               WBI ("      Heap_Size : Integer;");
-               WBI ("      pragma Import (C, Heap_Size, " &
-                    """__gl_heap_size"");");
-
-               Write_Statement_Buffer;
-            end if;
          end if;
 
          --  Initialize stack limit variable of the environment task if the
@@ -709,8 +700,8 @@ package body Bindgen is
          if Dispatching_Domains_Used then
             WBI ("      procedure Freeze_Dispatching_Domains;");
             WBI ("      pragma Import");
-            WBI ("        (Ada, Freeze_Dispatching_Domains, " &
-                 """__gnat_freeze_dispatching_domains"");");
+            WBI ("        (Ada, Freeze_Dispatching_Domains, "
+                 & """__gnat_freeze_dispatching_domains"");");
          end if;
 
          WBI ("   begin");
@@ -718,6 +709,18 @@ package body Bindgen is
          WBI ("         return;");
          WBI ("      end if;");
          WBI ("      Is_Elaborated := True;");
+
+         --  Call System.Elaboration_Allocators.Mark_Start_Of_Elaboration if
+         --  restriction No_Standard_Allocators_After_Elaboration is active.
+
+         if Cumulative_Restrictions.Set
+              (No_Standard_Allocators_After_Elaboration)
+         then
+            WBI ("      System.Elaboration_Allocators."
+                 & "Mark_Start_Of_Elaboration;");
+         end if;
+
+         --  Generate assignments to initialize globals
 
          Set_String ("      Main_Priority := ");
          Set_Int    (Main_Priority);
@@ -758,6 +761,15 @@ package body Bindgen is
          Set_String ("';");
          Write_Statement_Buffer;
 
+         if System_Tasking_Restricted_Stages_Used
+           and then Partition_Elaboration_Policy_Specified = 'S'
+         then
+            Set_String ("      Partition_Elaboration_Policy := '");
+            Set_Char   (Partition_Elaboration_Policy_Specified);
+            Set_String ("';");
+            Write_Statement_Buffer;
+         end if;
+
          Gen_Restrictions;
 
          WBI ("      Priority_Specific_Dispatching :=");
@@ -795,17 +807,6 @@ package body Bindgen is
             WBI ("      Exception_Tracebacks := 1;");
          end if;
 
-         Set_String ("      Zero_Cost_Exceptions := ");
-
-         if Zero_Cost_Exceptions_Specified then
-            Set_String ("1");
-         else
-            Set_String ("0");
-         end if;
-
-         Set_String (";");
-         Write_Statement_Buffer;
-
          Set_String ("      Detect_Blocking := ");
 
          if Detect_Blocking then
@@ -838,32 +839,14 @@ package body Bindgen is
          --  In .NET, when binding with -z, we don't install the signal handler
          --  to let the caller handle the last exception handler.
 
+         WBI ("");
+
          if VM_Target /= CLI_Target
            or else Bind_Main_Program
          then
-            WBI ("");
-            WBI ("      if Handler_Installed = 0 then");
-            WBI ("         Install_Handler;");
-            WBI ("      end if;");
-         end if;
-
-         --  Generate call to Set_Features
-
-         if OpenVMS_On_Target then
-            WBI ("");
-            WBI ("      if Features_Set = 0 then");
-            WBI ("         Set_Features;");
-            WBI ("      end if;");
-
-            --  Features_Set may twiddle the heap size according to a logical
-            --  name, but the binder switch must override.
-
-            if Opt.Heap_Size /= 0 then
-               Set_String ("      Heap_Size := ");
-               Set_Int (Opt.Heap_Size);
-               Set_Char   (';');
-               Write_Statement_Buffer;
-            end if;
+            WBI ("      Runtime_Initialize (1);");
+         else
+            WBI ("      Runtime_Initialize (0);");
          end if;
       end if;
 
@@ -949,10 +932,31 @@ package body Bindgen is
 
       Gen_Elab_Calls;
 
-      --  From this point, no new dispatching domain can be created.
+      --  Call System.Elaboration_Allocators.Mark_Start_Of_Elaboration if
+      --  restriction No_Standard_Allocators_After_Elaboration is active.
+
+      if Cumulative_Restrictions.Set
+        (No_Standard_Allocators_After_Elaboration)
+      then
+         WBI ("      System.Elaboration_Allocators.Mark_End_Of_Elaboration;");
+      end if;
+
+      --  From this point, no new dispatching domain can be created
 
       if Dispatching_Domains_Used then
          WBI ("      Freeze_Dispatching_Domains;");
+      end if;
+
+      --  Sequential partition elaboration policy
+
+      if Partition_Elaboration_Policy_Specified = 'S' then
+         if System_Interrupts_Used then
+            WBI ("      Install_Restricted_Handlers_Sequential;");
+         end if;
+
+         if System_Tasking_Restricted_Stages_Used then
+            WBI ("      Activate_All_Tasks_Sequential;");
+         end if;
       end if;
 
       --  Case of main program is CIL function or procedure
@@ -1009,6 +1013,8 @@ package body Bindgen is
       Check_Elab_Flag : Boolean;
 
    begin
+      --  Loop through elaboration order entries
+
       for E in Elab_Order.First .. Elab_Order.Last loop
          declare
             Unum : constant Unit_Id := Elab_Order.Table (E);
@@ -1039,20 +1045,23 @@ package body Bindgen is
 
             --  Case of no elaboration code
 
-            --  In CodePeer mode, we special case subprogram bodies which
-            --  are handled in the 'else' part below, and lead to a call to
-            --  <subp>'Elab_Subp_Body.
-
             elsif U.No_Elab
+
+              --  In CodePeer mode, we special case subprogram bodies which
+              --  are handled in the 'else' part below, and lead to a call
+              --  to <subp>'Elab_Subp_Body.
+
               and then (not CodePeer_Mode
+
+                         --  Test for spec
+
                          or else U.Utype = Is_Spec
                          or else U.Utype = Is_Spec_Only
                          or else U.Unit_Kind /= 's')
             then
-
                --  In the case of a body with a separate spec, where the
                --  separate spec has an elaboration entity defined, this is
-               --  where we increment the elaboration entity.
+               --  where we increment the elaboration entity if one exists
 
                if U.Utype = Is_Body
                  and then Units.Table (Unum_Spec).Set_Elab_Entity
@@ -1083,8 +1092,7 @@ package body Bindgen is
                --  a spec with a body, the elaboration entity is initialized
                --  here. This is done because it's the only way to accomplish
                --  initialization of such entities, as there is no mechanism
-               --  provided for initializing global variables at load time on
-               --  AAMP.
+               --  for load time global variable initialization on AAMP.
 
                elsif AAMP_On_Target
                  and then U.Utype = Is_Spec
@@ -1120,8 +1128,7 @@ package body Bindgen is
                --  a spec with a body, the elaboration entity is initialized
                --  here. This is done because it's the only way to accomplish
                --  initialization of such entities, as there is no mechanism
-               --  provided for initializing global variables at load time on
-               --  AAMP.
+               --  for load time global variable initialization on AAMP.
 
                if AAMP_On_Target
                  and then U.Utype = Is_Spec
@@ -1133,8 +1140,39 @@ package body Bindgen is
                   Write_Statement_Buffer;
                end if;
 
+               --  Check incompatibilities with No_Multiple_Elaboration
+
+               if not CodePeer_Mode
+                 and then Cumulative_Restrictions.Set (No_Multiple_Elaboration)
+               then
+                  --  Force_Checking_Of_Elaboration_Flags (-F) not allowed
+
+                  if Force_Checking_Of_Elaboration_Flags then
+                     Osint.Fail
+                       ("-F (force elaboration checks) switch not allowed "
+                        & "with restriction No_Multiple_Elaboration active");
+
+                  --  Interfacing of libraries not allowed
+
+                  elsif Interface_Library_Unit then
+                     Osint.Fail
+                       ("binding of interfaced libraries not allowed "
+                        & "with restriction No_Multiple_Elaboration active");
+
+                  --  Non-Ada main program not allowed
+
+                  elsif not Bind_Main_Program then
+                     Osint.Fail
+                       ("non-Ada main program not allowed "
+                        & "with restriction No_Multiple_Elaboration active");
+                  end if;
+               end if;
+
+               --  OK, see if we need to test elaboration flag
+
                Check_Elab_Flag :=
-                 not CodePeer_Mode
+                 Units.Table (Unum_Spec).Set_Elab_Entity
+                   and then not CodePeer_Mode
                    and then (Force_Checking_Of_Elaboration_Flags
                               or Interface_Library_Unit
                               or not Bind_Main_Program);
@@ -1194,6 +1232,7 @@ package body Bindgen is
 
                if U.Utype /= Is_Spec
                  and then not CodePeer_Mode
+                 and then Units.Table (Unum_Spec).Set_Elab_Entity
                then
                   Set_String ("      E");
                   Set_Unit_Number (Unum_Spec);
@@ -1349,19 +1388,6 @@ package body Bindgen is
       procedure Gen_Header is
       begin
          WBI ("   procedure finalize_library is");
-
-         --  The following flag is used to check for library-level exceptions
-         --  raised during finalization. Symbol comes from System.Soft_Links.
-         --  VM targets use regular Ada to reference the entity.
-
-         if VM_Target = No_VM then
-            WBI ("      LE_Set : Boolean;");
-
-            Set_String ("      pragma Import (Ada, LE_Set, ");
-            Set_String ("""__gnat_library_exception_set"");");
-            Write_Statement_Buffer;
-         end if;
-
          WBI ("   begin");
       end Gen_Header;
 
@@ -1561,27 +1587,17 @@ package body Bindgen is
          --  and the routine necessary to raise it.
 
          if VM_Target = No_VM then
-            WBI ("      if LE_Set then");
-            WBI ("         declare");
-            WBI ("            LE : Ada.Exceptions.Exception_Occurrence;");
+            WBI ("      declare");
+            WBI ("         procedure Reraise_Library_Exception_If_Any;");
 
-            Set_String ("            pragma Import (Ada, LE, ");
-            Set_String ("""__gnat_library_exception"");");
+            Set_String ("            pragma Import (Ada, ");
+            Set_String ("Reraise_Library_Exception_If_Any, ");
+            Set_String ("""__gnat_reraise_library_exception_if_any"");");
             Write_Statement_Buffer;
 
-            Set_String ("            procedure Raise_From_Controlled_");
-            Set_String ("Operation (X : Ada.Exceptions.Exception_");
-            Set_String ("Occurrence);");
-            Write_Statement_Buffer;
-
-            Set_String ("            pragma Import (Ada, Raise_From_");
-            Set_String ("Controlled_Operation, ");
-            Set_String ("""__gnat_raise_from_controlled_operation"");");
-            Write_Statement_Buffer;
-
-            WBI ("         begin");
-            WBI ("            Raise_From_Controlled_Operation (LE);");
-            WBI ("         end;");
+            WBI ("      begin");
+            WBI ("         Reraise_Library_Exception_If_Any;");
+            WBI ("      end;");
 
          --  VM-specific code, use regular Ada to produce the desired behavior
 
@@ -1591,9 +1607,10 @@ package body Bindgen is
             Set_String ("         Ada.Exceptions.Reraise_Occurrence (");
             Set_String ("System.Soft_Links.Library_Exception);");
             Write_Statement_Buffer;
+
+            WBI ("      end if;");
          end if;
 
-         WBI ("      end if;");
          WBI ("   end finalize_library;");
          WBI ("");
       end if;
@@ -1962,6 +1979,7 @@ package body Bindgen is
       end if;
 
       --  Add a "-Ldir" for each directory in the object path
+
       if VM_Target /= CLI_Target then
          for J in 1 .. Nb_Dir_In_Obj_Search_Path loop
             declare
@@ -1973,6 +1991,21 @@ package body Bindgen is
                Write_Linker_Option;
             end;
          end loop;
+      end if;
+
+      if not (Opt.No_Run_Time_Mode or Opt.No_Stdlib) then
+         Name_Len := 0;
+
+         if Opt.Shared_Libgnat then
+            Add_Str_To_Name_Buffer ("-shared");
+         else
+            Add_Str_To_Name_Buffer ("-static");
+         end if;
+
+         --  Write directly to avoid inclusion in -K output as -static and
+         --  -shared are not usually specified linker options.
+
+         WBI ("   --   " & Name_Buffer (1 .. Name_Len));
       end if;
 
       --  Sort linker options
@@ -2027,36 +2060,12 @@ package body Bindgen is
       --  files. The reason for this decision is that libraries referenced
       --  by internal routines may reference these standard library entries.
 
-      --  Note that we do not insert anything when pragma No_Run_Time has been
-      --  specified or when the standard libraries are not to be used,
-      --  otherwise on some platforms, such as VMS, we may get duplicate
-      --  symbols when linking.
+      --  Note that we do not insert anything when pragma No_Run_Time has
+      --  been specified or when the standard libraries are not to be used,
+      --  otherwise on some platforms, we may get duplicate symbols when
+      --  linking (not clear if this is still the case, but it is harmless).
 
       if not (Opt.No_Run_Time_Mode or else Opt.No_Stdlib) then
-         Name_Len := 0;
-
-         if Opt.Shared_Libgnat then
-            Add_Str_To_Name_Buffer ("-shared");
-         else
-            Add_Str_To_Name_Buffer ("-static");
-         end if;
-
-         --  Write directly to avoid -K output (why???)
-
-         WBI ("   --   " & Name_Buffer (1 .. Name_Len));
-
-         if With_DECGNAT then
-            Name_Len := 0;
-
-            if Opt.Shared_Libgnat then
-               Add_Str_To_Name_Buffer (Shared_Lib ("decgnat"));
-            else
-               Add_Str_To_Name_Buffer ("-ldecgnat");
-            end if;
-
-            Write_Linker_Option;
-         end if;
-
          if With_GNARL then
             Name_Len := 0;
 
@@ -2132,9 +2141,6 @@ package body Bindgen is
 
       --  Generate output file in appropriate language
 
-      Check_System_Restrictions_Used;
-      Check_Dispatching_Domains_Used;
-
       Gen_Output_File_Ada (Filename);
    end Gen_Output_File;
 
@@ -2149,8 +2155,7 @@ package body Bindgen is
       --  function Get_Ada_Main_Name for details on the form of the name.
 
       Needs_Library_Finalization : constant Boolean :=
-                                     not Configurable_Run_Time_On_Target
-                                       and then Has_Finalizer;
+        not Configurable_Run_Time_On_Target and then Has_Finalizer;
       --  For restricted run-time libraries (ZFP and Ravenscar) tasks are
       --  non-terminating, so we do not want finalization.
 
@@ -2209,8 +2214,7 @@ package body Bindgen is
 
       Resolve_Binder_Options;
 
-      --  Usually, adafinal is called using a pragma Import C. Since Import C
-      --  doesn't have the same semantics for VMs or CodePeer use standard Ada.
+      --  Generate standard with's
 
       if not Suppress_Standard_Library_On_Target then
          if CodePeer_Mode then
@@ -2404,6 +2408,14 @@ package body Bindgen is
            ", Body_File_Name => """ &
            Name_Buffer (1 .. Name_Len + 3));
 
+      --  Generate pragma Suppress (Overflow_Check). This is needed for recent
+      --  versions of the compiler which have overflow checks on by default.
+      --  We do not want overflow checking enabled for the increments of the
+      --  elaboration variables (since this can cause an unwanted reference to
+      --  the last chance exception handler for limited run-times).
+
+      WBI ("pragma Suppress (Overflow_Check);");
+
       --  Generate with of System.Restrictions to initialize
       --  Run_Time_Restrictions.
 
@@ -2414,9 +2426,22 @@ package body Bindgen is
          WBI ("with System.Restrictions;");
       end if;
 
+      --  Generate with of Ada.Exceptions if needs library finalization
+
       if Needs_Library_Finalization then
          WBI ("with Ada.Exceptions;");
       end if;
+
+      --  Generate with of System.Elaboration_Allocators if the restriction
+      --  No_Standard_Allocators_After_Elaboration was present.
+
+      if Cumulative_Restrictions.Set
+           (No_Standard_Allocators_After_Elaboration)
+      then
+         WBI ("with System.Elaboration_Allocators;");
+      end if;
+
+      --  Generate start of package body
 
       WBI ("");
       WBI ("package body " & Ada_Main & " is");
@@ -2458,8 +2483,13 @@ package body Bindgen is
 
          --  The B.1 (39) implementation advice says that the adainit/adafinal
          --  routines should be idempotent. Generate a flag to ensure that.
+         --  This is not needed if we are suppressing the standard library
+         --  since it would never be referenced.
 
-         WBI ("   Is_Elaborated : Boolean := False;");
+         if not Suppress_Standard_Library_On_Target then
+            WBI ("   Is_Elaborated : Boolean := False;");
+         end if;
+
          WBI ("");
       end if;
 
@@ -2672,7 +2702,7 @@ package body Bindgen is
    function Get_Ada_Main_Name return String is
       Suffix : constant String := "_00";
       Name   : String (1 .. Opt.Ada_Main_Name.all'Length + Suffix'Length) :=
-                 Opt.Ada_Main_Name.all & Suffix;
+        Opt.Ada_Main_Name.all & Suffix;
       Nlen   : Natural;
 
    begin
@@ -2878,24 +2908,57 @@ package body Bindgen is
    ----------------------------
 
    procedure Resolve_Binder_Options is
+
+      procedure Check_Package (Var : in out Boolean; Name : String);
+      --  Set Var to true iff the current identifier in Namet is Name. Do
+      --  nothing if it doesn't match. This procedure is just an helper to
+      --  avoid to explicitely deal with length.
+
+      -------------------
+      -- Check_Package --
+      -------------------
+
+      procedure Check_Package (Var : in out Boolean; Name : String) is
+      begin
+         if Name_Len = Name'Length
+           and then Name_Buffer (1 .. Name_Len) = Name
+         then
+            Var := True;
+         end if;
+      end Check_Package;
+
+   --  Start of processing for Resolve_Binder_Options
+
    begin
       for E in Elab_Order.First .. Elab_Order.Last loop
          Get_Name_String (Units.Table (Elab_Order.Table (E)).Uname);
 
          --  This is not a perfect approach, but is the current protocol
          --  between the run-time and the binder to indicate that tasking is
-         --  used: system.os_interface should always be used by any tasking
+         --  used: System.OS_Interface should always be used by any tasking
          --  application.
 
-         if Name_Buffer (1 .. 19) = "system.os_interface" then
-            With_GNARL := True;
-         end if;
+         Check_Package (With_GNARL, "system.os_interface%s");
 
-         --  Ditto for declib and the "dec" package
+         --  Ditto for the use of restricted tasking
 
-         if OpenVMS_On_Target and then Name_Buffer (1 .. 5) = "dec%s" then
-            With_DECGNAT := True;
-         end if;
+         Check_Package
+           (System_Tasking_Restricted_Stages_Used,
+            "system.tasking.restricted.stages%s");
+
+         --  Ditto for the use of interrupts
+
+         Check_Package (System_Interrupts_Used, "system.interrupts%s");
+
+         --  Ditto for the use of dispatching domains
+
+         Check_Package
+           (Dispatching_Domains_Used,
+            "system.multiprocessors.dispatching_domains%s");
+
+         --  Ditto for the use of restrictions
+
+         Check_Package (System_Restrictions_Used, "system.restrictions%s");
       end loop;
    end Resolve_Binder_Options;
 
@@ -2959,9 +3022,9 @@ package body Bindgen is
          loop
             declare
                Inum : constant Int :=
-                        Interrupt_States.Table (K).Interrupt_Id;
+                 Interrupt_States.Table (K).Interrupt_Id;
                Stat : constant Character :=
-                        Interrupt_States.Table (K).Interrupt_State;
+                 Interrupt_States.Table (K).Interrupt_State;
 
             begin
                while IS_Pragma_Settings.Last < Inum loop

@@ -1,6 +1,5 @@
 /* This file contains definitions for the register renamer.
-   Copyright (C) 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2011-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -49,8 +48,6 @@ struct du_head
 };
 
 typedef struct du_head *du_head_p;
-DEF_VEC_P (du_head_p);
-DEF_VEC_ALLOC_P (du_head_p, heap);
 
 /* This struct describes a single occurrence of a register.  */
 struct du_chain
@@ -59,7 +56,7 @@ struct du_chain
   struct du_chain *next_use;
 
   /* The insn where the register appears.  */
-  rtx insn;
+  rtx_insn *insn;
   /* The location inside the insn.  */
   rtx *loc;
   /* The register class required by the insn at this location.  */
@@ -68,7 +65,7 @@ struct du_chain
 
 /* This struct describes data gathered during regrename_analyze about
    a single operand of an insn.  */
-typedef struct
+struct operand_rr_info
 {
   /* The number of chains recorded for this operand.  */
   int n_chains;
@@ -76,26 +73,24 @@ typedef struct
      a memory operand.  */
   struct du_chain *chains[MAX_REGS_PER_ADDRESS];
   struct du_head *heads[MAX_REGS_PER_ADDRESS];
-} operand_rr_info;
+};
 
 /* A struct to hold a vector of operand_rr_info structures describing the
    operands of an insn.  */
-typedef struct
+struct insn_rr_info
 {
   operand_rr_info *op_info;
-} insn_rr_info;
+};
 
-DEF_VEC_O (insn_rr_info);
-DEF_VEC_ALLOC_O (insn_rr_info, heap);
 
-extern VEC(insn_rr_info, heap) *insn_rr;
+extern vec<insn_rr_info> insn_rr;
 
 extern void regrename_init (bool);
 extern void regrename_finish (void);
 extern void regrename_analyze (bitmap);
 extern du_head_p regrename_chain_from_id (unsigned int);
-extern int find_best_rename_reg (du_head_p, enum reg_class, HARD_REG_SET *,
-				 int);
+extern int find_rename_reg (du_head_p, enum reg_class, HARD_REG_SET *, int,
+			    bool);
 extern void regrename_do_replace (du_head_p, int);
 
 #endif

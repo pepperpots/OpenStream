@@ -1,6 +1,6 @@
 // Allocator details.
 
-// Copyright (C) 2004, 2005, 2006, 2009, 2010 Free Software Foundation, Inc.
+// Copyright (C) 2004-2015 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -31,6 +31,11 @@
 #include <ext/mt_allocator.h>
 #include <cstring>
 
+// The include file is needed for uintptr_t. If this file does not compile,
+// check to make sure the target has <stdint.h> and that it provides
+// uintptr_t.
+#include <stdint.h>
+
 namespace
 {
 #ifdef __GTHREADS
@@ -48,6 +53,7 @@ namespace
 	{
 	  __gthread_key_delete(_M_key);
 	  ::operator delete(static_cast<void*>(_M_thread_freelist_array));
+	  _M_thread_freelist = 0;
 	}
     }
   };
@@ -73,7 +79,7 @@ namespace
     __freelist& freelist = get_freelist();
     {
       __gnu_cxx::__scoped_lock sentry(get_freelist_mutex());
-      size_t _M_id = reinterpret_cast<size_t>(__id);
+      uintptr_t _M_id = reinterpret_cast<uintptr_t>(__id);
       
       typedef __gnu_cxx::__pool<true>::_Thread_record _Thread_record;
       _Thread_record* __tr = &freelist._M_thread_freelist_array[_M_id - 1];
@@ -626,7 +632,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       {
 	__freelist& freelist = get_freelist();
 	void* v = __gthread_getspecific(freelist._M_key);
-	size_t _M_id = (size_t)v;
+	uintptr_t _M_id = (uintptr_t)v;
 	if (_M_id == 0)
 	  {
 	    {

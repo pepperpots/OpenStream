@@ -117,16 +117,21 @@ class Export : public String_dump
   // Export the identifiers in BINDINGS which are marked for export.
   // The exporting is done via a series of calls to THIS->STREAM_.  If
   // is nothing to export, this->stream_->write will not be called.
-  // UNIQUE_PREFIX is a prefix for all global symbols.
+  // PREFIX is the package prefix.  PKGPATH is the package path.
+  // Only one of PREFIX and PKGPATH will be non-empty.
   // PACKAGE_PRIORITY is the priority to use for this package.
+  // PACKAGES is all the packages we have seen.
+  // IMPORTS is the explicitly imported packages.
   // IMPORT_INIT_FN is the name of the import initialization function
   // for this package; it will be empty if none is needed.
   // IMPORTED_INIT_FNS is the list of initialization functions for
   // imported packages.
   void
   export_globals(const std::string& package_name,
-		 const std::string& unique_prefix,
+		 const std::string& prefix,
+		 const std::string& pkgpath,
 		 int package_priority,
+		 const std::map<std::string, Package*>& packages,
 		 const std::map<std::string, Package*>& imports,
 		 const std::string& import_init_fn,
 		 const std::set<Import_init>& imported_init_fns,
@@ -160,6 +165,10 @@ class Export : public String_dump
   Export(const Export&);
   Export& operator=(const Export&);
 
+  // Write out all known packages.
+  void
+  write_packages(const std::map<std::string, Package*>& packages);
+
   // Write out the imported packages.
   void
   write_imports(const std::map<std::string, Package*>& imports);
@@ -182,6 +191,8 @@ class Export : public String_dump
   Type_refs type_refs_;
   // Index number of next type.
   int type_index_;
+  // Packages we have written out.
+  Unordered_set(const Package*) packages_;
 };
 
 // An export streamer which puts the export stream in a named section.

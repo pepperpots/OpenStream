@@ -1,5 +1,5 @@
 ;; Constraints definitions belonging to the gcc backend for IBM S/390.
-;; Copyright (C) 2006, 2007, 2008 Free Software Foundation, Inc.
+;; Copyright (C) 2006-2015 Free Software Foundation, Inc.
 ;; Written by Wolfgang Gellerich, using code and information found in
 ;; files s390.md, s390.h, and s390.c.
 ;;
@@ -29,7 +29,13 @@
 ;;    c -- Condition code register 33.
 ;;    d -- Any register from 0 to 15.
 ;;    f -- Floating point registers.
+;;    j -- Multiple letter constraint for constant scalar and vector values
+;;         j00: constant zero scalar or vector
+;;         jm1: constant scalar or vector with all bits set
+;;         jxx: contiguous bitmask of 0 or 1 in all vector elements
+;;         jyy: constant consisting of byte chunks being either 0 or 0xff
 ;;    t -- Access registers 36 and 37.
+;;    v -- Vector registers v0-v31.
 ;;    C -- A signed 8-bit constant (-128..127)
 ;;    D -- An unsigned 16-bit constant (0..65535)
 ;;    G -- Const double zero operand
@@ -45,6 +51,8 @@
 ;;         H,Q:     mode of the part
 ;;         D,S,H:   mode of the containing operand
 ;;         0,F:     value of the other parts (F - all bits set)
+;;         --
+;;         xx[DS]q  satisfies s390_contiguous_bitmask_p for DImode or SImode
 ;;
 ;;         The constraint matches if the specified part of a constant
 ;;         has a value different from its other parts.  If the letter x
@@ -100,11 +108,33 @@
   "FP_REGS"
   "Floating point registers")
 
+(define_constraint "j00"
+  "Zero scalar or vector constant"
+  (match_test "op == CONST0_RTX (GET_MODE (op))"))
+
+(define_constraint "jm1"
+  "All one bit scalar or vector constant"
+  (match_test "op == CONSTM1_RTX (GET_MODE (op))"))
+
+(define_constraint "jxx"
+  "@internal"
+  (and (match_code "const_vector")
+       (match_test "s390_contiguous_bitmask_vector_p (op, NULL, NULL)")))
+
+(define_constraint "jyy"
+  "@internal"
+  (and (match_code "const_vector")
+       (match_test "s390_bytemask_vector_p (op, NULL)")))
 
 (define_register_constraint "t"
   "ACCESS_REGS"
   "@internal
    Access registers 36 and 37")
+
+
+(define_register_constraint "v"
+  "VEC_REGS"
+  "Vector registers v0-v31")
 
 
 ;;
@@ -330,8 +360,15 @@
   (and (match_code "const_int")
        (match_test "s390_N_constraint_str (\"xQH0\", ival)")))
 
+(define_constraint "NxxDq"
+  "@internal"
+  (and (match_code "const_int")
+       (match_test "s390_contiguous_bitmask_p (ival, 64, NULL, NULL)")))
 
-
+(define_constraint "NxxSq"
+  "@internal"
+  (and (match_code "const_int")
+       (match_test "s390_contiguous_bitmask_p (ival, 32, NULL, NULL)")))
 
 ;;
 ;; Double-letter constraints starting with O follow.
@@ -396,14 +433,6 @@
   (match_test "MEM_P (op)
                && s390_check_symref_alignment (XEXP (op, 0),
                                                GET_MODE_SIZE (GET_MODE (op)))"))
-
-(define_memory_constraint "e"
-  "Matches all memory references available on the current architecture
-level.  This constraint will never be used and using it in an inline
-assembly is *always* a bug since there is no instruction accepting all
-those addresses.  It just serves as a placeholder for a generic memory
-constraint."
-  (match_test "strict_memory_address_p (GET_MODE (op), op)"))
 
 ; This defines 'm' as normal memory constraint.  This is only possible
 ; since the standard memory constraint is re-defined in s390.h using

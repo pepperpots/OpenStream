@@ -14,11 +14,9 @@
 #include <fpu_control.h>
 #endif
 
+#include "runtime.h"
 #include "go-alloc.h"
 #include "array.h"
-#include "go-string.h"
-
-#include "runtime.h"
 #include "arch.h"
 #include "malloc.h"
 
@@ -32,25 +30,22 @@
 
 extern char **environ;
 
-extern void runtime_main (void);
-static void mainstart (void *);
-
 /* The main function.  */
 
 int
 main (int argc, char **argv)
 {
+  runtime_isarchive = false;
+
+  if (runtime_isstarted)
+    return NULL;
+  runtime_isstarted = true;
+
   runtime_check ();
   runtime_args (argc, (byte **) argv);
   runtime_osinit ();
   runtime_schedinit ();
-  __go_go (mainstart, NULL);
+  __go_go (runtime_main, NULL);
   runtime_mstart (runtime_m ());
   abort ();
-}
-
-static void
-mainstart (void *arg __attribute__ ((unused)))
-{
-  runtime_main ();
 }

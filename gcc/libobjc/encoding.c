@@ -1,6 +1,5 @@
 /* Encoding of types for Objective C.
-   Copyright (C) 1993, 1995, 1996, 1997, 1998, 2000, 2002, 2004, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1993-2015 Free Software Foundation, Inc.
    Contributed by Kresten Krab Thorup
    Bitfield support by Ovidiu Predescu
 
@@ -112,6 +111,32 @@ static int __attribute__ ((__unused__)) not_target_flags = 0;
 #undef ALTIVEC_VECTOR_MODE
 #define ALTIVEC_VECTOR_MODE(MODE) (0)
 
+/* Replace TARGET_VSX, TARGET_ALTIVEC, and TARGET_64BIT with constants based on
+   the current switches, rather than looking in the options structure.  */
+#ifdef _ARCH_PPC
+#undef TARGET_VSX
+#undef TARGET_ALTIVEC
+#undef TARGET_64BIT
+
+#ifdef __VSX__
+#define TARGET_VSX 1
+#else
+#define TARGET_VSX 0
+#endif
+
+#ifdef __ALTIVEC__
+#define TARGET_ALTIVEC 1
+#else
+#define TARGET_ALTIVEC 0
+#endif
+
+#ifdef _ARCH_PPC64
+#define TARGET_64BIT 1
+#else
+#define TARGET_64BIT 0
+#endif
+#endif
+
 /* Furthermore, some (powerpc) targets also use TARGET_ALIGN_NATURAL
  in their alignment macros. Currently[4.5/6], rs6000.h points this
  to a static variable, initialized by target overrides. This is reset
@@ -167,6 +192,7 @@ _darwin_rs6000_special_round_type_align (const char *struc, int comp, int spec)
    ? MAX (MAX (COMPUTED, SPECIFIED), 64)				\
    : MAX (COMPUTED, SPECIFIED));})
 
+#define rs6000_special_adjust_field_align_p(FIELD, COMPUTED) 0
 
 /* Skip a variable name, enclosed in quotes (").  */
 static inline
@@ -1036,7 +1062,7 @@ objc_get_type_qualifiers (const char *type)
   These functions are used by objc_sizeof_type and objc_alignof_type
   functions to compute the size and alignment of structures. The
   previous method of computing the size and alignment of a structure
-  was not working on some architectures, particulary on AIX, and in
+  was not working on some architectures, particularly on AIX, and in
   the presence of bitfields inside the structure.  */
 void
 objc_layout_structure (const char *type,

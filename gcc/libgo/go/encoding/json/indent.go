@@ -27,6 +27,15 @@ func compact(dst *bytes.Buffer, src []byte, escape bool) error {
 			dst.WriteByte(hex[c&0xF])
 			start = i + 1
 		}
+		// Convert U+2028 and U+2029 (E2 80 A8 and E2 80 A9).
+		if c == 0xE2 && i+2 < len(src) && src[i+1] == 0x80 && src[i+2]&^1 == 0xA8 {
+			if start < i {
+				dst.Write(src[start:i])
+			}
+			dst.WriteString(`\u202`)
+			dst.WriteByte(hex[src[i+2]&0xF])
+			start = i + 3
+		}
 		v := scan.step(&scan, int(c))
 		if v >= scanSkipSpace {
 			if v == scanError {
@@ -60,8 +69,9 @@ func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
 // Each element in a JSON object or array begins on a new,
 // indented line beginning with prefix followed by one or more
 // copies of indent according to the indentation nesting.
-// The data appended to dst has no trailing newline, to make it easier
-// to embed inside other formatted JSON data.
+// The data appended to dst does not begin with the prefix nor
+// any indentation, and has no trailing newline, to make it
+// easier to embed inside other formatted JSON data.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	origLen := dst.Len()
 	var scan scanner

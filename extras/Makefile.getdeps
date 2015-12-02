@@ -1,6 +1,8 @@
 include Makefile.config
 
-MIRROR=ftp://gcc.gnu.org/pub/gcc/infrastructure/
+MPC_MIRROR=http://ftp.gnu.org/gnu/mpc/
+MPFR_MIRROR=http://ftp.gnu.org/gnu/mpfr/
+GMP_MIRROR=http://ftp.gnu.org/gnu/gmp/
 CONTRIB_LIBDIR=$(INST_DIR)/lib
 CONTRIB_LIB64DIR=$(INST_DIR)/lib64
 CONTRIB_BINDIR=$(INST_DIR)/bin
@@ -16,6 +18,9 @@ PARAVER_VERSION=4.3.5
 WXPROPERTYGRID_VERSION=1.4.15
 PAPI_VERSION=5.1.0.2
 CILK_VERSION=5.4.6
+MPC_VERSION=1.0.3
+MPFR_VERSION=3.1.3
+GMP_VERSION=6.1.0
 CONTRIB_OPT=-O3
 NUMACTL_VERSION=2.0.8
 
@@ -62,35 +67,35 @@ openstreamdeps: ./gcc/mpc/openstreamdep \
 	./gcc/mpfr/openstreamdep \
 	./gcc/gmp/openstreamdep
 
-gcc/mpc/openstreamdep: $(ARCHIVES_DIR)/mpc-0.8.1.tar.gz
+gcc/mpc/openstreamdep: $(ARCHIVES_DIR)/mpc-$(MPC_VERSION).tar.gz
 	 tar xf $<
 	 if [ -d gcc/mpc ] ; then rm -rf gcc/mpc ; fi
-	 mv mpc-0.8.1 gcc/mpc
+	 mv mpc-$(MPC_VERSION) gcc/mpc
 	 touch $@
 
-$(ARCHIVES_DIR)/mpc-0.8.1.tar.gz:
+$(ARCHIVES_DIR)/mpc-$(MPC_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
-	wget '$(MIRROR)/mpc-0.8.1.tar.gz' -O $@
+	wget '$(MPC_MIRROR)/mpc-$(MPC_VERSION).tar.gz' -O $@
 
-gcc/mpfr/openstreamdep: $(ARCHIVES_DIR)/mpfr-2.4.2.tar.bz2
+gcc/mpfr/openstreamdep: $(ARCHIVES_DIR)/mpfr-$(MPFR_VERSION).tar.bz2
 	tar xf $<
 	if [ -d gcc/mpfr ] ; then rm -rf gcc/mpfr ; fi
-	mv mpfr-2.4.2 gcc/mpfr
+	mv mpfr-$(MPFR_VERSION) gcc/mpfr
 	touch $@
 
-$(ARCHIVES_DIR)/mpfr-2.4.2.tar.bz2:
+$(ARCHIVES_DIR)/mpfr-$(MPFR_VERSION).tar.bz2:
 	mkdir -p $(ARCHIVES_DIR)
-	wget '$(MIRROR)/mpfr-2.4.2.tar.bz2' -O $@
+	wget '$(MPFR_MIRROR)/mpfr-$(MPFR_VERSION).tar.bz2' -O $@
 
-gcc/gmp/openstreamdep: $(ARCHIVES_DIR)/gmp-4.3.2.tar.bz2
+gcc/gmp/openstreamdep: $(ARCHIVES_DIR)/gmp-$(GMP_VERSION).tar.bz2
 	tar xf $<
 	if [ -d gcc/gmp ] ; then rm -rf gcc/gmp ; fi
-	mv gmp-4.3.2 gcc/gmp
+	mv gmp-$(GMP_VERSION) gcc/gmp
 	touch $@
 
-$(ARCHIVES_DIR)/gmp-4.3.2.tar.bz2:
+$(ARCHIVES_DIR)/gmp-$(GMP_VERSION).tar.bz2:
 	mkdir -p $(ARCHIVES_DIR)
-	wget '$(MIRROR)/gmp-4.3.2.tar.bz2' -O $@
+	wget '$(GMP_MIRROR)/gmp-$(GMP_VERSION).tar.bz2' -O $@
 
 ################################################################################
 # Dependencies of the example programs                                         #

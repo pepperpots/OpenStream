@@ -1,7 +1,6 @@
 /* Functions related to mangling class names for the GNU compiler
    for the Java(TM) language.
-   Copyright (C) 1998, 1999, 2001, 2002, 2003, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -29,13 +28,23 @@ The Free Software Foundation is independent of Sun Microsystems, Inc.  */
 #include "system.h"
 #include "coretypes.h"
 #include "jcf.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "options.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "stringpool.h"
 #include "java-tree.h"
 #include "obstack.h"
 #include "diagnostic-core.h"
 #include "ggc.h"
 #include "langhooks-def.h"
-#include "tm.h"         /* FIXME: For gcc_obstack_init from defaults.h.  */
 
 static void mangle_class_field (tree);
 static void mangle_vtable (tree);
@@ -712,7 +721,7 @@ finish_mangling (void)
   compression_table = NULL_TREE;
   compression_next = 0;
   obstack_1grow (mangle_obstack, '\0');
-  result = get_identifier (obstack_base (mangle_obstack));
+  result = get_identifier ((char *) obstack_base (mangle_obstack));
   obstack_free (mangle_obstack, obstack_base (mangle_obstack));
 
   return result;

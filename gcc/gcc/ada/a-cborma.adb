@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -35,31 +35,11 @@ with Ada.Containers.Red_Black_Trees.Generic_Bounded_Keys;
 pragma Elaborate_All
   (Ada.Containers.Red_Black_Trees.Generic_Bounded_Keys);
 
-with Ada.Finalization; use Ada.Finalization;
-
 with System; use type System.Address;
 
 package body Ada.Containers.Bounded_Ordered_Maps is
 
-   type Iterator is new Limited_Controlled and
-     Map_Iterator_Interfaces.Reversible_Iterator with
-   record
-      Container : Map_Access;
-      Node      : Count_Type;
-   end record;
-
-   overriding procedure Finalize (Object : in out Iterator);
-
-   overriding function First (Object : Iterator) return Cursor;
-   overriding function Last  (Object : Iterator) return Cursor;
-
-   overriding function Next
-     (Object   : Iterator;
-      Position : Cursor) return Cursor;
-
-   overriding function Previous
-     (Object   : Iterator;
-      Position : Cursor) return Cursor;
+   pragma Annotate (CodePeer, Skip_Analysis);
 
    -----------------------------
    -- Node Access Subprograms --
@@ -283,6 +263,24 @@ package body Ada.Containers.Bounded_Ordered_Maps is
    end ">";
 
    ------------
+   -- Adjust --
+   ------------
+
+   procedure Adjust (Control : in out Reference_Control_Type) is
+   begin
+      if Control.Container /= null then
+         declare
+            C : Map renames Control.Container.all;
+            B : Natural renames C.Busy;
+            L : Natural renames C.Lock;
+         begin
+            B := B + 1;
+            L := L + 1;
+         end;
+      end if;
+   end Adjust;
+
+   ------------
    -- Assign --
    ------------
 
@@ -426,13 +424,22 @@ package body Ada.Containers.Bounded_Ordered_Maps is
 
       declare
          N : Node_Type renames Container.Nodes (Position.Node);
+         B : Natural renames Position.Container.Busy;
+         L : Natural renames Position.Container.Lock;
+
       begin
-         return (Element => N.Element'Access);
+         return R : constant Constant_Reference_Type :=
+            (Element => N.Element'Access,
+             Control => (Controlled with Container'Unrestricted_Access))
+         do
+            B := B + 1;
+            L := L + 1;
+         end return;
       end;
    end Constant_Reference;
 
    function Constant_Reference
-     (Container : Map;
+     (Container : aliased Map;
       Key       : Key_Type) return Constant_Reference_Type
    is
       Node : constant Count_Type := Key_Ops.Find (Container, Key);
@@ -443,9 +450,21 @@ package body Ada.Containers.Bounded_Ordered_Maps is
       end if;
 
       declare
+         Cur  : Cursor := Find (Container, Key);
+         pragma Unmodified (Cur);
+
          N : Node_Type renames Container.Nodes (Node);
+         B : Natural renames Cur.Container.Busy;
+         L : Natural renames Cur.Container.Lock;
+
       begin
-         return (Element => N.Element'Access);
+         return R : constant Constant_Reference_Type :=
+            (Element => N.Element'Access,
+             Control => (Controlled with Container'Unrestricted_Access))
+         do
+            B := B + 1;
+            L := L + 1;
+         end return;
       end;
    end Constant_Reference;
 
@@ -614,6 +633,22 @@ package body Ada.Containers.Bounded_Ordered_Maps is
          begin
             B := B - 1;
          end;
+      end if;
+   end Finalize;
+
+   procedure Finalize (Control : in out Reference_Control_Type) is
+   begin
+      if Control.Container /= null then
+         declare
+            C : Map renames Control.Container.all;
+            B : Natural renames C.Busy;
+            L : Natural renames C.Lock;
+         begin
+            B := B - 1;
+            L := L - 1;
+         end;
+
+         Control.Container := null;
       end if;
    end Finalize;
 
@@ -848,20 +883,19 @@ package body Ada.Containers.Bounded_Ordered_Maps is
       ------------
 
       procedure Assign (Node : in out Node_Type) is
+         New_Item : Element_Type;
+         pragma Unmodified (New_Item);
+         --  Default-initialized element (ok to reference, see below)
+
       begin
          Node.Key := Key;
 
-         --  Were this insertion operation to accept an element parameter, this
-         --  is the point where the element value would be used, to update the
-         --  element component of the new node. However, this insertion
-         --  operation is special, in the sense that it does not accept an
-         --  element parameter. Rather, this version of Insert allocates a node
-         --  (inserting it among the active nodes of the container in the
-         --  normal way, with the node's position being determined by the Key),
-         --  and passes back a cursor designating the node. It is then up to
-         --  the caller to assign a value to the node's element.
+      --  There is no explicit element provided, but in an instance the element
+      --  type may be a scalar with a Default_Value aspect, or a composite type
+      --  with such a scalar component or with defaulted components, so insert
+      --  possibly initialized elements at the given position.
 
-         --  Node.Element := New_Item;
+         Node.Element := New_Item;
       end Assign;
 
       --------------
@@ -980,9 +1014,9 @@ package body Ada.Containers.Bounded_Ordered_Maps is
       --  for a reverse iterator, Container.Last is the beginning.
 
       return It : constant Iterator :=
-                    (Limited_Controlled with
-                       Container => Container'Unrestricted_Access,
-                       Node      => 0)
+        (Limited_Controlled with
+           Container => Container'Unrestricted_Access,
+           Node      => 0)
       do
          B := B + 1;
       end return;
@@ -1029,9 +1063,9 @@ package body Ada.Containers.Bounded_Ordered_Maps is
       --  is a forward or reverse iteration.)
 
       return It : constant Iterator :=
-                    (Limited_Controlled with
-                       Container => Container'Unrestricted_Access,
-                       Node      => Start.Node)
+        (Limited_Controlled with
+           Container => Container'Unrestricted_Access,
+           Node      => Start.Node)
       do
          B := B + 1;
       end return;
@@ -1174,7 +1208,7 @@ package body Ada.Containers.Bounded_Ordered_Maps is
          M : Map renames Position.Container.all;
 
          Node : constant Count_Type :=
-                  Tree_Operations.Next (M, Position.Node);
+           Tree_Operations.Next (M, Position.Node);
 
       begin
          if Node = 0 then
@@ -1233,7 +1267,7 @@ package body Ada.Containers.Bounded_Ordered_Maps is
          M : Map renames Position.Container.all;
 
          Node : constant Count_Type :=
-                  Tree_Operations.Previous (M, Position.Node);
+           Tree_Operations.Previous (M, Position.Node);
 
       begin
          if Node = 0 then
@@ -1385,8 +1419,16 @@ package body Ada.Containers.Bounded_Ordered_Maps is
 
       declare
          N : Node_Type renames Container.Nodes (Position.Node);
+         B : Natural   renames Container.Busy;
+         L : Natural   renames Container.Lock;
       begin
-         return (Element => N.Element'Access);
+         return R : constant Reference_Type :=
+           (Element => N.Element'Access,
+            Control => (Controlled with Container'Unrestricted_Access))
+         do
+            B := B + 1;
+            L := L + 1;
+         end return;
       end;
    end Reference;
 
@@ -1403,8 +1445,16 @@ package body Ada.Containers.Bounded_Ordered_Maps is
 
       declare
          N : Node_Type renames Container.Nodes (Node);
+         B : Natural   renames Container.Busy;
+         L : Natural   renames Container.Lock;
       begin
-         return (Element => N.Element'Access);
+         return R : constant Reference_Type :=
+           (Element => N.Element'Access,
+            Control => (Controlled with Container'Unrestricted_Access))
+         do
+            B := B + 1;
+            L := L + 1;
+         end return;
       end;
    end Reference;
 

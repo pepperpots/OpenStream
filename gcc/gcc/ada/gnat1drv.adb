@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -25,6 +25,7 @@
 
 with Atree;    use Atree;
 with Back_End; use Back_End;
+with Checks;
 with Comperr;
 with Csets;    use Csets;
 with Debug;    use Debug;
@@ -35,8 +36,8 @@ with Fmap;
 with Fname;    use Fname;
 with Fname.UF; use Fname.UF;
 with Frontend;
+with Ghost;
 with Gnatvsn;  use Gnatvsn;
-with Hostparm;
 with Inline;
 with Lib;      use Lib;
 with Lib.Writ; use Lib.Writ;
@@ -60,6 +61,7 @@ with Sem_Ch13;
 with Sem_Elim;
 with Sem_Eval;
 with Sem_Type;
+with Set_Targ;
 with Sinfo;    use Sinfo;
 with Sinput.L; use Sinput.L;
 with Snames;
@@ -67,6 +69,7 @@ with Sprint;   use Sprint;
 with Stringt;
 with Stylesw;  use Stylesw;
 with Targparm; use Targparm;
+with Tbuild;
 with Tree_Gen;
 with Treepr;   use Treepr;
 with Ttypes;
@@ -78,6 +81,11 @@ with Usage;
 with Validsw;  use Validsw;
 
 with System.Assertions;
+with System.OS_Lib;
+
+--------------
+-- Gnat1drv --
+--------------
 
 procedure Gnat1drv is
    Main_Unit_Node : Node_Id;
@@ -103,10 +111,12 @@ procedure Gnat1drv is
    --  Called when we are not generating code, to check if -gnatR was requested
    --  and if so, explain that we will not be honoring the request.
 
-   procedure Check_Library_Items;
-   --  For debugging -- checks the behavior of Walk_Library_Items
-   pragma Warnings (Off, Check_Library_Items);
-   --  In case the call below is commented out
+   procedure Post_Compilation_Validation_Checks;
+   --  This procedure performs various validation checks that have to be left
+   --  to the end of the compilation process, after generating code but before
+   --  issuing error messages. In particular, these checks generally require
+   --  the information provided by the back end in back annotation of declared
+   --  entities (e.g. actual size and alignment values chosen by the back end).
 
    ----------------------------
    -- Adjust_Global_Switches --
@@ -114,13 +124,29 @@ procedure Gnat1drv is
 
    procedure Adjust_Global_Switches is
    begin
-      --  Debug flag -gnatd.I is a synonym for Generate_SCIL and requires code
-      --  generation.
+      --  -gnatd.M enables Relaxed_RM_Semantics
 
-      if Debug_Flag_Dot_II
-        and then Operating_Mode = Generate_Code
-      then
-         Generate_SCIL := True;
+      if Debug_Flag_Dot_MM then
+         Relaxed_RM_Semantics := True;
+      end if;
+
+      --  -gnatd.1 enables unnesting of subprograms
+
+      if Debug_Flag_Dot_1 then
+         Unnest_Subprogram_Mode := True;
+      end if;
+
+      --  -gnatd.V or -gnatd.u enables special C expansion mode
+
+      if Debug_Flag_Dot_VV or Debug_Flag_Dot_U then
+         Modify_Tree_For_C := True;
+      end if;
+
+      --  -gnatd.E sets Error_To_Warning mode, causing selected error messages
+      --  to be treated as warnings instead of errors.
+
+      if Debug_Flag_Dot_EE then
+         Error_To_Warning := True;
       end if;
 
       --  Disable CodePeer_Mode in Check_Syntax, since we need front-end
@@ -163,6 +189,12 @@ procedure Gnat1drv is
 
       if CodePeer_Mode then
 
+         --  Turn off gnatprove mode (which can be set via e.g. -gnatd.F), not
+         --  compatible with CodePeer mode.
+
+         GNATprove_Mode := False;
+         Debug_Flag_Dot_FF := False;
+
          --  Turn off inlining, confuses CodePeer output and gains nothing
 
          Front_End_Inlining := False;
@@ -186,8 +218,8 @@ procedure Gnat1drv is
          Restrict.Restrictions.Set   (Max_Asynchronous_Select_Nesting) := True;
          Restrict.Restrictions.Value (Max_Asynchronous_Select_Nesting) := 0;
 
-         --  Suppress overflow, division by zero and access checks since they
-         --  are handled implicitly by CodePeer.
+         --  Suppress division by zero and access checks since they are handled
+         --  implicitly by CodePeer.
 
          --  Turn off dynamic elaboration checks: generates inconsistencies in
          --  trees between specs compiled as part of a main unit or as part of
@@ -198,15 +230,30 @@ procedure Gnat1drv is
 
          --  Enable all other language checks
 
-         Suppress_Options :=
+         Suppress_Options.Suppress :=
            (Access_Check      => True,
             Alignment_Check   => True,
             Division_Check    => True,
             Elaboration_Check => True,
-            Overflow_Check    => True,
             others            => False);
-         Enable_Overflow_Checks := False;
+
          Dynamic_Elaboration_Checks := False;
+
+         --  Set STRICT mode for overflow checks if not set explicitly. This
+         --  prevents suppressing of overflow checks by default, in code down
+         --  below.
+
+         if Suppress_Options.Overflow_Mode_General = Not_Set then
+            Suppress_Options.Overflow_Mode_General    := Strict;
+            Suppress_Options.Overflow_Mode_Assertions := Strict;
+         end if;
+
+         --  CodePeer handles division and overflow checks directly, based on
+         --  the marks set by the frontend, hence no special expansion should
+         --  be performed in the frontend for division and overflow checks.
+
+         Backend_Divide_Checks_On_Target   := True;
+         Backend_Overflow_Checks_On_Target := True;
 
          --  Kill debug of generated code, since it messes up sloc values
 
@@ -231,11 +278,9 @@ procedure Gnat1drv is
 
          Generate_SCIL := True;
 
-         --  Enable assertions and debug pragmas, since they give CodePeer
-         --  valuable extra information.
+         --  Enable assertions, since they give CodePeer valuable extra info
 
-         Assertions_Enabled    := True;
-         Debug_Pragmas_Enabled := True;
+         Assertions_Enabled := True;
 
          --  Disable all simple value propagation. This is an optimization
          --  which is valuable for code optimization, and also for generation
@@ -256,19 +301,158 @@ procedure Gnat1drv is
          Validity_Check_In_Out_Params := True;
          Validity_Check_In_Params     := True;
 
-         --  Turn off style check options since we are not interested in any
-         --  front-end warnings when we are getting CodePeer output.
+         --  Turn off style check options and ignore any style check pragmas
+         --  since we are not interested in any front-end warnings when we are
+         --  getting CodePeer output.
 
          Reset_Style_Check_Options;
+         Ignore_Style_Checks_Pragmas := True;
 
          --  Always perform semantics and generate ali files in CodePeer mode,
          --  so that a gnatmake -c -k will proceed further when possible.
 
          Force_ALI_Tree_File := True;
          Try_Semantics := True;
+
+         --  Make the Ada front-end more liberal so that the compiler will
+         --  allow illegal code that is allowed by other compilers. CodePeer
+         --  is in the business of finding problems, not enforcing rules.
+         --  This is useful when using CodePeer mode with other compilers.
+
+         Relaxed_RM_Semantics := True;
       end if;
 
-      --  Set Configurable_Run_Time mode if system.ads flag set
+      --  Enable some individual switches that are implied by relaxed RM
+      --  semantics mode.
+
+      if Relaxed_RM_Semantics then
+         Opt.Allow_Integer_Address := True;
+         Overriding_Renamings := True;
+         Treat_Categorization_Errors_As_Warnings := True;
+      end if;
+
+      --  Enable GNATprove_Mode when using -gnatd.F switch
+
+      if Debug_Flag_Dot_FF then
+         GNATprove_Mode := True;
+      end if;
+
+      --  GNATprove_Mode is also activated by default in the gnat2why
+      --  executable.
+
+      if GNATprove_Mode then
+
+         --  Turn off inlining, which would confuse formal verification output
+         --  and gain nothing.
+
+         Front_End_Inlining := False;
+         Inline_Active      := False;
+
+         --  Issue warnings for failure to inline subprograms, as otherwise
+         --  expected in GNATprove mode for the local subprograms without
+         --  contracts.
+
+         Ineffective_Inline_Warnings := True;
+
+         --  Disable front-end optimizations, to keep the tree as close to the
+         --  source code as possible, and also to avoid inconsistencies between
+         --  trees when using different optimization switches.
+
+         Optimization_Level := 0;
+
+         --  Enable some restrictions systematically to simplify the generated
+         --  code (and ease analysis). Note that restriction checks are also
+         --  disabled in SPARK mode, see Restrict.Check_Restriction, and user
+         --  specified Restrictions pragmas are ignored, see
+         --  Sem_Prag.Process_Restrictions_Or_Restriction_Warnings.
+
+         Restrict.Restrictions.Set (No_Initialize_Scalars) := True;
+
+         --  Note: at this point we used to suppress various checks, but that
+         --  is not what we want. We need the semantic processing for these
+         --  checks (which will set flags like Do_Overflow_Check, showing the
+         --  points at which potential checks are required semantically). We
+         --  don't want the expansion associated with these checks, but that
+         --  happens anyway because this expansion is simply not done in the
+         --  SPARK version of the expander.
+
+         --  On the contrary, we need to enable explicitly all language checks,
+         --  as they may have been suppressed by the use of switch -gnatp.
+
+         Suppress_Options.Suppress := (others => False);
+
+         --  Turn off dynamic elaboration checks. SPARK mode depends on the
+         --  use of the static elaboration mode.
+
+         Dynamic_Elaboration_Checks := False;
+
+         --  Detect overflow on unconstrained floating-point types, such as
+         --  the predefined types Float, Long_Float and Long_Long_Float from
+         --  package Standard. Not necessary if float overflows are checked
+         --  (Machine_Overflow true), since appropriate Do_Overflow_Check flags
+         --  will be set in any case.
+
+         Check_Float_Overflow := not Machine_Overflows_On_Target;
+
+         --  Set STRICT mode for overflow checks if not set explicitly. This
+         --  prevents suppressing of overflow checks by default, in code down
+         --  below.
+
+         if Suppress_Options.Overflow_Mode_General = Not_Set then
+            Suppress_Options.Overflow_Mode_General    := Strict;
+            Suppress_Options.Overflow_Mode_Assertions := Strict;
+         end if;
+
+         --  Kill debug of generated code, since it messes up sloc values
+
+         Debug_Generated_Code := False;
+
+         --  Turn cross-referencing on in case it was disabled (e.g. by -gnatD)
+         --  as it is needed for computing effects of subprograms in the formal
+         --  verification backend.
+
+         Xref_Active := True;
+
+         --  Polling mode forced off, since it generates confusing junk
+
+         Polling_Required := False;
+
+         --  Set operating mode to Check_Semantics, but a light front-end
+         --  expansion is still performed.
+
+         Operating_Mode := Check_Semantics;
+
+         --  Enable assertions, since they give valuable extra information for
+         --  formal verification.
+
+         Assertions_Enabled := True;
+
+         --  Disable validity checks, since it generates code raising
+         --  exceptions for invalid data, which confuses GNATprove. Invalid
+         --  data is directly detected by GNATprove's flow analysis.
+
+         Validity_Checks_On := False;
+
+         --  Turn off style check options since we are not interested in any
+         --  front-end warnings when we are getting SPARK output.
+
+         Reset_Style_Check_Options;
+
+         --  Suppress the generation of name tables for enumerations, which are
+         --  not needed for formal verification, and fall outside the SPARK
+         --  subset (use of pointers).
+
+         Global_Discard_Names := True;
+
+         --  Suppress the expansion of tagged types and dispatching calls,
+         --  which lead to the generation of non-SPARK code (use of pointers),
+         --  which is more complex to formally verify than the original source.
+
+         Tagged_Type_Expansion := False;
+      end if;
+
+      --  Set Configurable_Run_Time mode if system.ads flag set or if the
+      --  special debug flag -gnatdY is set.
 
       if Targparm.Configurable_Run_Time_On_Target or Debug_Flag_YY then
          Configurable_Run_Time_Mode := True;
@@ -288,6 +472,12 @@ procedure Gnat1drv is
          Ttypes.Target_Strict_Alignment := True;
       end if;
 
+      --  Increase size of allocated entities if debug flag -gnatd.N is set
+
+      if Debug_Flag_Dot_NN then
+         Atree.Num_Extension_Nodes := Atree.Num_Extension_Nodes + 1;
+      end if;
+
       --  Disable static allocation of dispatch tables if -gnatd.t or if layout
       --  is enabled. The front end's layout phase currently treats types that
       --  have discriminant-dependent arrays as not being static even when a
@@ -304,17 +494,6 @@ procedure Gnat1drv is
          Ttypes.Bytes_Big_Endian := not Ttypes.Bytes_Big_Endian;
       end if;
 
-      --  Deal with forcing OpenVMS switches True if debug flag M is set, but
-      --  record the setting of Targparm.Open_VMS_On_Target in True_VMS_Target
-      --  before doing this, so we know if we are in real OpenVMS or not!
-
-      Opt.True_VMS_Target := Targparm.OpenVMS_On_Target;
-
-      if Debug_Flag_M then
-         Targparm.OpenVMS_On_Target := True;
-         Hostparm.OpenVMS := True;
-      end if;
-
       --  Activate front end layout if debug flag -gnatdF is set
 
       if Debug_Flag_FF then
@@ -327,44 +506,68 @@ procedure Gnat1drv is
          Exception_Mechanism := Back_End_Exceptions;
       end if;
 
-      --  Set proper status for overflow checks. We turn on overflow checks if
-      --  -gnatp was not specified, and either -gnato is set or the back-end
-      --  takes care of overflow checks. Otherwise we suppress overflow checks
-      --  by default (since front end checks are expensive).
+      --  Set proper status for overflow check mechanism
 
-      if not Opt.Suppress_Checks
-        and then (Opt.Enable_Overflow_Checks
-                    or else
-                      (Targparm.Backend_Divide_Checks_On_Target
-                        and
-                       Targparm.Backend_Overflow_Checks_On_Target))
-      then
-         Suppress_Options (Overflow_Check) := False;
-      else
-         Suppress_Options (Overflow_Check) := True;
-      end if;
+      --  If already set (by -gnato or above in SPARK or CodePeer mode) then we
+      --  have nothing to do.
 
-      --  Set switch indicating if we can use N_Expression_With_Actions
+      if Opt.Suppress_Options.Overflow_Mode_General /= Not_Set then
+         null;
 
-      --  Debug flag -gnatd.X decisively sets usage on
-
-      if Debug_Flag_Dot_XX then
-         Use_Expression_With_Actions := True;
-
-      --  Debug flag -gnatd.Y decisively sets usage off
-
-      elsif Debug_Flag_Dot_YY then
-         Use_Expression_With_Actions := False;
-
-      --  Otherwise this feature is implemented, so we allow its use
+      --  Otherwise set overflow mode defaults
 
       else
-         Use_Expression_With_Actions := True;
+         --  Overflow checks are on by default (Suppress set False) except in
+         --  GNAT_Mode, where we want them off by default (we are not ready to
+         --  enable overflow checks in the compiler yet, for one thing the case
+         --  of 64-bit checks needs System.Arith_64 which is not a compiler
+         --  unit and it is a pain to try to include it in the compiler.
+
+         Suppress_Options.Suppress (Overflow_Check) := GNAT_Mode;
+
+         --  Set appropriate default overflow handling mode. Note: at present
+         --  we set STRICT in all three of the following cases. They are
+         --  separated because in the future we may make different choices.
+
+         --  By default set STRICT mode if -gnatg in effect
+
+         if GNAT_Mode then
+            Suppress_Options.Overflow_Mode_General    := Strict;
+            Suppress_Options.Overflow_Mode_Assertions := Strict;
+
+         --  If we have backend divide and overflow checks, then by default
+         --  overflow checks are STRICT. Historically this code used to also
+         --  activate overflow checks, although no target currently has these
+         --  flags set, so this was dead code anyway.
+
+         elsif Targparm.Backend_Divide_Checks_On_Target
+                 and
+               Targparm.Backend_Overflow_Checks_On_Target
+         then
+            Suppress_Options.Overflow_Mode_General    := Strict;
+            Suppress_Options.Overflow_Mode_Assertions := Strict;
+
+         --  Otherwise for now, default is STRICT mode. This may change in the
+         --  future, but for now this is the compatible behavior with previous
+         --  versions of GNAT.
+
+         else
+            Suppress_Options.Overflow_Mode_General    := Strict;
+            Suppress_Options.Overflow_Mode_Assertions := Strict;
+         end if;
       end if;
+
+      --  Set default for atomic synchronization. As this synchronization
+      --  between atomic accesses can be expensive, and not typically needed
+      --  on some targets, an optional target parameter can turn the option
+      --  off. Note Atomic Synchronization is implemented as check.
+
+      Suppress_Options.Suppress (Atomic_Synchronization) :=
+        not Atomic_Sync_Default_On_Target;
 
       --  Set switch indicating if back end can handle limited types, and
       --  guarantee that no incorrect copies are made (e.g. in the context
-      --  of a conditional expression).
+      --  of an if or case expression).
 
       --  Debug flag -gnatd.L decisively sets usage on
 
@@ -386,113 +589,76 @@ procedure Gnat1drv is
          Back_End_Handles_Limited_Types := False;
       end if;
 
-      --  Set switches for formal verification mode
+      --  If the inlining level has not been set by the user, compute it from
+      --  the optimization level: 1 at -O1/-O2 (and -Os), 2 at -O3 and above.
 
-      if Debug_Flag_Dot_FF then
-
-         Alfa_Mode := True;
-
-         --  Set strict standard interpretation of compiler permissions
-
-         if Debug_Flag_Dot_DD then
-            Strict_Alfa_Mode := True;
+      if Inline_Level = 0 then
+         if Optimization_Level < 3 then
+            Inline_Level := 1;
+         else
+            Inline_Level := 2;
          end if;
-
-         --  Turn off inlining, which would confuse formal verification output
-         --  and gain nothing.
-
-         Front_End_Inlining := False;
-         Inline_Active      := False;
-
-         --  Disable front-end optimizations, to keep the tree as close to the
-         --  source code as possible, and also to avoid inconsistencies between
-         --  trees when using different optimization switches.
-
-         Optimization_Level := 0;
-
-         --  Enable some restrictions systematically to simplify the generated
-         --  code (and ease analysis). Note that restriction checks are also
-         --  disabled in Alfa mode, see Restrict.Check_Restriction, and user
-         --  specified Restrictions pragmas are ignored, see
-         --  Sem_Prag.Process_Restrictions_Or_Restriction_Warnings.
-
-         Restrict.Restrictions.Set (No_Initialize_Scalars) := True;
-
-         --  Suppress all language checks since they are handled implicitly by
-         --  the formal verification backend.
-         --  Turn off dynamic elaboration checks.
-         --  Turn off alignment checks.
-         --  Turn off validity checking.
-
-         Suppress_Options := (others => True);
-         Enable_Overflow_Checks := False;
-         Dynamic_Elaboration_Checks := False;
-         Reset_Validity_Check_Options;
-
-         --  Kill debug of generated code, since it messes up sloc values
-
-         Debug_Generated_Code := False;
-
-         --  Turn cross-referencing on in case it was disabled (e.g. by -gnatD)
-         --  as it is needed for computing effects of subprograms in the formal
-         --  verification backend.
-
-         Xref_Active := True;
-
-         --  Polling mode forced off, since it generates confusing junk
-
-         Polling_Required := False;
-
-         --  Set operating mode to Generate_Code, but full front-end expansion
-         --  is not desirable in Alfa mode, so a light expansion is performed
-         --  instead.
-
-         Operating_Mode := Generate_Code;
-
-         --  Skip call to gigi
-
-         Debug_Flag_HH := True;
-
-         --  Disable Expressions_With_Actions nodes
-
-         --  The gnat2why backend does not deal with Expressions_With_Actions
-         --  in all places (in particular assertions). It is difficult to
-         --  determine in the frontend which cases are allowed, so we disable
-         --  Expressions_With_Actions entirely. Even in the cases where
-         --  gnat2why deals with Expressions_With_Actions, it is easier to
-         --  deal with the original constructs (quantified, conditional and
-         --  case expressions) instead of the rewritten ones.
-
-         Use_Expression_With_Actions := False;
-
-         --  Enable assertions and debug pragmas, since they give valuable
-         --  extra information for formal verification.
-
-         Assertions_Enabled    := True;
-         Debug_Pragmas_Enabled := True;
-
-         --  Turn off style check options since we are not interested in any
-         --  front-end warnings when we are getting Alfa output.
-
-         Reset_Style_Check_Options;
-
-         --  Suppress compiler warnings, since what we are interested in here
-         --  is what formal verification can find out.
-
-         Warning_Mode := Suppress;
-
-         --  Suppress the generation of name tables for enumerations, which are
-         --  not needed for formal verification, and fall outside the Alfa
-         --  subset (use of pointers).
-
-         Global_Discard_Names := True;
-
-         --  Suppress the expansion of tagged types and dispatching calls,
-         --  which lead to the generation of non-Alfa code (use of pointers),
-         --  which is more complex to formally verify than the original source.
-
-         Tagged_Type_Expansion := False;
       end if;
+
+      --  Treat -gnatn as equivalent to -gnatN for non-GCC targets
+
+      if Inline_Active and not Front_End_Inlining then
+
+         --  We really should have a tag for this, what if we added a new
+         --  back end some day, it would not be true for this test, but it
+         --  would be non-GCC, so this is a bit troublesome ???
+
+         Front_End_Inlining := VM_Target /= No_VM or else AAMP_On_Target;
+      end if;
+
+      --  Set back end inlining indication
+
+      Back_End_Inlining :=
+
+        --  No back end inlining available for VM targets
+
+        VM_Target = No_VM
+
+        --  No back end inlining available on AAMP
+
+        and then not AAMP_On_Target
+
+        --  No back end inlining in GNATprove mode, since it just confuses
+        --  the formal verification process.
+
+        and then not GNATprove_Mode
+
+        --  No back end inlining if front end inlining explicitly enabled.
+        --  Done to minimize the output differences to customers still using
+        --  this deprecated switch; in addition, this behavior reduces the
+        --  output differences in old tests.
+
+        and then not Front_End_Inlining
+
+        --  Back end inlining is disabled if debug flag .z is set
+
+        and then not Debug_Flag_Dot_Z;
+
+      --  Output warning if -gnateE specified and cannot be supported
+
+      if Exception_Extra_Info
+        and then Restrict.No_Exception_Handlers_Set
+      then
+         Set_Standard_Error;
+         Write_Str
+           ("warning: extra exception information (-gnateE) was specified");
+         Write_Eol;
+         Write_Str
+           ("warning: this capability is not available in this configuration");
+         Write_Eol;
+         Set_Standard_Output;
+      end if;
+
+      --  Finally capture adjusted value of Suppress_Options as the initial
+      --  value for Scope_Suppress, which will be modified as we move from
+      --  scope to scope (by Suppress/Unsuppress/Overflow_Checks pragmas).
+
+      Sem.Scope_Suppress := Opt.Suppress_Options;
    end Adjust_Global_Switches;
 
    --------------------
@@ -542,7 +708,6 @@ procedure Gnat1drv is
          Sname := Unit_Name (Main_Unit);
 
          --  If we do not already have a body name, then get the body name
-         --  (but how can we have a body name here???)
 
          if not Is_Body_Name (Sname) then
             Sname := Get_Body_Name (Sname);
@@ -560,19 +725,15 @@ procedure Gnat1drv is
          --  to include both in a partition, this is diagnosed at bind time. In
          --  Ada 83 mode this is not a warning case.
 
-         --  Note: if weird file names are being used, we can have a situation
-         --  where the file name that supposedly contains body in fact contains
-         --  a spec, or we can't tell what it contains. Skip the error message
-         --  in these cases.
-
-         --  Also ignore body that is nothing but pragma No_Body; (that's the
-         --  whole point of this pragma, to be used this way and to cause the
-         --  body file to be ignored in this context).
+         --  Note that in general we do not give the message if the file in
+         --  question does not look like a body. This includes weird cases,
+         --  but in particular means that if the file is just a No_Body pragma,
+         --  then we won't give the message (that's the whole point of this
+         --  pragma, to be used this way and to cause the body file to be
+         --  ignored in this context).
 
          if Src_Ind /= No_Source_File
-           and then Get_Expected_Unit_Type (Fname) = Expect_Body
-           and then not Source_File_Is_Subunit (Src_Ind)
-           and then not Source_File_Is_No_Body (Src_Ind)
+           and then Source_File_Is_Body (Src_Ind)
          then
             Errout.Finalize (Last_Call => False);
 
@@ -592,9 +753,9 @@ procedure Gnat1drv is
               and then not Compilation_Errors
             then
                Error_Msg_N
-                 ("package $$ does not require a body?", Main_Unit_Node);
+                 ("package $$ does not require a body??", Main_Unit_Node);
                Error_Msg_File_1 := Fname;
-               Error_Msg_N ("body in file{? will be ignored", Main_Unit_Node);
+               Error_Msg_N ("body in file{ will be ignored??", Main_Unit_Node);
 
                --  Ada 95 cases of a body file present when no body is
                --  permitted. This we consider to be an error.
@@ -602,8 +763,8 @@ procedure Gnat1drv is
             else
                --  For generic instantiations, we never allow a body
 
-               if Nkind (Original_Node (Unit (Main_Unit_Node)))
-               in N_Generic_Instantiation
+               if Nkind (Original_Node (Unit (Main_Unit_Node))) in
+                                                    N_Generic_Instantiation
                then
                   Bad_Body_Error
                     ("generic instantiation for $$ does not allow a body");
@@ -617,8 +778,8 @@ procedure Gnat1drv is
                   --  Remaining cases are packages and generic packages. Here
                   --  we only do the test if there are no previous errors,
                   --  because if there are errors, they may lead us to
-                  --  incorrectly believe that a package does not allow a body
-                  --  when in fact it does.
+                  --  incorrectly believe that a package does not allow a
+                  --  body when in fact it does.
 
                elsif not Compilation_Errors then
                   if Main_Kind = N_Package_Declaration then
@@ -635,35 +796,6 @@ procedure Gnat1drv is
          end if;
       end if;
    end Check_Bad_Body;
-
-   -------------------------
-   -- Check_Library_Items --
-   -------------------------
-
-   --  Walk_Library_Items has plenty of assertions, so all we need to do is
-   --  call it, just for these assertions, not actually doing anything else.
-
-   procedure Check_Library_Items is
-
-      procedure Action (Item : Node_Id);
-      --  Action passed to Walk_Library_Items to do nothing
-
-      ------------
-      -- Action --
-      ------------
-
-      procedure Action (Item : Node_Id) is
-      begin
-         null;
-      end Action;
-
-      procedure Walk is new Sem.Walk_Library_Items (Action);
-
-   --  Start of processing for Check_Library_Items
-
-   begin
-      Walk;
-   end Check_Library_Items;
 
    --------------------
    -- Check_Rep_Info --
@@ -683,6 +815,39 @@ procedure Gnat1drv is
          Set_Standard_Output;
       end if;
    end Check_Rep_Info;
+
+   ----------------------------------------
+   -- Post_Compilation_Validation_Checks --
+   ----------------------------------------
+
+   procedure Post_Compilation_Validation_Checks is
+   begin
+      --  Validate alignment check warnings. In some cases we generate warnings
+      --  about possible alignment errors because we don't know the alignment
+      --  that will be chosen by the back end. This routine is in charge of
+      --  getting rid of those warnings if we can tell they are not needed.
+
+      Checks.Validate_Alignment_Check_Warnings;
+
+      --  Validate unchecked conversions (using the values for size and
+      --  alignment annotated by the backend where possible).
+
+      Sem_Ch13.Validate_Unchecked_Conversions;
+
+      --  Validate address clauses (again using alignment values annotated
+      --  by the backend where possible).
+
+      Sem_Ch13.Validate_Address_Clauses;
+
+      --  Validate independence pragmas (again using values annotated by the
+      --  back end for component layout where possible) but only for non-GCC
+      --  back ends, as this is done a priori for GCC back ends.
+
+      if VM_Target /= No_VM or else AAMP_On_Target then
+         Sem_Ch13.Validate_Independence;
+      end if;
+
+   end Post_Compilation_Validation_Checks;
 
 --  Start of processing for Gnat1drv
 
@@ -705,7 +870,7 @@ begin
       Lib.Xref.Initialize;
       Scan_Compiler_Arguments;
       Osint.Add_Default_Search_Dirs;
-
+      Atree.Initialize;
       Nlists.Initialize;
       Sinput.Initialize;
       Sem.Initialize;
@@ -717,6 +882,7 @@ begin
       SCOs.Initialize;
       Snames.Initialize;
       Stringt.Initialize;
+      Ghost.Initialize;
       Inline.Initialize;
       Par_SCO.Initialize;
       Sem_Ch8.Initialize;
@@ -726,48 +892,68 @@ begin
       Sem_Eval.Initialize;
       Sem_Type.Init_Interp_Tables;
 
-      --  Acquire target parameters from system.ads (source of package System)
+      --  Capture compilation date and time
 
-      declare
-         use Sinput;
+      Opt.Compilation_Time := System.OS_Lib.Current_Time_String;
 
-         S : Source_File_Index;
-         N : File_Name_Type;
+      --  Get the target parameters only when -gnats is not used, to avoid
+      --  failing when there is no default runtime.
 
-      begin
-         Name_Buffer (1 .. 10) := "system.ads";
-         Name_Len := 10;
-         N := Name_Find;
-         S := Load_Source_File (N);
+      if Operating_Mode /= Check_Syntax then
 
-         if S = No_Source_File then
-            Write_Line
-              ("fatal error, run-time library not installed correctly");
-            Write_Line ("cannot locate file system.ads");
-            raise Unrecoverable_Error;
+         --  Acquire target parameters from system.ads (package System source)
 
-         --  Remember source index of system.ads (which was read successfully)
+         Targparm_Acquire : declare
+            use Sinput;
 
-         else
-            System_Source_File_Index := S;
-         end if;
+            S : Source_File_Index;
+            N : File_Name_Type;
 
-         Targparm.Get_Target_Parameters
-           (System_Text  => Source_Text  (S),
-            Source_First => Source_First (S),
-            Source_Last  => Source_Last  (S));
+         begin
+            Name_Buffer (1 .. 10) := "system.ads";
+            Name_Len := 10;
+            N := Name_Find;
+            S := Load_Source_File (N);
 
-         --  Acquire configuration pragma information from Targparm
+            --  Failed to read system.ads, fatal error
 
-         Restrict.Restrictions := Targparm.Restrictions_On_Target;
-      end;
+            if S = No_Source_File then
+               Write_Line
+                 ("fatal error, run-time library not installed correctly");
+               Write_Line ("cannot locate file system.ads");
+               raise Unrecoverable_Error;
+
+            --  Read system.ads successfully, remember its source index
+
+            else
+               System_Source_File_Index := S;
+            end if;
+
+            Targparm.Get_Target_Parameters
+              (System_Text  => Source_Text  (S),
+               Source_First => Source_First (S),
+               Source_Last  => Source_Last  (S),
+               Make_Id      => Tbuild.Make_Id'Access,
+               Make_SC      => Tbuild.Make_SC'Access,
+               Set_RND      => Tbuild.Set_RND'Access);
+
+            --  Acquire configuration pragma information from Targparm
+
+            Restrict.Restrictions := Targparm.Restrictions_On_Target;
+         end Targparm_Acquire;
+      end if;
+
+      --  Perform various adjustments and settings of global switches
 
       Adjust_Global_Switches;
 
       --  Output copyright notice if full list mode unless we have a list
-      --  file, in which case we defer this so that it is output in the file
+      --  file, in which case we defer this so that it is output in the file.
 
       if (Verbose_Mode or else (Full_List and then Full_List_File_Name = null))
+
+        --  Debug flag gnatd7 suppresses this copyright notice
+
         and then not Debug_Flag_7
       then
          Write_Eol;
@@ -792,37 +978,20 @@ begin
          Usage;
       end if;
 
+      --  Generate target dependent output file if requested
+
+      if Target_Dependent_Info_Write_Name /= null then
+         Set_Targ.Write_Target_Dependent_Values;
+      end if;
+
+      --  Call the front end
+
       Original_Operating_Mode := Operating_Mode;
       Frontend;
 
-      --  Exit with errors if the main source could not be parsed. Also, when
-      --  -gnatd.H is present, the source file is not set.
+      --  Exit with errors if the main source could not be parsed.
 
       if Sinput.Main_Source_File = No_Source_File then
-
-         --  Handle -gnatd.H debug mode
-
-         if Debug_Flag_Dot_HH then
-
-            --  For -gnatd.H, lock all the tables to keep the convention that
-            --  the backend needs to unlock the tables it wants to touch.
-
-            Atree.Lock;
-            Elists.Lock;
-            Fname.UF.Lock;
-            Inline.Lock;
-            Lib.Lock;
-            Nlists.Lock;
-            Sem.Lock;
-            Sinput.Lock;
-            Namet.Lock;
-            Stringt.Lock;
-
-            --  And all we need to do is to call the back end
-
-            Back_End.Call_Back_End (Back_End.Generate_Object);
-         end if;
-
          Errout.Finalize (Last_Call => True);
          Errout.Output_Messages;
          Exit_Program (E_Errors);
@@ -846,9 +1015,7 @@ begin
 
       if Compilation_Errors then
          Treepr.Tree_Dump;
-         Sem_Ch13.Validate_Unchecked_Conversions;
-         Sem_Ch13.Validate_Address_Clauses;
-         Sem_Ch13.Validate_Independence;
+         Post_Compilation_Validation_Checks;
          Errout.Output_Messages;
          Namet.Finalize;
 
@@ -964,10 +1131,19 @@ begin
       elsif Main_Kind in N_Generic_Renaming_Declaration then
          Back_End_Mode := Generate_Object;
 
-      --  It's not an error to generate SCIL for e.g. a spec which has a body
+      --  It is not an error to analyze in CodePeer mode a spec which requires
+      --  a body, in order to generate SCIL for this spec.
 
       elsif CodePeer_Mode then
          Back_End_Mode := Generate_Object;
+
+      --  It is not an error to analyze in GNATprove mode a spec which requires
+      --  a body, when the body is not available. During frame condition
+      --  generation, the corresponding ALI file is generated. During
+      --  analysis, the spec is analyzed.
+
+      elsif GNATprove_Mode then
+         Back_End_Mode := Declarations_Only;
 
       --  In all other cases (specs which have bodies, generics, and bodies
       --  where subunits are missing), we cannot generate code and we generate
@@ -1035,9 +1211,7 @@ begin
 
          Set_Standard_Output;
 
-         Sem_Ch13.Validate_Unchecked_Conversions;
-         Sem_Ch13.Validate_Address_Clauses;
-         Sem_Ch13.Validate_Independence;
+         Post_Compilation_Validation_Checks;
          Errout.Finalize (Last_Call => True);
          Errout.Output_Messages;
          Treepr.Tree_Dump;
@@ -1071,14 +1245,13 @@ begin
       --  since representations are largely symbolic there.
 
       if Back_End_Mode = Declarations_Only
-        and then (not (Back_Annotate_Rep_Info or Generate_SCIL)
-                   or else Main_Kind = N_Subunit
-                   or else Targparm.Frontend_Layout_On_Target
-                   or else Targparm.VM_Target /= No_VM)
+        and then
+          (not (Back_Annotate_Rep_Info or Generate_SCIL or GNATprove_Mode)
+            or else Main_Kind = N_Subunit
+            or else Frontend_Layout_On_Target
+            or else VM_Target /= No_VM)
       then
-         Sem_Ch13.Validate_Unchecked_Conversions;
-         Sem_Ch13.Validate_Address_Clauses;
-         Sem_Ch13.Validate_Independence;
+         Post_Compilation_Validation_Checks;
          Errout.Finalize (Last_Call => True);
          Errout.Output_Messages;
          Write_ALI (Object => False);
@@ -1100,26 +1273,39 @@ begin
 
       Prepcomp.Add_Dependencies;
 
+      --  In gnatprove mode we're writing the ALI much earlier than usual
+      --  as flow analysis needs the file present in order to append its
+      --  own globals to it.
+
+      if GNATprove_Mode then
+
+         --  Note: In GNATprove mode, an "object" file is always generated as
+         --  the result of calling gnat1 or gnat2why, although this is not the
+         --  same as the object file produced for compilation.
+
+         Write_ALI (Object => True);
+      end if;
+
+      --  Some back ends (for instance Gigi) are known to rely on SCOs for code
+      --  generation. Make sure they are available.
+
+      if Generate_SCO then
+         Par_SCO.SCO_Record_Filtered;
+      end if;
+
       --  Back end needs to explicitly unlock tables it needs to touch
 
       Atree.Lock;
       Elists.Lock;
       Fname.UF.Lock;
+      Ghost.Lock;
       Inline.Lock;
       Lib.Lock;
+      Namet.Lock;
       Nlists.Lock;
       Sem.Lock;
       Sinput.Lock;
-      Namet.Lock;
       Stringt.Lock;
-
-      --  ???Check_Library_Items under control of a debug flag, because it
-      --  currently does not work if the -gnatn switch (back end inlining) is
-      --  used.
-
-      if Debug_Flag_Dot_WW then
-         Check_Library_Items;
-      end if;
 
       --  Here we call the back end to generate the output code
 
@@ -1136,20 +1322,9 @@ begin
 
       Exp_CG.Generate_CG_Output;
 
-      --  Validate unchecked conversions (using the values for size and
-      --  alignment annotated by the backend where possible).
+      --  Perform post compilation validation checks
 
-      Sem_Ch13.Validate_Unchecked_Conversions;
-
-      --  Validate address clauses (again using alignment values annotated
-      --  by the backend where possible).
-
-      Sem_Ch13.Validate_Address_Clauses;
-
-      --  Validate independence pragmas (again using values annotated by
-      --  the back end for component layout etc.)
-
-      Sem_Ch13.Validate_Independence;
+      Post_Compilation_Validation_Checks;
 
       --  Now we complete output of errors, rep info and the tree info. These
       --  are delayed till now, since it is perfectly possible for gigi to
@@ -1159,7 +1334,8 @@ begin
 
       Errout.Finalize (Last_Call => True);
       Errout.Output_Messages;
-      List_Rep_Info;
+      List_Rep_Info (Ttypes.Bytes_Big_Endian);
+      Inline.List_Inlining_Info;
 
       --  Only write the library if the backend did not generate any error
       --  messages. Otherwise signal errors to the driver program so that
@@ -1170,7 +1346,9 @@ begin
          Exit_Program (E_Errors);
       end if;
 
-      Write_ALI (Object => (Back_End_Mode = Generate_Object));
+      if not GNATprove_Mode then
+         Write_ALI (Object => (Back_End_Mode = Generate_Object));
+      end if;
 
       if not Compilation_Errors then
 
@@ -1217,7 +1395,7 @@ begin
       when Storage_Error =>
 
          --  Assume this is a bug. If it is real, the message will in any case
-         --  say Storage_Error, giving a strong hint!
+         --  say Storage_Error, giving a strong hint.
 
          Comperr.Compiler_Abort ("Storage_Error");
    end;

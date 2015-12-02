@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync"
 )
@@ -40,11 +41,15 @@ type Var interface {
 
 // Int is a 64-bit integer variable that satisfies the Var interface.
 type Int struct {
+	mu sync.RWMutex
 	i  int64
-	mu sync.Mutex
 }
 
-func (v *Int) String() string { return strconv.FormatInt(v.i, 10) }
+func (v *Int) String() string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return strconv.FormatInt(v.i, 10)
+}
 
 func (v *Int) Add(delta int64) {
 	v.mu.Lock()
@@ -60,11 +65,15 @@ func (v *Int) Set(value int64) {
 
 // Float is a 64-bit float variable that satisfies the Var interface.
 type Float struct {
+	mu sync.RWMutex
 	f  float64
-	mu sync.Mutex
 }
 
-func (v *Float) String() string { return strconv.FormatFloat(v.f, 'g', -1, 64) }
+func (v *Float) String() string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return strconv.FormatFloat(v.f, 'g', -1, 64)
+}
 
 // Add adds delta to v.
 func (v *Float) Add(delta float64) {
@@ -82,8 +91,9 @@ func (v *Float) Set(value float64) {
 
 // Map is a string-to-Var map variable that satisfies the Var interface.
 type Map struct {
-	m  map[string]Var
-	mu sync.RWMutex
+	mu   sync.RWMutex
+	m    map[string]Var
+	keys []string // sorted
 }
 
 // KeyValue represents a single entry in a Map.
@@ -95,23 +105,37 @@ type KeyValue struct {
 func (v *Map) String() string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	b := new(bytes.Buffer)
-	fmt.Fprintf(b, "{")
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "{")
 	first := true
-	for key, val := range v.m {
+	v.doLocked(func(kv KeyValue) {
 		if !first {
-			fmt.Fprintf(b, ", ")
+			fmt.Fprintf(&b, ", ")
 		}
-		fmt.Fprintf(b, "\"%s\": %v", key, val)
+		fmt.Fprintf(&b, "%q: %v", kv.Key, kv.Value)
 		first = false
-	}
-	fmt.Fprintf(b, "}")
+	})
+	fmt.Fprintf(&b, "}")
 	return b.String()
 }
 
 func (v *Map) Init() *Map {
 	v.m = make(map[string]Var)
 	return v
+}
+
+// updateKeys updates the sorted list of keys in v.keys.
+// must be called with v.mu held.
+func (v *Map) updateKeys() {
+	if len(v.m) == len(v.keys) {
+		// No new key.
+		return
+	}
+	v.keys = v.keys[:0]
+	for k := range v.m {
+		v.keys = append(v.keys, k)
+	}
+	sort.Strings(v.keys)
 }
 
 func (v *Map) Get(key string) Var {
@@ -124,6 +148,7 @@ func (v *Map) Set(key string, av Var) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.m[key] = av
+	v.updateKeys()
 }
 
 func (v *Map) Add(key string, delta int64) {
@@ -133,9 +158,11 @@ func (v *Map) Add(key string, delta int64) {
 	if !ok {
 		// check again under the write lock
 		v.mu.Lock()
-		if _, ok = v.m[key]; !ok {
+		av, ok = v.m[key]
+		if !ok {
 			av = new(Int)
 			v.m[key] = av
+			v.updateKeys()
 		}
 		v.mu.Unlock()
 	}
@@ -154,9 +181,11 @@ func (v *Map) AddFloat(key string, delta float64) {
 	if !ok {
 		// check again under the write lock
 		v.mu.Lock()
-		if _, ok = v.m[key]; !ok {
+		av, ok = v.m[key]
+		if !ok {
 			av = new(Float)
 			v.m[key] = av
+			v.updateKeys()
 		}
 		v.mu.Unlock()
 	}
@@ -173,19 +202,34 @@ func (v *Map) AddFloat(key string, delta float64) {
 func (v *Map) Do(f func(KeyValue)) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	for k, v := range v.m {
-		f(KeyValue{k, v})
+	v.doLocked(f)
+}
+
+// doLocked calls f for each entry in the map.
+// v.mu must be held for reads.
+func (v *Map) doLocked(f func(KeyValue)) {
+	for _, k := range v.keys {
+		f(KeyValue{k, v.m[k]})
 	}
 }
 
 // String is a string variable, and satisfies the Var interface.
 type String struct {
-	s string
+	mu sync.RWMutex
+	s  string
 }
 
-func (v *String) String() string { return strconv.Quote(v.s) }
+func (v *String) String() string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return strconv.Quote(v.s)
+}
 
-func (v *String) Set(value string) { v.s = value }
+func (v *String) Set(value string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.s = value
+}
 
 // Func implements Var by calling the function
 // and formatting the returned value using JSON.
@@ -198,8 +242,9 @@ func (f Func) String() string {
 
 // All published variables.
 var (
-	mutex sync.RWMutex
-	vars  map[string]Var = make(map[string]Var)
+	mutex   sync.RWMutex
+	vars    = make(map[string]Var)
+	varKeys []string // sorted
 )
 
 // Publish declares a named exported variable. This should be called from a
@@ -212,6 +257,8 @@ func Publish(name string, v Var) {
 		log.Panicln("Reuse of exported var name:", name)
 	}
 	vars[name] = v
+	varKeys = append(varKeys, name)
+	sort.Strings(varKeys)
 }
 
 // Get retrieves a named exported variable.
@@ -253,8 +300,8 @@ func NewString(name string) *String {
 func Do(f func(KeyValue)) {
 	mutex.RLock()
 	defer mutex.RUnlock()
-	for k, v := range vars {
-		f(KeyValue{k, v})
+	for _, k := range varKeys {
+		f(KeyValue{k, vars[k]})
 	}
 }
 

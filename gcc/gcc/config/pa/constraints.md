@@ -1,5 +1,5 @@
 ;; Constraint definitions for pa
-;; Copyright (C) 2007 Free Software Foundation, Inc.
+;; Copyright (C) 2007-2015 Free Software Foundation, Inc.
 
 ;; This file is part of GCC.
 
@@ -18,8 +18,8 @@
 ;; <http://www.gnu.org/licenses/>.
 
 ;;; Unused letters:
-;;;    ABCDEF H             V  Y 
-;;;     bcde ghijklmnop  stuvw  z
+;;;    ABCD   H                Y 
+;;;     bcde  h jkl       tuvw  z
 
 ;; Register constraints.
 (define_register_constraint "a" "R1_REGS"
@@ -106,7 +106,7 @@
   (and (match_code "mem")
        (match_test "IS_LO_SUM_DLT_ADDR_P (XEXP (op, 0))")))
 
-(define_constraint "Q"
+(define_memory_constraint "Q"
   "A memory operand that can be used as the destination operand of an
    integer store, or the source operand of an integer load.  That is
    any memory operand that isn't a symbolic, indexed or lo_sum memory
@@ -122,14 +122,9 @@
   (and (match_code "mem")
        (match_test "IS_INDEX_ADDR_P (XEXP (op, 0))")))
 
-(define_constraint "T"
+(define_memory_constraint "T"
   "A memory operand for floating-point loads and stores."
-  (and (match_code "mem")
-       (match_test "!IS_LO_SUM_DLT_ADDR_P (XEXP (op, 0))
-		    && !IS_INDEX_ADDR_P (XEXP (op, 0))
-		    && memory_address_p ((GET_MODE_SIZE (mode) == 4
-					  ? SFmode : DFmode),
-					 XEXP (op, 0))")))
+  (match_test "floating_point_store_memory_operand (op, mode)"))
 
 ;; We could allow short displacements but TARGET_LEGITIMATE_ADDRESS_P
 ;; can't tell when a long displacement is valid.

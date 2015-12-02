@@ -1,5 +1,4 @@
-#  Copyright (C) 2003,2004,2005,2006,2007,2008, 2010, 2011
-#  Free Software Foundation, Inc.
+#  Copyright (C) 2003-2015 Free Software Foundation, Inc.
 #  Contributed by Kelley Cook, June 2004.
 #  Original code from Neil Booth, May 2003.
 #
@@ -133,14 +132,14 @@ print "/* Structure to save/restore optimization and target specific options.  *
 print "struct GTY(()) cl_optimization";
 print "{";
 
-n_opt_char = 2;
+n_opt_char = 3;
 n_opt_short = 0;
 n_opt_int = 0;
-n_opt_enum = 1;
+n_opt_enum = 0;
 n_opt_other = 0;
 var_opt_char[0] = "unsigned char x_optimize";
 var_opt_char[1] = "unsigned char x_optimize_size";
-var_opt_enum[0] = "enum fp_contract_mode x_flag_fp_contract_mode";
+var_opt_char[2] = "unsigned char x_optimize_debug";
 
 for (i = 0; i < n_opts; i++) {
 	if (flag_set_p("Optimization", flags[i])) {
@@ -285,6 +284,9 @@ print "";
 print "/* Print optimization variables from a structure.  */";
 print "extern void cl_optimization_print (FILE *, int, struct cl_optimization *);";
 print "";
+print "/* Print different optimization variables from structures provided as arguments.  */";
+print "extern void cl_optimization_print_diff (FILE *, int, cl_optimization *ptr1, cl_optimization *ptr2);";
+print "";
 print "/* Save selected option variables into a structure.  */"
 print "extern void cl_target_option_save (struct cl_target_option *, struct gcc_options *);";
 print "";
@@ -293,24 +295,75 @@ print "extern void cl_target_option_restore (struct gcc_options *, struct cl_tar
 print "";
 print "/* Print target option variables from a structure.  */";
 print "extern void cl_target_option_print (FILE *, int, struct cl_target_option *);";
+print "";
+print "/* Print different target option variables from structures provided as arguments.  */";
+print "extern void cl_target_option_print_diff (FILE *, int, cl_target_option *ptr1, cl_target_option *ptr2);";
+print "";
+print "/* Compare two target option variables from a structure.  */";
+print "extern bool cl_target_option_eq (const struct cl_target_option *, const struct cl_target_option *);";
+print "";
+print "/* Hash option variables from a structure.  */";
+print "extern hashval_t cl_target_option_hash (const struct cl_target_option *);";
+print "";
+print "/* Hash optimization from a structure.  */";
+print "extern hashval_t cl_optimization_hash (const struct cl_optimization *);";
+print "";
+print "/* Anything that includes tm.h, does not necessarily need this.  */"
+print "#if !defined(GCC_TM_H)"
+print "#include \"input.h\" /* for location_t */"
+print "bool                                                                  "
+print "common_handle_option_auto (struct gcc_options *opts,                  "
+print "                           struct gcc_options *opts_set,              "
+print "                           const struct cl_decoded_option *decoded,   "
+print "                           unsigned int lang_mask, int kind,          "
+print "                           location_t loc,                            "
+print "                           const struct cl_option_handlers *handlers, "
+print "                           diagnostic_context *dc);                   "
+for (i = 0; i < n_langs; i++) {
+    lang_name = lang_sanitized_name(langs[i]);
+    print "bool                                                                  "
+    print lang_name "_handle_option_auto (struct gcc_options *opts,              "
+    print "                           struct gcc_options *opts_set,              "
+    print "                           size_t scode, const char *arg, int value,  "
+    print "                           unsigned int lang_mask, int kind,          "
+    print "                           location_t loc,                            "
+    print "                           const struct cl_option_handlers *handlers, "
+    print "                           diagnostic_context *dc);                   "
+}
+print "void cpp_handle_option_auto (const struct gcc_options * opts, size_t scode,"
+print "                             struct cpp_options * cpp_opts);"
+print "void init_global_opts_from_cpp(struct gcc_options * opts,      "
+print "                               const struct cpp_options * cpp_opts);"    
+print "#endif";
 print "#endif";
 print "";
 
 for (i = 0; i < n_opts; i++) {
 	name = opt_args("Mask", flags[i])
-	vname = var_name(flags[i])
-	mask = "MASK_"
-	mask_1 = "1"
-	if (vname != "") {
-		mask = "OPTION_MASK_"
-		if (host_wide_int[vname] == "yes")
-			mask_1 = "HOST_WIDE_INT_1"
+	if (name == "") {
+		opt = opt_args("InverseMask", flags[i])
+		if (opt ~ ",")
+			name = nth_arg(0, opt)
+		else
+			name = opt
 	}
-	if (name != "" && !flag_set_p("MaskExists", flags[i]))
+	if (name != "" && mask_bits[name] == 0) {
+		mask_bits[name] = 1
+		vname = var_name(flags[i])
+		mask = "MASK_"
+		mask_1 = "1"
+		if (vname != "") {
+			mask = "OPTION_MASK_"
+			if (host_wide_int[vname] == "yes")
+				mask_1 = "HOST_WIDE_INT_1"
+		} else
+			extra_mask_bits[name] = 1
 		print "#define " mask name " (" mask_1 " << " masknum[vname]++ ")"
+	}
 }
 for (i = 0; i < n_extra_masks; i++) {
-	print "#define MASK_" extra_masks[i] " (1 << " masknum[""]++ ")"
+	if (extra_mask_bits[extra_masks[i]] == 0)
+		print "#define MASK_" extra_masks[i] " (1 << " masknum[""]++ ")"
 }
 
 for (var in masknum) {
@@ -330,21 +383,32 @@ print ""
 
 for (i = 0; i < n_opts; i++) {
 	name = opt_args("Mask", flags[i])
-	vname = var_name(flags[i])
-	macro = "OPTION_"
-	mask = "OPTION_MASK_"
-	if (vname == "") {
-		vname = "target_flags"
-		macro = "TARGET_"
-		mask = "MASK_"
+	if (name == "") {
+		opt = opt_args("InverseMask", flags[i])
+		if (opt ~ ",")
+			name = nth_arg(0, opt)
+		else
+			name = opt
 	}
-	if (name != "" && !flag_set_p("MaskExists", flags[i]))
-		print "#define " macro name \
+	if (name != "" && mask_macros[name] == 0) {
+		mask_macros[name] = 1
+		vname = var_name(flags[i])
+		mask = "OPTION_MASK_"
+		if (vname == "") {
+			vname = "target_flags"
+			mask = "MASK_"
+			extra_mask_macros[name] = 1
+		}
+		print "#define TARGET_" name \
 		      " ((" vname " & " mask name ") != 0)"
+		print "#define TARGET_" name "_P(" vname ")" \
+		      " ((" vname " & " mask name ") != 0)"
+	}
 }
 for (i = 0; i < n_extra_masks; i++) {
-	print "#define TARGET_" extra_masks[i] \
-	      " ((target_flags & MASK_" extra_masks[i] ") != 0)"
+	if (extra_mask_macros[extra_masks[i]] == 0)
+		print "#define TARGET_" extra_masks[i] \
+		      " ((target_flags & MASK_" extra_masks[i] ") != 0)"
 }
 print ""
 
@@ -352,22 +416,19 @@ for (i = 0; i < n_opts; i++) {
 	opt = opt_args("InverseMask", flags[i])
 	if (opt ~ ",") {
 		vname = var_name(flags[i])
-		macro = "OPTION_"
 		mask = "OPTION_MASK_"
 		if (vname == "") {
 			vname = "target_flags"
-			macro = "TARGET_"
 			mask = "MASK_"
 		}
-		print "#define " macro nth_arg(1, opt) \
+		print "#define TARGET_" nth_arg(1, opt) \
 		      " ((" vname " & " mask nth_arg(0, opt) ") == 0)"
 	}
 }
 print ""
 
 for (i = 0; i < n_langs; i++) {
-	macros[i] = "CL_" langs[i]
-	gsub( "[^" alnum "_]", "X", macros[i] )
+        macros[i] = "CL_" lang_sanitized_name(langs[i])
 	s = substr("            ", length (macros[i]))
 	print "#define " macros[i] s " (1U << " i ")"
     }
@@ -432,6 +493,33 @@ print "  OPT_SPECIAL_ignore,"
 print "  OPT_SPECIAL_program_name,"
 print "  OPT_SPECIAL_input_file"
 print "};"
+print ""
+print "#ifdef GCC_C_COMMON_C"
+print "/* Mapping from cpp message reasons to the options that enable them.  */"
+print "#include <cpplib.h>"
+print "struct cpp_reason_option_codes_t"
+print "{"
+print "  const int reason;		/* cpplib message reason.  */"
+print "  const int option_code;	/* gcc option that controls this message.  */"
+print "};"
+print ""
+print "static const struct cpp_reason_option_codes_t cpp_reason_option_codes[] = {"
+for (i = 0; i < n_opts; i++) {
+    # With identical flags, pick only the last one.  The
+    # earlier loop ensured that it has all flags merged,
+    # and a nonempty help text if one of the texts was nonempty.
+    while( i + 1 != n_opts && opts[i] == opts[i + 1] ) {
+        i++;
+    }
+    cpp_reason = nth_arg(0, opt_args("CppReason", flags[i]));
+    if (cpp_reason != "") {
+        cpp_reason = cpp_reason ",";
+        printf("  {%-40s %s},\n", cpp_reason, opt_enum(opts[i]))
+    }
+}
+printf("  {%-40s 0},\n", "CPP_W_NONE,")
+print "};"
+print "#endif"
 print ""
 print "#endif /* OPTIONS_H */"
 }

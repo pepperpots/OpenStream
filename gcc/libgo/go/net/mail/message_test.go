@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"io/ioutil"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,6 +96,11 @@ func TestDateParsing(t *testing.T) {
 			"21 Nov 97 09:55:06 GMT",
 			time.Date(1997, 11, 21, 9, 55, 6, 0, time.FixedZone("GMT", 0)),
 		},
+		// Commonly found format not specified by RFC 5322.
+		{
+			"Fri, 21 Nov 1997 09:55:06 -0600 (MDT)",
+			time.Date(1997, 11, 21, 9, 55, 6, 0, time.FixedZone("", -6*60*60)),
+		},
 	}
 	for _, test := range tests {
 		hdr := Header{
@@ -108,6 +114,14 @@ func TestDateParsing(t *testing.T) {
 		if !date.Equal(test.exp) {
 			t.Errorf("Parse of %q: got %+v, want %+v", test.dateStr, date, test.exp)
 		}
+	}
+}
+
+func TestAddressParsingError(t *testing.T) {
+	const txt = "=?iso-8859-2?Q?Bogl=E1rka_Tak=E1cs?= <unknown@gmail.com>"
+	_, err := ParseAddress(txt)
+	if err == nil || !strings.Contains(err.Error(), "charset not supported") {
+		t.Errorf(`mail.ParseAddress(%q) err: %q, want ".*charset not supported.*"`, txt, err)
 	}
 }
 
@@ -180,6 +194,16 @@ func TestAddressParsing(t *testing.T) {
 				},
 			},
 		},
+		// RFC 2047 "Q"-encoded US-ASCII address. Dumb but legal.
+		{
+			`=?us-ascii?q?J=6Frg_Doe?= <joerg@example.com>`,
+			[]*Address{
+				{
+					Name:    `Jorg Doe`,
+					Address: "joerg@example.com",
+				},
+			},
+		},
 		// RFC 2047 "Q"-encoded UTF-8 address.
 		{
 			`=?utf-8?q?J=C3=B6rg_Doe?= <joerg@example.com>`,
@@ -220,15 +244,36 @@ func TestAddressParsing(t *testing.T) {
 				},
 			},
 		},
+		// Custom example with "." in name. For issue 4938
+		{
+			`Asem H. <noreply@example.com>`,
+			[]*Address{
+				{
+					Name:    `Asem H.`,
+					Address: "noreply@example.com",
+				},
+			},
+		},
 	}
 	for _, test := range tests {
-		addrs, err := newAddrParser(test.addrsStr).parseAddressList()
+		if len(test.exp) == 1 {
+			addr, err := ParseAddress(test.addrsStr)
+			if err != nil {
+				t.Errorf("Failed parsing (single) %q: %v", test.addrsStr, err)
+				continue
+			}
+			if !reflect.DeepEqual([]*Address{addr}, test.exp) {
+				t.Errorf("Parse (single) of %q: got %+v, want %+v", test.addrsStr, addr, test.exp)
+			}
+		}
+
+		addrs, err := ParseAddressList(test.addrsStr)
 		if err != nil {
-			t.Errorf("Failed parsing %q: %v", test.addrsStr, err)
+			t.Errorf("Failed parsing (list) %q: %v", test.addrsStr, err)
 			continue
 		}
 		if !reflect.DeepEqual(addrs, test.exp) {
-			t.Errorf("Parse of %q: got %+v, want %+v", test.addrsStr, addrs, test.exp)
+			t.Errorf("Parse (list) of %q: got %+v, want %+v", test.addrsStr, addrs, test.exp)
 		}
 	}
 }
@@ -250,6 +295,14 @@ func TestAddressFormatting(t *testing.T) {
 			// note the ö (o with an umlaut)
 			&Address{Name: "Böb", Address: "bob@example.com"},
 			`=?utf-8?q?B=C3=B6b?= <bob@example.com>`,
+		},
+		{
+			&Address{Name: "Bob Jane", Address: "bob@example.com"},
+			`"Bob Jane" <bob@example.com>`,
+		},
+		{
+			&Address{Name: "Böb Jacöb", Address: "bob@example.com"},
+			`=?utf-8?q?B=C3=B6b_Jac=C3=B6b?= <bob@example.com>`,
 		},
 	}
 	for _, test := range tests {

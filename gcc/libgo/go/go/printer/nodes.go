@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 )
 
-// Other formatting issues:
+// Formatting issues:
 // - better comment formatting for /*-style comments at the end of a line (e.g. a declaration)
 //   when the comment spans multiple lines; if such a comment is just two lines, formatting is
 //   not idempotent
@@ -60,8 +60,8 @@ func (p *printer) linebreak(line, min int, ws whiteSpace, newSection bool) (prin
 
 // setComment sets g as the next comment if g != nil and if node comments
 // are enabled - this mode is used when printing source code fragments such
-// as exports only. It assumes that there are no other pending comments to
-// intersperse.
+// as exports only. It assumes that there is no pending comment in p.comments
+// and at most one pending comment in the p.comment cache.
 func (p *printer) setComment(g *ast.CommentGroup) {
 	if g == nil || !p.useNodeComments {
 		return
@@ -74,10 +74,19 @@ func (p *printer) setComment(g *ast.CommentGroup) {
 		// should never happen - handle gracefully and flush
 		// all comments up to g, ignore anything after that
 		p.flush(p.posFor(g.List[0].Pos()), token.ILLEGAL)
+		p.comments = p.comments[0:1]
+		// in debug mode, report error
+		p.internalError("setComment found pending comments")
 	}
 	p.comments[0] = g
 	p.cindex = 0
-	p.nextComment() // get comment ready for use
+	// don't overwrite any pending comment in the p.comment cache
+	// (there may be a pending comment when a line comment is
+	// immediately followed by a lead comment with no other
+	// tokens between)
+	if p.commentOffset == infinity {
+		p.nextComment() // get comment ready for use
+	}
 }
 
 type exprListMode uint
@@ -154,8 +163,8 @@ func (p *printer) exprList(prev0 token.Pos, list []ast.Expr, depth int, mode exp
 	size := 0
 
 	// print all list elements
+	prevLine := prev.Line
 	for i, x := range list {
-		prevLine := line
 		line = p.lineFor(x.Pos())
 
 		// determine if the next linebreak, if any, needs to use formfeed:
@@ -194,12 +203,12 @@ func (p *printer) exprList(prev0 token.Pos, list []ast.Expr, depth int, mode exp
 			} else {
 				const r = 4 // threshold
 				ratio := float64(size) / float64(prevSize)
-				useFF = ratio <= 1/r || r <= ratio
+				useFF = ratio <= 1.0/r || r <= ratio
 			}
 		}
 
+		needsLinebreak := 0 < prevLine && prevLine < line
 		if i > 0 {
-			needsLinebreak := prevLine < line && prevLine > 0 && line > 0
 			// use position of expression following the comma as
 			// comma position for correct comment placement, but
 			// only if the expression is on the same line
@@ -223,16 +232,20 @@ func (p *printer) exprList(prev0 token.Pos, list []ast.Expr, depth int, mode exp
 			}
 		}
 
-		if isPair && size > 0 && len(list) > 1 {
-			// we have a key:value expression that fits onto one line and
-			// is in a list with more then one entry: use a column for the
-			// key such that consecutive entries can align if possible
+		if len(list) > 1 && isPair && size > 0 && needsLinebreak {
+			// we have a key:value expression that fits onto one line
+			// and it's not on the same line as the prior expression:
+			// use a column for the key such that consecutive entries
+			// can align if possible
+			// (needsLinebreak is set if we started a new line before)
 			p.expr(pair.Key)
 			p.print(pair.Colon, token.COLON, vtab)
 			p.expr(pair.Value)
 		} else {
 			p.expr0(x, depth)
 		}
+
+		prevLine = line
 	}
 
 	if mode&commaTerm != 0 && next.IsValid() && p.pos.Line < next.Line {
@@ -262,12 +275,12 @@ func (p *printer) parameters(fields *ast.FieldList) {
 			// if there are multiple parameter names for this par
 			// or the type is on a separate line)
 			var parLineBeg int
-			var parLineEnd = p.lineFor(par.Type.Pos())
 			if len(par.Names) > 0 {
 				parLineBeg = p.lineFor(par.Names[0].Pos())
 			} else {
-				parLineBeg = parLineEnd
+				parLineBeg = p.lineFor(par.Type.Pos())
 			}
+			var parLineEnd = p.lineFor(par.Type.End())
 			// separating "," if needed
 			needsLinebreak := 0 < prevLine && prevLine < parLineBeg
 			if i > 0 {
@@ -298,7 +311,7 @@ func (p *printer) parameters(fields *ast.FieldList) {
 				p.print(blank)
 			}
 			// parameter type
-			p.expr(par.Type)
+			p.expr(stripParensAlways(par.Type))
 			prevLine = parLineEnd
 		}
 		// if the closing ")" is on a separate line from the last parameter,
@@ -316,13 +329,18 @@ func (p *printer) parameters(fields *ast.FieldList) {
 }
 
 func (p *printer) signature(params, result *ast.FieldList) {
-	p.parameters(params)
+	if params != nil {
+		p.parameters(params)
+	} else {
+		p.print(token.LPAREN, token.RPAREN)
+	}
 	n := result.NumFields()
 	if n > 0 {
+		// result != nil
 		p.print(blank)
 		if n == 1 && result.List[0].Names == nil {
 			// single anonymous result; no ()'s
-			p.expr(result.List[0].Type)
+			p.expr(stripParensAlways(result.List[0].Type))
 			return
 		}
 		p.parameters(result)
@@ -362,10 +380,6 @@ func (p *printer) isOneLineFieldList(list []*ast.Field) bool {
 
 func (p *printer) setLineComment(text string) {
 	p.setComment(&ast.CommentGroup{List: []*ast.Comment{{Slash: token.NoPos, Text: text}}})
-}
-
-func (p *printer) isMultiLine(n ast.Node) bool {
-	return p.lineFor(n.End())-p.lineFor(n.Pos()) > 1
 }
 
 func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) {
@@ -414,13 +428,14 @@ func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) 
 		if len(list) == 1 {
 			sep = blank
 		}
-		newSection := false
+		var line int
 		for i, f := range list {
 			if i > 0 {
-				p.linebreak(p.lineFor(f.Pos()), 1, ignore, newSection)
+				p.linebreak(p.lineFor(f.Pos()), 1, ignore, p.linesFrom(line) > 0)
 			}
 			extraTabs := 0
 			p.setComment(f.Doc)
+			p.recordLine(&line)
 			if len(f.Names) > 0 {
 				// named fields
 				p.identList(f.Names, false)
@@ -446,7 +461,6 @@ func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) 
 				}
 				p.setComment(f.Comment)
 			}
-			newSection = p.isMultiLine(f)
 		}
 		if isIncomplete {
 			if len(list) > 0 {
@@ -458,12 +472,13 @@ func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) 
 
 	} else { // interface
 
-		newSection := false
+		var line int
 		for i, f := range list {
 			if i > 0 {
-				p.linebreak(p.lineFor(f.Pos()), 1, ignore, newSection)
+				p.linebreak(p.lineFor(f.Pos()), 1, ignore, p.linesFrom(line) > 0)
 			}
 			p.setComment(f.Doc)
+			p.recordLine(&line)
 			if ftyp, isFtyp := f.Type.(*ast.FuncType); isFtyp {
 				// method
 				p.expr(f.Names[0])
@@ -473,7 +488,6 @@ func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) 
 				p.expr(f.Type)
 			}
 			p.setComment(f.Comment)
-			newSection = p.isMultiLine(f)
 		}
 		if isIncomplete {
 			if len(list) > 0 {
@@ -716,13 +730,13 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 
 	case *ast.FuncLit:
 		p.expr(x.Type)
-		p.funcBody(x.Body, p.distance(x.Type.Pos(), p.pos), true)
+		p.adjBlock(p.distanceFrom(x.Type.Pos()), blank, x.Body)
 
 	case *ast.ParenExpr:
 		if _, hasParens := x.X.(*ast.ParenExpr); hasParens {
 			// don't print parentheses around an already parenthesized expression
 			// TODO(gri) consider making this more general and incorporate precedence levels
-			p.expr0(x.X, reduceDepth(depth)) // parentheses undo one level of depth
+			p.expr0(x.X, depth)
 		} else {
 			p.print(token.LPAREN)
 			p.expr0(x.X, reduceDepth(depth)) // parentheses undo one level of depth
@@ -740,13 +754,13 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 
 	case *ast.TypeAssertExpr:
 		p.expr1(x.X, token.HighestPrec, depth)
-		p.print(token.PERIOD, token.LPAREN)
+		p.print(token.PERIOD, x.Lparen, token.LPAREN)
 		if x.Type != nil {
 			p.expr(x.Type)
 		} else {
 			p.print(token.TYPE)
 		}
-		p.print(token.RPAREN)
+		p.print(x.Rparen, token.RPAREN)
 
 	case *ast.IndexExpr:
 		// TODO(gri): should treat[] like parentheses and undo one level of depth
@@ -759,17 +773,25 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		// TODO(gri): should treat[] like parentheses and undo one level of depth
 		p.expr1(x.X, token.HighestPrec, 1)
 		p.print(x.Lbrack, token.LBRACK)
-		if x.Low != nil {
-			p.expr0(x.Low, depth+1)
+		indices := []ast.Expr{x.Low, x.High}
+		if x.Max != nil {
+			indices = append(indices, x.Max)
 		}
-		// blanks around ":" if both sides exist and either side is a binary expression
-		if depth <= 1 && x.Low != nil && x.High != nil && (isBinary(x.Low) || isBinary(x.High)) {
-			p.print(blank, token.COLON, blank)
-		} else {
-			p.print(token.COLON)
-		}
-		if x.High != nil {
-			p.expr0(x.High, depth+1)
+		for i, y := range indices {
+			if i > 0 {
+				// blanks around ":" if both sides exist and either side is a binary expression
+				// TODO(gri) once we have committed a variant of a[i:j:k] we may want to fine-
+				//           tune the formatting here
+				x := indices[i-1]
+				if depth <= 1 && x != nil && y != nil && (isBinary(x) || isBinary(y)) {
+					p.print(blank, token.COLON, blank)
+				} else {
+					p.print(token.COLON)
+				}
+			}
+			if y != nil {
+				p.expr0(y, depth+1)
+			}
 		}
 		p.print(x.Rbrack, token.RBRACK)
 
@@ -777,7 +799,14 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		if len(x.Args) > 1 {
 			depth++
 		}
-		p.expr1(x.Fun, token.HighestPrec, depth)
+		if _, ok := x.Fun.(*ast.FuncType); ok {
+			// conversions to literal function types require parentheses around the type
+			p.print(token.LPAREN)
+			p.expr1(x.Fun, token.HighestPrec, depth)
+			p.print(token.RPAREN)
+		} else {
+			p.expr1(x.Fun, token.HighestPrec, depth)
+		}
 		p.print(x.Lparen, token.LPAREN)
 		if x.Ellipsis.IsValid() {
 			p.exprList(x.Lparen, x.Args, depth, 0, x.Ellipsis)
@@ -797,10 +826,16 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		}
 		p.print(x.Lbrace, token.LBRACE)
 		p.exprList(x.Lbrace, x.Elts, 1, commaTerm, x.Rbrace)
-		// do not insert extra line breaks because of comments before
-		// the closing '}' as it might break the code if there is no
-		// trailing ','
-		p.print(noExtraLinebreak, x.Rbrace, token.RBRACE, noExtraLinebreak)
+		// do not insert extra line break following a /*-style comment
+		// before the closing '}' as it might break the code if there
+		// is no trailing ','
+		mode := noExtraLinebreak
+		// do not insert extra blank following a /*-style comment
+		// before the closing '}' unless the literal is empty
+		if len(x.Elts) > 0 {
+			mode |= noExtraBlank
+		}
+		p.print(mode, x.Rbrace, token.RBRACE, mode)
 
 	case *ast.Ellipsis:
 		p.print(token.ELLIPSIS)
@@ -839,9 +874,9 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		case ast.SEND | ast.RECV:
 			p.print(token.CHAN)
 		case ast.RECV:
-			p.print(token.ARROW, token.CHAN)
+			p.print(token.ARROW, token.CHAN) // x.Arrow and x.Pos() are the same
 		case ast.SEND:
-			p.print(token.CHAN, token.ARROW)
+			p.print(token.CHAN, x.Arrow, token.ARROW)
 		}
 		p.print(blank)
 		p.expr(x.Value)
@@ -868,30 +903,49 @@ func (p *printer) expr(x ast.Expr) {
 // Print the statement list indented, but without a newline after the last statement.
 // Extra line breaks between statements in the source are respected but at most one
 // empty line is printed between statements.
-func (p *printer) stmtList(list []ast.Stmt, _indent int, nextIsRBrace bool) {
-	// TODO(gri): fix _indent code
-	if _indent > 0 {
+func (p *printer) stmtList(list []ast.Stmt, nindent int, nextIsRBrace bool) {
+	if nindent > 0 {
 		p.print(indent)
 	}
-	multiLine := false
-	for i, s := range list {
-		// _indent == 0 only for lists of switch/select case clauses;
-		// in those cases each clause is a new section
-		p.linebreak(p.lineFor(s.Pos()), 1, ignore, i == 0 || _indent == 0 || multiLine)
-		p.stmt(s, nextIsRBrace && i == len(list)-1)
-		multiLine = p.isMultiLine(s)
+	var line int
+	i := 0
+	for _, s := range list {
+		// ignore empty statements (was issue 3466)
+		if _, isEmpty := s.(*ast.EmptyStmt); !isEmpty {
+			// nindent == 0 only for lists of switch/select case clauses;
+			// in those cases each clause is a new section
+			if len(p.output) > 0 {
+				// only print line break if we are not at the beginning of the output
+				// (i.e., we are not printing only a partial program)
+				p.linebreak(p.lineFor(s.Pos()), 1, ignore, i == 0 || nindent == 0 || p.linesFrom(line) > 0)
+			}
+			p.recordLine(&line)
+			p.stmt(s, nextIsRBrace && i == len(list)-1)
+			// labeled statements put labels on a separate line, but here
+			// we only care about the start line of the actual statement
+			// without label - correct line for each label
+			for t := s; ; {
+				lt, _ := t.(*ast.LabeledStmt)
+				if lt == nil {
+					break
+				}
+				line++
+				t = lt.Stmt
+			}
+			i++
+		}
 	}
-	if _indent > 0 {
+	if nindent > 0 {
 		p.print(unindent)
 	}
 }
 
 // block prints an *ast.BlockStmt; it always spans at least two lines.
-func (p *printer) block(s *ast.BlockStmt, indent int) {
-	p.print(s.Pos(), token.LBRACE)
-	p.stmtList(s.List, indent, true)
-	p.linebreak(p.lineFor(s.Rbrace), 1, ignore, true)
-	p.print(s.Rbrace, token.RBRACE)
+func (p *printer) block(b *ast.BlockStmt, nindent int) {
+	p.print(b.Lbrace, token.LBRACE)
+	p.stmtList(b.List, nindent, true)
+	p.linebreak(p.lineFor(b.Rbrace), 1, ignore, true)
+	p.print(b.Rbrace, token.RBRACE)
 }
 
 func isTypeName(x ast.Expr) bool {
@@ -930,6 +984,13 @@ func stripParens(x ast.Expr) ast.Expr {
 	return x
 }
 
+func stripParensAlways(x ast.Expr) ast.Expr {
+	if x, ok := x.(*ast.ParenExpr); ok {
+		return stripParensAlways(x.X)
+	}
+	return x
+}
+
 func (p *printer) controlClause(isForStmt bool, init ast.Stmt, expr ast.Expr, post ast.Stmt) {
 	p.print(blank)
 	needsBlank := false
@@ -962,6 +1023,41 @@ func (p *printer) controlClause(isForStmt bool, init ast.Stmt, expr ast.Expr, po
 	if needsBlank {
 		p.print(blank)
 	}
+}
+
+// indentList reports whether an expression list would look better if it
+// were indented wholesale (starting with the very first element, rather
+// than starting at the first line break).
+//
+func (p *printer) indentList(list []ast.Expr) bool {
+	// Heuristic: indentList returns true if there are more than one multi-
+	// line element in the list, or if there is any element that is not
+	// starting on the same line as the previous one ends.
+	if len(list) >= 2 {
+		var b = p.lineFor(list[0].Pos())
+		var e = p.lineFor(list[len(list)-1].End())
+		if 0 < b && b < e {
+			// list spans multiple lines
+			n := 0 // multi-line element count
+			line := b
+			for _, x := range list {
+				xb := p.lineFor(x.Pos())
+				xe := p.lineFor(x.End())
+				if line < xb {
+					// x is not starting on the same
+					// line as the previous one ended
+					return true
+				}
+				if xb < xe {
+					// x is a multi-line element
+					n++
+				}
+				line = xe
+			}
+			return n > 1
+		}
+	}
+	return false
 }
 
 func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
@@ -1030,7 +1126,18 @@ func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
 		p.print(token.RETURN)
 		if s.Results != nil {
 			p.print(blank)
-			p.exprList(s.Pos(), s.Results, 1, 0, token.NoPos)
+			// Use indentList heuristic to make corner cases look
+			// better (issue 1207). A more systematic approach would
+			// always indent, but this would cause significant
+			// reformatting of the code base and not necessarily
+			// lead to more nicely formatted code in general.
+			if p.indentList(s.Results) {
+				p.print(indent)
+				p.exprList(s.Pos(), s.Results, 1, noIndent, token.NoPos)
+				p.print(unindent)
+			} else {
+				p.exprList(s.Pos(), s.Results, 1, 0, token.NoPos)
+			}
 		}
 
 	case *ast.BranchStmt:
@@ -1113,14 +1220,17 @@ func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
 
 	case *ast.RangeStmt:
 		p.print(token.FOR, blank)
-		p.expr(s.Key)
-		if s.Value != nil {
-			// use position of value following the comma as
-			// comma position for correct comment placement
-			p.print(s.Value.Pos(), token.COMMA, blank)
-			p.expr(s.Value)
+		if s.Key != nil {
+			p.expr(s.Key)
+			if s.Value != nil {
+				// use position of value following the comma as
+				// comma position for correct comment placement
+				p.print(s.Value.Pos(), token.COMMA, blank)
+				p.expr(s.Value)
+			}
+			p.print(blank, s.TokPos, s.Tok, blank)
 		}
-		p.print(blank, s.TokPos, s.Tok, blank, token.RANGE, blank)
+		p.print(token.RANGE, blank)
 		p.expr(stripParens(s.X))
 		p.print(blank)
 		p.block(s.Body, 1)
@@ -1200,9 +1310,9 @@ func keepTypeColumn(specs []ast.Spec) []bool {
 	return m
 }
 
-func (p *printer) valueSpec(s *ast.ValueSpec, keepType, doIndent bool) {
+func (p *printer) valueSpec(s *ast.ValueSpec, keepType bool) {
 	p.setComment(s.Doc)
-	p.identList(s.Names, doIndent) // always present
+	p.identList(s.Names, false) // always present
 	extraTabs := 3
 	if s.Type != nil || keepType {
 		p.print(vtab)
@@ -1285,22 +1395,22 @@ func (p *printer) genDecl(d *ast.GenDecl) {
 				// two or more grouped const/var declarations:
 				// determine if the type column must be kept
 				keepType := keepTypeColumn(d.Specs)
-				newSection := false
+				var line int
 				for i, s := range d.Specs {
 					if i > 0 {
-						p.linebreak(p.lineFor(s.Pos()), 1, ignore, newSection)
+						p.linebreak(p.lineFor(s.Pos()), 1, ignore, p.linesFrom(line) > 0)
 					}
-					p.valueSpec(s.(*ast.ValueSpec), keepType[i], false)
-					newSection = p.isMultiLine(s)
+					p.recordLine(&line)
+					p.valueSpec(s.(*ast.ValueSpec), keepType[i])
 				}
 			} else {
-				newSection := false
+				var line int
 				for i, s := range d.Specs {
 					if i > 0 {
-						p.linebreak(p.lineFor(s.Pos()), 1, ignore, newSection)
+						p.linebreak(p.lineFor(s.Pos()), 1, ignore, p.linesFrom(line) > 0)
 					}
+					p.recordLine(&line)
 					p.spec(s, n, false)
-					newSection = p.isMultiLine(s)
 				}
 			}
 			p.print(unindent, formfeed)
@@ -1350,39 +1460,46 @@ func (p *printer) nodeSize(n ast.Node, maxSize int) (size int) {
 	return
 }
 
-func (p *printer) isOneLineFunc(b *ast.BlockStmt, headerSize int) bool {
+// bodySize is like nodeSize but it is specialized for *ast.BlockStmt's.
+func (p *printer) bodySize(b *ast.BlockStmt, maxSize int) int {
 	pos1 := b.Pos()
 	pos2 := b.Rbrace
 	if pos1.IsValid() && pos2.IsValid() && p.lineFor(pos1) != p.lineFor(pos2) {
 		// opening and closing brace are on different lines - don't make it a one-liner
-		return false
+		return maxSize + 1
 	}
-	if len(b.List) > 5 || p.commentBefore(p.posFor(pos2)) {
-		// too many statements or there is a comment inside - don't make it a one-liner
-		return false
+	if len(b.List) > 5 {
+		// too many statements - don't make it a one-liner
+		return maxSize + 1
 	}
 	// otherwise, estimate body size
-	const maxSize = 100
-	bodySize := 0
+	bodySize := p.commentSizeBefore(p.posFor(pos2))
 	for i, s := range b.List {
+		if bodySize > maxSize {
+			break // no need to continue
+		}
 		if i > 0 {
 			bodySize += 2 // space for a semicolon and blank
 		}
 		bodySize += p.nodeSize(s, maxSize)
 	}
-	return headerSize+bodySize <= maxSize
+	return bodySize
 }
 
-func (p *printer) funcBody(b *ast.BlockStmt, headerSize int, isLit bool) {
+// adjBlock prints an "adjacent" block (e.g., a for-loop or function body) following
+// a header (e.g., a for-loop control clause or function signature) of given headerSize.
+// If the header's and block's size are "small enough" and the block is "simple enough",
+// the block is printed on the current line, without line breaks, spaced from the header
+// by sep. Otherwise the block's opening "{" is printed on the current line, followed by
+// lines for the block's statements and its closing "}".
+//
+func (p *printer) adjBlock(headerSize int, sep whiteSpace, b *ast.BlockStmt) {
 	if b == nil {
 		return
 	}
 
-	if p.isOneLineFunc(b, headerSize) {
-		sep := vtab
-		if isLit {
-			sep = blank
-		}
+	const maxSize = 100
+	if headerSize+p.bodySize(b, maxSize) <= maxSize {
 		p.print(sep, b.Lbrace, token.LBRACE)
 		if len(b.List) > 0 {
 			p.print(blank)
@@ -1394,21 +1511,24 @@ func (p *printer) funcBody(b *ast.BlockStmt, headerSize int, isLit bool) {
 			}
 			p.print(blank)
 		}
-		p.print(b.Rbrace, token.RBRACE)
+		p.print(noExtraLinebreak, b.Rbrace, token.RBRACE, noExtraLinebreak)
 		return
 	}
 
-	p.print(blank)
+	if sep != ignore {
+		p.print(blank) // always use blank
+	}
 	p.block(b, 1)
 }
 
-// distance returns the column difference between from and to if both
-// are on the same line; if they are on different lines (or unknown)
-// the result is infinity.
-func (p *printer) distance(from0 token.Pos, to token.Position) int {
-	from := p.posFor(from0)
-	if from.IsValid() && to.IsValid() && from.Line == to.Line {
-		return to.Column - from.Column
+// distanceFrom returns the column difference between from and p.pos (the current
+// estimated position) if both are on the same line; if they are on different lines
+// (or unknown) the result is infinity.
+func (p *printer) distanceFrom(from token.Pos) int {
+	if from.IsValid() && p.pos.IsValid() {
+		if f := p.posFor(from); f.Line == p.pos.Line {
+			return p.pos.Column - f.Column
+		}
 	}
 	return infinity
 }
@@ -1422,7 +1542,7 @@ func (p *printer) funcDecl(d *ast.FuncDecl) {
 	}
 	p.expr(d.Name)
 	p.signature(d.Type.Params, d.Type.Results)
-	p.funcBody(d.Body, p.distance(d.Pos(), p.pos), false)
+	p.adjBlock(p.distanceFrom(d.Pos()), vtab, d.Body)
 }
 
 func (p *printer) decl(decl ast.Decl) {
@@ -1452,31 +1572,35 @@ func declToken(decl ast.Decl) (tok token.Token) {
 	return
 }
 
-func (p *printer) file(src *ast.File) {
-	p.setComment(src.Doc)
-	p.print(src.Pos(), token.PACKAGE, blank)
-	p.expr(src.Name)
-
-	if len(src.Decls) > 0 {
-		tok := token.ILLEGAL
-		for _, d := range src.Decls {
-			prev := tok
-			tok = declToken(d)
-			// if the declaration token changed (e.g., from CONST to TYPE)
-			// or the next declaration has documentation associated with it,
-			// print an empty line between top-level declarations
-			// (because p.linebreak is called with the position of d, which
-			// is past any documentation, the minimum requirement is satisfied
-			// even w/o the extra getDoc(d) nil-check - leave it in case the
-			// linebreak logic improves - there's already a TODO).
+func (p *printer) declList(list []ast.Decl) {
+	tok := token.ILLEGAL
+	for _, d := range list {
+		prev := tok
+		tok = declToken(d)
+		// If the declaration token changed (e.g., from CONST to TYPE)
+		// or the next declaration has documentation associated with it,
+		// print an empty line between top-level declarations.
+		// (because p.linebreak is called with the position of d, which
+		// is past any documentation, the minimum requirement is satisfied
+		// even w/o the extra getDoc(d) nil-check - leave it in case the
+		// linebreak logic improves - there's already a TODO).
+		if len(p.output) > 0 {
+			// only print line break if we are not at the beginning of the output
+			// (i.e., we are not printing only a partial program)
 			min := 1
 			if prev != tok || getDoc(d) != nil {
 				min = 2
 			}
 			p.linebreak(p.lineFor(d.Pos()), min, ignore, false)
-			p.decl(d)
 		}
+		p.decl(d)
 	}
+}
 
+func (p *printer) file(src *ast.File) {
+	p.setComment(src.Doc)
+	p.print(src.Pos(), token.PACKAGE, blank)
+	p.expr(src.Name)
+	p.declList(src.Decls)
 	p.print(newline)
 }

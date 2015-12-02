@@ -9,73 +9,187 @@ package net
 
 import (
 	"flag"
+	"strings"
 	"testing"
 )
 
 var testExternal = flag.Bool("external", true, "allow use of external networks during long test")
 
-func TestGoogleSRV(t *testing.T) {
+var lookupGoogleSRVTests = []struct {
+	service, proto, name string
+	cname, target        string
+}{
+	{
+		"xmpp-server", "tcp", "google.com",
+		".google.com", ".google.com",
+	},
+	{
+		"", "", "_xmpp-server._tcp.google.com", // non-standard back door
+		".google.com", ".google.com",
+	},
+}
+
+func TestLookupGoogleSRV(t *testing.T) {
 	if testing.Short() || !*testExternal {
-		t.Logf("skipping test to avoid external network")
-		return
+		t.Skip("skipping test to avoid external network")
 	}
-	_, addrs, err := LookupSRV("xmpp-server", "tcp", "google.com")
+
+	for _, tt := range lookupGoogleSRVTests {
+		cname, srvs, err := LookupSRV(tt.service, tt.proto, tt.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(srvs) == 0 {
+			t.Error("got no record")
+		}
+		if !strings.Contains(cname, tt.cname) {
+			t.Errorf("got %q; want %q", cname, tt.cname)
+		}
+		for _, srv := range srvs {
+			if !strings.Contains(srv.Target, tt.target) {
+				t.Errorf("got %v; want a record containing %q", srv, tt.target)
+			}
+		}
+	}
+}
+
+func TestLookupGmailMX(t *testing.T) {
+	if testing.Short() || !*testExternal {
+		t.Skip("skipping test to avoid external network")
+	}
+
+	mxs, err := LookupMX("gmail.com")
 	if err != nil {
-		t.Errorf("failed: %s", err)
+		t.Fatal(err)
+	}
+	if len(mxs) == 0 {
+		t.Error("got no record")
+	}
+	for _, mx := range mxs {
+		if !strings.Contains(mx.Host, ".google.com") {
+			t.Errorf("got %v; want a record containing .google.com.", mx)
+		}
+	}
+}
+
+func TestLookupGmailNS(t *testing.T) {
+	if testing.Short() || !*testExternal {
+		t.Skip("skipping test to avoid external network")
+	}
+
+	nss, err := LookupNS("gmail.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nss) == 0 {
+		t.Error("got no record")
+	}
+	for _, ns := range nss {
+		if !strings.Contains(ns.Host, ".google.com") {
+			t.Errorf("got %v; want a record containing .google.com.", ns)
+		}
+	}
+}
+
+func TestLookupGmailTXT(t *testing.T) {
+	if testing.Short() || !*testExternal {
+		t.Skip("skipping test to avoid external network")
+	}
+
+	txts, err := LookupTXT("gmail.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txts) == 0 {
+		t.Error("got no record")
+	}
+	for _, txt := range txts {
+		if !strings.Contains(txt, "spf") {
+			t.Errorf("got %q; want a spf record", txt)
+		}
+	}
+}
+
+var lookupGooglePublicDNSAddrs = []struct {
+	addr string
+	name string
+}{
+	{"8.8.8.8", ".google.com."},
+	{"8.8.4.4", ".google.com."},
+	{"2001:4860:4860::8888", ".google.com."},
+	{"2001:4860:4860::8844", ".google.com."},
+}
+
+func TestLookupGooglePublicDNSAddr(t *testing.T) {
+	if testing.Short() || !*testExternal {
+		t.Skip("skipping test to avoid external network")
+	}
+
+	for _, tt := range lookupGooglePublicDNSAddrs {
+		names, err := LookupAddr(tt.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(names) == 0 {
+			t.Error("got no record")
+		}
+		for _, name := range names {
+			if !strings.HasSuffix(name, tt.name) {
+				t.Errorf("got %q; want a record containing %q", name, tt.name)
+			}
+		}
+	}
+}
+
+func TestLookupIANACNAME(t *testing.T) {
+	if testing.Short() || !*testExternal {
+		t.Skip("skipping test to avoid external network")
+	}
+
+	cname, err := LookupCNAME("www.iana.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(cname, ".icann.org.") {
+		t.Errorf("got %q; want a record containing .icann.org.", cname)
+	}
+}
+
+func TestLookupGoogleHost(t *testing.T) {
+	if testing.Short() || !*testExternal {
+		t.Skip("skipping test to avoid external network")
+	}
+
+	addrs, err := LookupHost("google.com")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(addrs) == 0 {
-		t.Errorf("no results")
+		t.Error("got no record")
 	}
-
-	// Non-standard back door.
-	_, addrs, err = LookupSRV("", "", "_xmpp-server._tcp.google.com")
-	if err != nil {
-		t.Errorf("back door failed: %s", err)
-	}
-	if len(addrs) == 0 {
-		t.Errorf("back door no results")
+	for _, addr := range addrs {
+		if ParseIP(addr) == nil {
+			t.Errorf("got %q; want a literal ip address", addr)
+		}
 	}
 }
 
-func TestGmailMX(t *testing.T) {
+func TestLookupGoogleIP(t *testing.T) {
 	if testing.Short() || !*testExternal {
-		t.Logf("skipping test to avoid external network")
-		return
+		t.Skip("skipping test to avoid external network")
 	}
-	mx, err := LookupMX("gmail.com")
-	if err != nil {
-		t.Errorf("failed: %s", err)
-	}
-	if len(mx) == 0 {
-		t.Errorf("no results")
-	}
-}
 
-func TestGmailTXT(t *testing.T) {
-	if testing.Short() || !*testExternal {
-		t.Logf("skipping test to avoid external network")
-		return
-	}
-	txt, err := LookupTXT("gmail.com")
+	ips, err := LookupIP("google.com")
 	if err != nil {
-		t.Errorf("failed: %s", err)
+		t.Fatal(err)
 	}
-	if len(txt) == 0 || len(txt[0]) == 0 {
-		t.Errorf("no results")
+	if len(ips) == 0 {
+		t.Error("got no record")
 	}
-}
-
-func TestGoogleDNSAddr(t *testing.T) {
-	if testing.Short() || !*testExternal {
-		t.Logf("skipping test to avoid external network")
-		return
-	}
-	names, err := LookupAddr("8.8.8.8")
-	if err != nil {
-		t.Errorf("failed: %s", err)
-	}
-	if len(names) == 0 {
-		t.Errorf("no results")
+	for _, ip := range ips {
+		if ip.To4() == nil && ip.To16() == nil {
+			t.Errorf("got %v; want an ip address", ip)
+		}
 	}
 }
 

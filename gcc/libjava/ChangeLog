@@ -1,38 +1,51 @@
-2012-03-22  Release Manager
+2015-07-16  Release Manager
 
-	* GCC 4.7.0 released.
+	* GCC 5.2.0 released.
 
-2012-02-23  Patrick Marlier  <patrick.marlier@gmail.com>
-	    Jack Howarth  <howarth@bromo.med.uc.edu>
+2015-06-25  Andreas Tobler  <andreast@gcc.gnu.org>
 
-	PR target/49461
-	* configure.ac (SYSTEMSPEC): No longer pass -no_pie for darwin11.
+	Backport from mainline
+	2015-05-28  Andreas Tobler  <andreast@gcc.gnu.org>
+
+	* configure.host: Add bits for FreeBSD amd64 and i386.
+	* configure.ac: Add signal handler for FreeBSD (amd64/i386)
 	* configure: Regenerate.
+	* include/freebsd-signal.h: New file.
 
-2012-02-02  Kai Tietz  <ktietz@redhat.com>
+	2015-05-26  Andreas Tobler  <andreast@gcc.gnu.org>
 
-	PR libjava/48512
-	* configure.ac (THREADSTARTFILESPEC): Don't add crtmet.o file for
-	w64 windows targets.
-	* configure: Regenerated.
+	* testsuite/libjava.jni/jni.exp (gcj_jni_get_cxxflags_invocation): Add
+	libiconv for FreeBSD to cxxflags.
 
-2012-02-01  Kai Tietz  <ktietz@redhat.com>
+2015-04-22  Release Manager
 
-	PR target/51500
-	* interpret.cc (_Jv_init_cif): Handle thiscall
-	convention for 32-bit Windows.
-	* java/lang/reflect/natMethod.cc (_Jv_CallAnyMethodA):
-	Likewise.
-	* java/lang/reflect/natVMProxy.cc (invoke_t): Add
-	thiscall-attribute for 32-bit Windows.
+	* GCC 5.1.0 released.
 
-2012-01-01  Jakub Jelinek  <jakub@redhat.com>
+2015-01-29  Bernd Edlinger  <bernd.edlinger@hotmail.de>
 
+	* libtool-version: Add a comment about cygwin.
+
+2015-01-21  Matthias Klose  <doko@ubuntu.com>
+
+	* libtool-version: Bump soversion.
+
+2015-01-13  Jakub Jelinek  <jakub@redhat.com>
+
+	PR libgcj/64219
+	* Makefile.am (install-data-local): Use just the major version
+	from GCJVERSION instead of major.minor.
+	* Makefile.in: Regenerated.
+
+2015-01-05  Jakub Jelinek  <jakub@redhat.com>
+
+	* classpath/gnu/java/rmi/registry/RegistryImpl.java (version): Update
+	copyright notice dates.
+	* classpath/tools/gnu/classpath/tools/orbd/Main.java (run): Ditto.
 	* gnu/gcj/convert/Convert.java (version): Update copyright notice
 	dates.
-	* gnu/gcj/tools/gcj_dbtool/Main.java (main): Likewise.
+	* gnu/gcj/tools/gcj_dbtool/Main.java (main): Ditto.
 
-Copyright (C) 2012 Free Software Foundation, Inc.
+Copyright (C) 2015 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

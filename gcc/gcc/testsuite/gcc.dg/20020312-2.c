@@ -42,6 +42,8 @@ extern void abort (void);
 /* No pic register.  */
 #elif defined(__mcore__)
 /* No pic register.  */
+#elif defined(__MICROBLAZE__)
+# define PIC_REG "r20"
 #elif defined(__mips__)
 /* PIC register is $28, but is used even without -fpic.  */
 #elif defined(__MMIX__)
@@ -49,6 +51,10 @@ extern void abort (void);
 #elif defined(__mn10300__)
 /* No pic register.  */
 #elif defined(__moxie__)
+/* No pic register.  */
+#elif defined(__nds32__)
+/* No pic register.  */
+#elif defined(__nios2__)
 /* No pic register.  */
 #elif defined(__hppa__)
 /* PIC register is %r27 or %r19, but is used even without -fpic.  */
@@ -74,6 +80,8 @@ extern void abort (void);
 /* No pic register.  */
 #elif defined(__vax__)
 /* No pic register.  */
+#elif defined(__VISIUM__)
+/* No pic register.  */
 #elif defined(__xstormy16__)
 /* No pic register.  */
 #elif defined(__XTENSA__)
@@ -92,6 +100,14 @@ extern void abort (void);
 # else
 #  define PIC_REG "gr17"
 #endif
+#elif defined (__aarch64__)
+/* No pic register -- yet.  */
+#elif defined(__RL78__)
+/* No pic register.  */
+#elif defined(__MSP430__)
+/* No pic register.  */
+#elif defined (__nvptx__)
+/* No pic register.  */
 #else
 # error "Modify the test for your target."
 #endif

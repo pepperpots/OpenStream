@@ -1,7 +1,5 @@
 /* MD reader definitions.
-   Copyright (C) 1987, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
-   2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -18,6 +16,9 @@ for more details.
 You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
+
+#ifndef GCC_READ_MD_H
+#define GCC_READ_MD_H
 
 #include "obstack.h"
 #include "hashtab.h"
@@ -118,8 +119,10 @@ extern hashval_t leading_string_hash (const void *);
 extern int leading_string_eq_p (const void *, const void *);
 extern void copy_md_ptr_loc (const void *, const void *);
 extern void print_md_ptr_loc (const void *);
+extern void fprint_md_ptr_loc (FILE *, const void *);
 extern const char *join_c_conditions (const char *, const char *);
 extern void print_c_condition (const char *);
+extern void fprint_c_condition (FILE *, const char *);
 extern void message_with_line (int, const char *, ...) ATTRIBUTE_PRINTF_2;
 extern void error_with_line (int, const char *, ...) ATTRIBUTE_PRINTF_2;
 extern void fatal_with_file_and_line (const char *, ...)
@@ -138,3 +141,5 @@ extern void traverse_enum_types (htab_trav, void *);
 extern struct enum_type *lookup_enum_type (const char *);
 extern bool read_md_files (int, char **, bool (*) (const char *),
 			   directive_handler_t);
+
+#endif /* GCC_READ_MD_H */

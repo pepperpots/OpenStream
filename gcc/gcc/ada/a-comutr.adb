@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -33,6 +33,8 @@ with Ada.Unchecked_Deallocation;
 with System; use type System.Address;
 
 package body Ada.Containers.Multiway_Trees is
+
+   pragma Annotate (CodePeer, Skip_Analysis);
 
    --------------------
    --  Root_Iterator --
@@ -272,7 +274,8 @@ package body Ada.Containers.Multiway_Trees is
       New_Item  : Element_Type;
       Count     : Count_Type := 1)
    is
-      First, Last : Tree_Node_Access;
+      First : Tree_Node_Access;
+      Last  : Tree_Node_Access;
 
    begin
       if Parent = No_Element then
@@ -297,7 +300,6 @@ package body Ada.Containers.Multiway_Trees is
                                    others  => <>);
 
       Last := First;
-
       for J in Count_Type'(2) .. Count loop
 
          --  Reclaim other nodes if Storage_Error.  ???
@@ -484,9 +486,8 @@ package body Ada.Containers.Multiway_Trees is
          L : Natural renames C.Lock;
       begin
          return R : constant Constant_Reference_Type :=
-                      (Element => Position.Node.Element'Access,
-                       Control =>
-                         (Controlled with Container'Unrestricted_Access))
+           (Element => Position.Node.Element'Access,
+            Control => (Controlled with Container'Unrestricted_Access))
          do
             B := B + 1;
             L := L + 1;
@@ -1009,7 +1010,7 @@ package body Ada.Containers.Multiway_Trees is
       Item      : Element_Type) return Cursor
    is
       N : constant Tree_Node_Access :=
-            Find_In_Children (Root_Node (Container), Item);
+        Find_In_Children (Root_Node (Container), Item);
    begin
       if N = null then
          return No_Element;
@@ -1172,7 +1173,8 @@ package body Ada.Containers.Multiway_Trees is
       Position  : out Cursor;
       Count     : Count_Type := 1)
    is
-      Last : Tree_Node_Access;
+      First : Tree_Node_Access;
+      Last  : Tree_Node_Access;
 
    begin
       if Parent = No_Element then
@@ -1203,13 +1205,11 @@ package body Ada.Containers.Multiway_Trees is
            with "attempt to tamper with cursors (tree is busy)";
       end if;
 
-      Position.Container := Parent.Container;
-      Position.Node := new Tree_Node_Type'(Parent  => Parent.Node,
-                                           Element => New_Item,
-                                           others  => <>);
+      First := new Tree_Node_Type'(Parent  => Parent.Node,
+                                   Element => New_Item,
+                                   others  => <>);
 
-      Last := Position.Node;
-
+      Last := First;
       for J in Count_Type'(2) .. Count loop
 
          --  Reclaim other nodes if Storage_Error.  ???
@@ -1223,7 +1223,7 @@ package body Ada.Containers.Multiway_Trees is
       end loop;
 
       Insert_Subtree_List
-        (First  => Position.Node,
+        (First  => First,
          Last   => Last,
          Parent => Parent.Node,
          Before => Before.Node);
@@ -1233,6 +1233,8 @@ package body Ada.Containers.Multiway_Trees is
       --  nodes we just inserted.
 
       Container.Count := Container.Count + Count;
+
+      Position := Cursor'(Parent.Container, First);
    end Insert_Child;
 
    procedure Insert_Child
@@ -1242,7 +1244,8 @@ package body Ada.Containers.Multiway_Trees is
       Position  : out Cursor;
       Count     : Count_Type := 1)
    is
-      Last : Tree_Node_Access;
+      First : Tree_Node_Access;
+      Last  : Tree_Node_Access;
 
    begin
       if Parent = No_Element then
@@ -1273,13 +1276,11 @@ package body Ada.Containers.Multiway_Trees is
            with "attempt to tamper with cursors (tree is busy)";
       end if;
 
-      Position.Container := Parent.Container;
-      Position.Node := new Tree_Node_Type'(Parent  => Parent.Node,
-                                           Element => <>,
-                                           others  => <>);
+      First := new Tree_Node_Type'(Parent  => Parent.Node,
+                                   Element => <>,
+                                   others  => <>);
 
-      Last := Position.Node;
-
+      Last := First;
       for J in Count_Type'(2) .. Count loop
 
          --  Reclaim other nodes if Storage_Error.  ???
@@ -1293,7 +1294,7 @@ package body Ada.Containers.Multiway_Trees is
       end loop;
 
       Insert_Subtree_List
-        (First  => Position.Node,
+        (First  => First,
          Last   => Last,
          Parent => Parent.Node,
          Before => Before.Node);
@@ -1303,6 +1304,8 @@ package body Ada.Containers.Multiway_Trees is
       --  nodes we just inserted.
 
       Container.Count := Container.Count + Count;
+
+      Position := Cursor'(Parent.Container, First);
    end Insert_Child;
 
    -------------------------
@@ -1537,9 +1540,9 @@ package body Ada.Containers.Multiway_Trees is
       end if;
 
       return It : constant Child_Iterator :=
-                    (Limited_Controlled with
-                       Container => C,
-                       Subtree   => Parent.Node)
+        (Limited_Controlled with
+           Container => C,
+           Subtree   => Parent.Node)
       do
          B := B + 1;
       end return;
@@ -1565,9 +1568,9 @@ package body Ada.Containers.Multiway_Trees is
          B : Natural renames Position.Container.Busy;
       begin
          return It : constant Subtree_Iterator :=
-                       (Limited_Controlled with
-                          Container => Position.Container,
-                          Subtree   => Position.Node)
+           (Limited_Controlled with
+              Container => Position.Container,
+              Subtree   => Position.Node)
          do
             B := B + 1;
          end return;
@@ -1935,6 +1938,7 @@ package body Ada.Containers.Multiway_Trees is
          when others =>
             L := L - 1;
             B := B - 1;
+
             raise;
       end;
    end Query_Element;
@@ -2006,10 +2010,10 @@ package body Ada.Containers.Multiway_Trees is
         (Parent : Tree_Node_Access) return Tree_Node_Access
       is
          Subtree : constant Tree_Node_Access :=
-                     new Tree_Node_Type'
-                           (Parent  => Parent,
-                            Element => Element_Type'Input (Stream),
-                            others  => <>);
+           new Tree_Node_Type'
+             (Parent  => Parent,
+              Element => Element_Type'Input (Stream),
+              others  => <>);
 
       begin
          Read_Count := Read_Count + 1;
@@ -2102,8 +2106,8 @@ package body Ada.Containers.Multiway_Trees is
          L : Natural renames C.Lock;
       begin
          return R : constant Reference_Type :=
-                      (Element => Position.Node.Element'Access,
-                       Control => (Controlled with Position.Container))
+           (Element => Position.Node.Element'Access,
+            Control => (Controlled with Position.Container))
          do
             B := B + 1;
             L := L + 1;
@@ -2724,6 +2728,7 @@ package body Ada.Containers.Multiway_Trees is
          when others =>
             L := L - 1;
             B := B - 1;
+
             raise;
       end;
    end Update_Element;

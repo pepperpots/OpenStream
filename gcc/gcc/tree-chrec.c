@@ -1,6 +1,5 @@
 /* Chains of recurrences.
-   Copyright (C) 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
    Contributed by Sebastian Pop <pop@cri.ensmp.fr>
 
 This file is part of GCC.
@@ -27,11 +26,34 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "options.h"
+#include "wide-int.h"
+#include "inchash.h"
+#include "real.h"
+#include "tree.h"
+#include "fold-const.h"
 #include "tree-pretty-print.h"
 #include "cfgloop.h"
-#include "tree-flow.h"
+#include "predict.h"
+#include "tm.h"
+#include "hard-reg-set.h"
+#include "input.h"
+#include "function.h"
+#include "dominance.h"
+#include "cfg.h"
+#include "basic-block.h"
+#include "gimple-expr.h"
+#include "tree-ssa-loop-ivopts.h"
+#include "tree-ssa-loop-niter.h"
 #include "tree-chrec.h"
-#include "tree-pass.h"
+#include "dumpfile.h"
 #include "params.h"
 #include "tree-scalar-evolution.h"
 
@@ -56,8 +78,8 @@ chrec_fold_poly_cst (enum tree_code code,
   gcc_assert (poly);
   gcc_assert (cst);
   gcc_assert (TREE_CODE (poly) == POLYNOMIAL_CHREC);
-  gcc_assert (!is_not_constant_evolution (cst));
-  gcc_assert (type == chrec_type (poly));
+  gcc_checking_assert (!is_not_constant_evolution (cst));
+  gcc_checking_assert (useless_type_conversion_p (type, chrec_type (poly)));
 
   switch (code)
     {
@@ -102,10 +124,11 @@ chrec_fold_plus_poly_poly (enum tree_code code,
   gcc_assert (TREE_CODE (poly0) == POLYNOMIAL_CHREC);
   gcc_assert (TREE_CODE (poly1) == POLYNOMIAL_CHREC);
   if (POINTER_TYPE_P (chrec_type (poly0)))
-    gcc_assert (ptrofftype_p (chrec_type (poly1)));
+    gcc_checking_assert (ptrofftype_p (chrec_type (poly1))
+			 && useless_type_conversion_p (type, chrec_type (poly0)));
   else
-    gcc_assert (chrec_type (poly0) == chrec_type (poly1));
-  gcc_assert (type == chrec_type (poly0));
+    gcc_checking_assert (useless_type_conversion_p (type, chrec_type (poly0))
+			 && useless_type_conversion_p (type, chrec_type (poly1)));
 
   /*
     {a, +, b}_1 + {c, +, d}_2  ->  {{a, +, b}_1 + c, +, d}_2,
@@ -186,8 +209,8 @@ chrec_fold_multiply_poly_poly (tree type,
   gcc_assert (poly1);
   gcc_assert (TREE_CODE (poly0) == POLYNOMIAL_CHREC);
   gcc_assert (TREE_CODE (poly1) == POLYNOMIAL_CHREC);
-  gcc_assert (chrec_type (poly0) == chrec_type (poly1));
-  gcc_assert (type == chrec_type (poly0));
+  gcc_checking_assert (useless_type_conversion_p (type, chrec_type (poly0))
+		       && useless_type_conversion_p (type, chrec_type (poly1)));
 
   /* {a, +, b}_1 * {c, +, d}_2  ->  {c*{a, +, b}_1, +, d}_2,
      {a, +, b}_2 * {c, +, d}_1  ->  {a*{c, +, d}_1, +, b}_2,
@@ -269,9 +292,14 @@ chrec_fold_plus_1 (enum tree_code code, tree type,
   switch (TREE_CODE (op0))
     {
     case POLYNOMIAL_CHREC:
+      gcc_checking_assert
+	(!chrec_contains_symbols_defined_in_loop (op0, CHREC_VARIABLE (op0)));
       switch (TREE_CODE (op1))
 	{
 	case POLYNOMIAL_CHREC:
+	  gcc_checking_assert
+	    (!chrec_contains_symbols_defined_in_loop (op1,
+						      CHREC_VARIABLE (op1)));
 	  return chrec_fold_plus_poly_poly (code, type, op0, op1);
 
 	CASE_CONVERT:
@@ -299,6 +327,9 @@ chrec_fold_plus_1 (enum tree_code code, tree type,
       switch (TREE_CODE (op1))
 	{
 	case POLYNOMIAL_CHREC:
+	  gcc_checking_assert
+	    (!chrec_contains_symbols_defined_in_loop (op1,
+						      CHREC_VARIABLE (op1)));
 	  if (code == PLUS_EXPR || code == POINTER_PLUS_EXPR)
 	    return build_polynomial_chrec
 	      (CHREC_VARIABLE (op1),
@@ -397,9 +428,14 @@ chrec_fold_multiply (tree type,
   switch (TREE_CODE (op0))
     {
     case POLYNOMIAL_CHREC:
+      gcc_checking_assert
+	(!chrec_contains_symbols_defined_in_loop (op0, CHREC_VARIABLE (op0)));
       switch (TREE_CODE (op1))
 	{
 	case POLYNOMIAL_CHREC:
+	  gcc_checking_assert
+	    (!chrec_contains_symbols_defined_in_loop (op1,
+						      CHREC_VARIABLE (op1)));
 	  return chrec_fold_multiply_poly_poly (type, op0, op1);
 
 	CASE_CONVERT:
@@ -432,6 +468,9 @@ chrec_fold_multiply (tree type,
       switch (TREE_CODE (op1))
 	{
 	case POLYNOMIAL_CHREC:
+	  gcc_checking_assert
+	    (!chrec_contains_symbols_defined_in_loop (op1,
+						      CHREC_VARIABLE (op1)));
 	  return build_polynomial_chrec
 	    (CHREC_VARIABLE (op1),
 	     chrec_fold_multiply (type, CHREC_LEFT (op1), op0),
@@ -461,8 +500,7 @@ chrec_fold_multiply (tree type,
 static tree
 tree_fold_binomial (tree type, tree n, unsigned int k)
 {
-  unsigned HOST_WIDE_INT lidx, lnum, ldenom, lres, ldum;
-  HOST_WIDE_INT hidx, hnum, hdenom, hres, hdum;
+  bool overflow;
   unsigned int i;
   tree res;
 
@@ -473,58 +511,37 @@ tree_fold_binomial (tree type, tree n, unsigned int k)
     return fold_convert (type, n);
 
   /* Check that k <= n.  */
-  if (TREE_INT_CST_HIGH (n) == 0
-      && TREE_INT_CST_LOW (n) < k)
+  if (wi::ltu_p (n, k))
     return NULL_TREE;
 
-  /* Numerator = n.  */
-  lnum = TREE_INT_CST_LOW (n);
-  hnum = TREE_INT_CST_HIGH (n);
-
   /* Denominator = 2.  */
-  ldenom = 2;
-  hdenom = 0;
+  wide_int denom = wi::two (TYPE_PRECISION (TREE_TYPE (n)));
 
   /* Index = Numerator-1.  */
-  if (lnum == 0)
-    {
-      hidx = hnum - 1;
-      lidx = ~ (unsigned HOST_WIDE_INT) 0;
-    }
-  else
-    {
-      hidx = hnum;
-      lidx = lnum - 1;
-    }
+  wide_int idx = wi::sub (n, 1);
 
   /* Numerator = Numerator*Index = n*(n-1).  */
-  if (mul_double (lnum, hnum, lidx, hidx, &lnum, &hnum))
+  wide_int num = wi::smul (n, idx, &overflow);
+  if (overflow)
     return NULL_TREE;
 
   for (i = 3; i <= k; i++)
     {
       /* Index--.  */
-      if (lidx == 0)
-	{
-	  hidx--;
-	  lidx = ~ (unsigned HOST_WIDE_INT) 0;
-	}
-      else
-        lidx--;
+      --idx;
 
       /* Numerator *= Index.  */
-      if (mul_double (lnum, hnum, lidx, hidx, &lnum, &hnum))
+      num = wi::smul (num, idx, &overflow);
+      if (overflow)
 	return NULL_TREE;
 
       /* Denominator *= i.  */
-      mul_double (ldenom, hdenom, i, 0, &ldenom, &hdenom);
+      denom *= i;
     }
 
   /* Result = Numerator / Denominator.  */
-  div_and_round_double (EXACT_DIV_EXPR, 1, lnum, hnum, ldenom, hdenom,
-			&lres, &hres, &ldum, &hdum);
-
-  res = build_int_cst_wide (type, lres, hres);
+  wide_int di_res = wi::udiv_trunc (num, denom);
+  res = wide_int_to_tree (type, di_res);
   return int_fits_type_p (res, type) ? res : NULL_TREE;
 }
 
@@ -536,7 +553,7 @@ chrec_evaluate (unsigned var, tree chrec, tree n, unsigned int k)
 {
   tree arg0, arg1, binomial_n_k;
   tree type = TREE_TYPE (chrec);
-  struct loop *var_loop = get_loop (var);
+  struct loop *var_loop = get_loop (cfun, var);
 
   while (TREE_CODE (chrec) == POLYNOMIAL_CHREC
 	 && flow_loop_nested_p (var_loop, get_chrec_loop (chrec)))
@@ -652,12 +669,12 @@ chrec_apply (unsigned var,
    expression, calls chrec_apply when the expression is not NULL.  */
 
 tree
-chrec_apply_map (tree chrec, VEC (tree, heap) *iv_map)
+chrec_apply_map (tree chrec, vec<tree> iv_map)
 {
   int i;
   tree expr;
 
-  FOR_EACH_VEC_ELT (tree, iv_map, i, expr)
+  FOR_EACH_VEC_ELT (iv_map, i, expr)
     if (expr)
       chrec = chrec_apply (i, chrec, expr);
 
@@ -709,7 +726,7 @@ tree
 hide_evolution_in_other_loops_than_loop (tree chrec,
 					 unsigned loop_num)
 {
-  struct loop *loop = get_loop (loop_num), *chloop;
+  struct loop *loop = get_loop (cfun, loop_num), *chloop;
   if (automatically_generated_chrec_p (chrec))
     return chrec;
 
@@ -750,7 +767,7 @@ chrec_component_in_loop_num (tree chrec,
 			     bool right)
 {
   tree component;
-  struct loop *loop = get_loop (loop_num), *chloop;
+  struct loop *loop = get_loop (cfun, loop_num), *chloop;
 
   if (automatically_generated_chrec_p (chrec))
     return chrec;
@@ -832,7 +849,7 @@ reset_evolution_in_loop (unsigned loop_num,
 			 tree chrec,
 			 tree new_evol)
 {
-  struct loop *loop = get_loop (loop_num);
+  struct loop *loop = get_loop (cfun, loop_num);
 
   if (POINTER_TYPE_P (chrec_type (chrec)))
     gcc_assert (ptrofftype_p (chrec_type (new_evol)));
@@ -1005,12 +1022,14 @@ evolution_function_is_invariant_rec_p (tree chrec, int loopnum)
 
   if (TREE_CODE (chrec) == SSA_NAME
       && (loopnum == 0
-	  || expr_invariant_in_loop_p (get_loop (loopnum), chrec)))
+	  || expr_invariant_in_loop_p (get_loop (cfun, loopnum), chrec)))
     return true;
 
   if (TREE_CODE (chrec) == POLYNOMIAL_CHREC)
     {
       if (CHREC_VARIABLE (chrec) == (unsigned) loopnum
+	  || flow_loop_nested_p (get_loop (cfun, loopnum),
+				 get_chrec_loop (chrec))
 	  || !evolution_function_is_invariant_rec_p (CHREC_RIGHT (chrec),
 						     loopnum)
 	  || !evolution_function_is_invariant_rec_p (CHREC_LEFT (chrec),
@@ -1114,6 +1133,8 @@ evolution_function_is_univariate_p (const_tree chrec)
 	  break;
 
 	default:
+	  if (tree_contains_chrecs (CHREC_LEFT (chrec), NULL))
+	    return false;
 	  break;
 	}
 
@@ -1127,6 +1148,8 @@ evolution_function_is_univariate_p (const_tree chrec)
 	  break;
 
 	default:
+	  if (tree_contains_chrecs (CHREC_RIGHT (chrec), NULL))
+	    return false;
 	  break;
 	}
 
@@ -1330,7 +1353,7 @@ chrec_convert_1 (tree type, tree chrec, gimple at_stmt,
     return chrec;
 
   ct = chrec_type (chrec);
-  if (ct == type)
+  if (useless_type_conversion_p (type, ct))
     return chrec;
 
   if (!evolution_function_is_affine_p (chrec))
@@ -1359,6 +1382,23 @@ keep_cast:
     res = fold_build2 (TREE_CODE (chrec), type,
 		       fold_convert (type, TREE_OPERAND (chrec, 0)),
 		       fold_convert (type, TREE_OPERAND (chrec, 1)));
+  /* Similar perform the trick that (signed char)((int)x + 2) can be
+     narrowed to (signed char)((unsigned char)x + 2).  */
+  else if (use_overflow_semantics
+	   && TREE_CODE (chrec) == POLYNOMIAL_CHREC
+	   && TREE_CODE (ct) == INTEGER_TYPE
+	   && TREE_CODE (type) == INTEGER_TYPE
+	   && TYPE_OVERFLOW_UNDEFINED (type)
+	   && TYPE_PRECISION (type) < TYPE_PRECISION (ct))
+    {
+      tree utype = unsigned_type_for (type);
+      res = build_polynomial_chrec (CHREC_VARIABLE (chrec),
+				    fold_convert (utype,
+						  CHREC_LEFT (chrec)),
+				    fold_convert (utype,
+						  CHREC_RIGHT (chrec)));
+      res = chrec_convert_1 (type, res, at_stmt, use_overflow_semantics);
+    }
   else
     res = fold_convert (type, chrec);
 

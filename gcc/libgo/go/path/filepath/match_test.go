@@ -5,8 +5,11 @@
 package filepath_test
 
 import (
+	"io/ioutil"
+	"os"
 	. "path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -65,6 +68,11 @@ var matchTests = []MatchTest{
 	{"[-x]", "a", false, ErrBadPattern},
 	{"\\", "a", false, ErrBadPattern},
 	{"[a-b-c]", "a", false, ErrBadPattern},
+	{"[", "a", false, ErrBadPattern},
+	{"[^", "a", false, ErrBadPattern},
+	{"[^bc", "a", false, ErrBadPattern},
+	{"a[", "a", false, nil},
+	{"a[", "ab", false, ErrBadPattern},
 	{"*x", "xxx", true, nil},
 }
 
@@ -76,21 +84,26 @@ func errp(e error) string {
 }
 
 func TestMatch(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		// XXX: Don't pass for windows.
-		return
-	}
 	for _, tt := range matchTests {
-		ok, err := Match(tt.pattern, tt.s)
+		pattern := tt.pattern
+		s := tt.s
+		if runtime.GOOS == "windows" {
+			if strings.Index(pattern, "\\") >= 0 {
+				// no escape allowed on windows.
+				continue
+			}
+			pattern = Clean(pattern)
+			s = Clean(s)
+		}
+		ok, err := Match(pattern, s)
 		if ok != tt.match || err != tt.err {
-			t.Errorf("Match(%#q, %#q) = %v, %q want %v, %q", tt.pattern, tt.s, ok, errp(err), tt.match, errp(tt.err))
+			t.Errorf("Match(%#q, %#q) = %v, %q want %v, %q", pattern, s, ok, errp(err), tt.match, errp(tt.err))
 		}
 	}
 }
 
 // contains returns true if vector contains the string s.
 func contains(vector []string, s string) bool {
-	s = ToSlash(s)
 	for _, elem := range vector {
 		if elem == s {
 			return true
@@ -110,18 +123,20 @@ var globTests = []struct {
 }
 
 func TestGlob(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		// XXX: Don't pass for windows.
-		return
-	}
 	for _, tt := range globTests {
-		matches, err := Glob(tt.pattern)
+		pattern := tt.pattern
+		result := tt.result
+		if runtime.GOOS == "windows" {
+			pattern = Clean(pattern)
+			result = Clean(result)
+		}
+		matches, err := Glob(pattern)
 		if err != nil {
-			t.Errorf("Glob error for %q: %s", tt.pattern, err)
+			t.Errorf("Glob error for %q: %s", pattern, err)
 			continue
 		}
-		if !contains(matches, tt.result) {
-			t.Errorf("Glob(%#q) = %#v want %v", tt.pattern, matches, tt.result)
+		if !contains(matches, result) {
+			t.Errorf("Glob(%#q) = %#v want %v", pattern, matches, result)
 		}
 	}
 	for _, pattern := range []string{"no_match", "../*/no_match"} {
@@ -140,5 +155,58 @@ func TestGlobError(t *testing.T) {
 	_, err := Glob("[7]")
 	if err != nil {
 		t.Error("expected error for bad pattern; got none")
+	}
+}
+
+var globSymlinkTests = []struct {
+	path, dest string
+	brokenLink bool
+}{
+	{"test1", "link1", false},
+	{"test2", "link2", true},
+}
+
+func TestGlobSymlink(t *testing.T) {
+	switch runtime.GOOS {
+	case "nacl", "plan9":
+		t.Skipf("skipping on %s", runtime.GOOS)
+	case "windows":
+		if !supportsSymlinks {
+			t.Skipf("skipping on %s", runtime.GOOS)
+		}
+
+	}
+
+	tmpDir, err := ioutil.TempDir("", "globsymlink")
+	if err != nil {
+		t.Fatal("creating temp dir:", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, tt := range globSymlinkTests {
+		path := Join(tmpDir, tt.path)
+		dest := Join(tmpDir, tt.dest)
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		err = os.Symlink(path, dest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tt.brokenLink {
+			// Break the symlink.
+			os.Remove(path)
+		}
+		matches, err := Glob(dest)
+		if err != nil {
+			t.Errorf("GlobSymlink error for %q: %s", dest, err)
+		}
+		if !contains(matches, dest) {
+			t.Errorf("Glob(%#q) = %#v want %v", dest, matches, dest)
+		}
 	}
 }

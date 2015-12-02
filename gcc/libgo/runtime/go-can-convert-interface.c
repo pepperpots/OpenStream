@@ -4,7 +4,9 @@
    Use of this source code is governed by a BSD-style
    license that can be found in the LICENSE file.  */
 
+#include "runtime.h"
 #include "go-assert.h"
+#include "go-string.h"
 #include "go-type.h"
 #include "interface.h"
 
@@ -29,7 +31,7 @@ __go_can_convert_to_interface (
   if (from_descriptor == NULL)
     return 0;
 
-  __go_assert (to_descriptor->__code == GO_INTERFACE);
+  __go_assert ((to_descriptor->__code & GO_CODE_MASK) == GO_INTERFACE);
   to_interface = (const struct __go_interface_type *) to_descriptor;
   to_method_count = to_interface->__methods.__count;
   to_method = ((const struct __go_interface_method *)

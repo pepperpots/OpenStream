@@ -11,6 +11,16 @@ import (
 	. "unicode/utf16"
 )
 
+// Validate the constants redefined from unicode.
+func TestConstants(t *testing.T) {
+	if MaxRune != unicode.MaxRune {
+		t.Errorf("utf16.maxRune is wrong: %x should be %x", MaxRune, unicode.MaxRune)
+	}
+	if ReplacementChar != unicode.ReplacementChar {
+		t.Errorf("utf16.replacementChar is wrong: %x should be %x", ReplacementChar, unicode.ReplacementChar)
+	}
+}
+
 type encodeTest struct {
 	in  []rune
 	out []uint16
@@ -86,6 +96,54 @@ func TestDecode(t *testing.T) {
 		out := Decode(tt.in)
 		if !reflect.DeepEqual(out, tt.out) {
 			t.Errorf("Decode(%x) = %x; want %x", tt.in, out, tt.out)
+		}
+	}
+}
+
+var decodeRuneTests = []struct {
+	r1, r2 rune
+	want   rune
+}{
+	{0xd800, 0xdc00, 0x10000},
+	{0xd800, 0xdc01, 0x10001},
+	{0xd808, 0xdf45, 0x12345},
+	{0xdbff, 0xdfff, 0x10ffff},
+	{0xd800, 'a', 0xfffd}, // illegal, replacement rune substituted
+}
+
+func TestDecodeRune(t *testing.T) {
+	for i, tt := range decodeRuneTests {
+		got := DecodeRune(tt.r1, tt.r2)
+		if got != tt.want {
+			t.Errorf("%d: DecodeRune(%q, %q) = %v; want %v", i, tt.r1, tt.r2, got, tt.want)
+		}
+	}
+}
+
+var surrogateTests = []struct {
+	r    rune
+	want bool
+}{
+	// from http://en.wikipedia.org/wiki/UTF-16
+	{'\u007A', false},     // LATIN SMALL LETTER Z
+	{'\u6C34', false},     // CJK UNIFIED IDEOGRAPH-6C34 (water)
+	{'\uFEFF', false},     // Byte Order Mark
+	{'\U00010000', false}, // LINEAR B SYLLABLE B008 A (first non-BMP code point)
+	{'\U0001D11E', false}, // MUSICAL SYMBOL G CLEF
+	{'\U0010FFFD', false}, // PRIVATE USE CHARACTER-10FFFD (last Unicode code point)
+
+	{rune(0xd7ff), false}, // surr1-1
+	{rune(0xd800), true},  // surr1
+	{rune(0xdc00), true},  // surr2
+	{rune(0xe000), false}, // surr3
+	{rune(0xdfff), true},  // surr3-1
+}
+
+func TestIsSurrogate(t *testing.T) {
+	for i, tt := range surrogateTests {
+		got := IsSurrogate(tt.r)
+		if got != tt.want {
+			t.Errorf("%d: IsSurrogate(%q) = %v; want %v", i, tt.r, got, tt.want)
 		}
 	}
 }

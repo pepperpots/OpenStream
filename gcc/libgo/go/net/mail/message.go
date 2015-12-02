@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var debug = debugT(false)
@@ -47,7 +48,8 @@ type Message struct {
 }
 
 // ReadMessage reads a message from r.
-// The headers are parsed, and the body of the message will be reading from r.
+// The headers are parsed, and the body of the message will be available
+// for reading from r.
 func ReadMessage(r io.Reader) (msg *Message, err error) {
 	tp := textproto.NewReader(bufio.NewReader(r))
 
@@ -69,11 +71,12 @@ var dateLayouts []string
 func init() {
 	// Generate layouts based on RFC 5322, section 3.3.
 
-	dows := [...]string{"", "Mon, "}     // day-of-week
-	days := [...]string{"2", "02"}       // day = 1*2DIGIT
-	years := [...]string{"2006", "06"}   // year = 4*DIGIT / 2*DIGIT
-	seconds := [...]string{":05", ""}    // second
-	zones := [...]string{"-0700", "MST"} // zone = (("+" / "-") 4DIGIT) / "GMT" / ...
+	dows := [...]string{"", "Mon, "}   // day-of-week
+	days := [...]string{"2", "02"}     // day = 1*2DIGIT
+	years := [...]string{"2006", "06"} // year = 4*DIGIT / 2*DIGIT
+	seconds := [...]string{":05", ""}  // second
+	// "-0700 (MST)" is not in RFC 5322, but is common.
+	zones := [...]string{"-0700", "MST", "-0700 (MST)"} // zone = (("+" / "-") 4DIGIT) / "GMT" / ...
 
 	for _, dow := range dows {
 		for _, day := range days {
@@ -125,7 +128,7 @@ func (h Header) AddressList(key string) ([]*Address, error) {
 	if hdr == "" {
 		return nil, ErrHeaderNotPresent
 	}
-	return newAddrParser(hdr).parseAddressList()
+	return ParseAddressList(hdr)
 }
 
 // Address represents a single mail address.
@@ -134,6 +137,16 @@ func (h Header) AddressList(key string) ([]*Address, error) {
 type Address struct {
 	Name    string // Proper name; may be empty.
 	Address string // user@domain
+}
+
+// Parses a single RFC 5322 address, e.g. "Barry Gibbs <bg@example.com>"
+func ParseAddress(address string) (*Address, error) {
+	return newAddrParser(address).parseAddress()
+}
+
+// ParseAddressList parses the given string as a list of addresses.
+func ParseAddressList(list string) ([]*Address, error) {
+	return newAddrParser(list).parseAddressList()
 }
 
 // String formats the address as a valid RFC 5322 address.
@@ -147,7 +160,9 @@ func (a *Address) String() string {
 	// If every character is printable ASCII, quoting is simple.
 	allPrintable := true
 	for i := 0; i < len(a.Name); i++ {
-		if !isVchar(a.Name[i]) {
+		// isWSP here should actually be isFWS,
+		// but we don't support folding yet.
+		if !isVchar(a.Name[i]) && !isWSP(a.Name[i]) {
 			allPrintable = false
 			break
 		}
@@ -155,7 +170,7 @@ func (a *Address) String() string {
 	if allPrintable {
 		b := bytes.NewBufferString(`"`)
 		for i := 0; i < len(a.Name); i++ {
-			if !isQtext(a.Name[i]) {
+			if !isQtext(a.Name[i]) && !isWSP(a.Name[i]) {
 				b.WriteByte('\\')
 			}
 			b.WriteByte(a.Name[i])
@@ -330,7 +345,9 @@ func (p *addrParser) consumePhrase() (phrase string, err error) {
 			word, err = p.consumeQuotedString()
 		} else {
 			// atom
-			word, err = p.consumeAtom(false)
+			// We actually parse dot-atom here to be more permissive
+			// than what RFC 5322 specifies.
+			word, err = p.consumeAtom(true)
 		}
 
 		// RFC 2047 encoded-word starts with =?, ends with ?=, and has two other ?s.
@@ -347,7 +364,7 @@ func (p *addrParser) consumePhrase() (phrase string, err error) {
 	// Ignore any error if we got at least one word.
 	if err != nil && len(words) == 0 {
 		debug.Printf("consumePhrase: hit err: %v", err)
-		return "", errors.New("mail: missing word in phrase")
+		return "", fmt.Errorf("mail: missing word in phrase: %v", err)
 	}
 	phrase = strings.Join(words, " ")
 	return phrase, nil
@@ -394,8 +411,7 @@ func (p *addrParser) consumeAtom(dot bool) (atom string, err error) {
 	i := 1
 	for ; i < p.len() && isAtext((*p)[i], dot); i++ {
 	}
-	// TODO(dsymonds): Remove the []byte() conversion here when 6g doesn't need it.
-	atom, *p = string([]byte((*p)[:i])), (*p)[i:]
+	atom, *p = string((*p)[:i]), (*p)[i:]
 	return atom, nil
 }
 
@@ -427,11 +443,11 @@ func (p *addrParser) len() int {
 func decodeRFC2047Word(s string) (string, error) {
 	fields := strings.Split(s, "?")
 	if len(fields) != 5 || fields[0] != "=" || fields[4] != "=" {
-		return "", errors.New("mail: address not RFC 2047 encoded")
+		return "", errors.New("address not RFC 2047 encoded")
 	}
 	charset, enc := strings.ToLower(fields[1]), strings.ToLower(fields[2])
-	if charset != "iso-8859-1" && charset != "utf-8" {
-		return "", fmt.Errorf("mail: charset not supported: %q", charset)
+	if charset != "us-ascii" && charset != "iso-8859-1" && charset != "utf-8" {
+		return "", fmt.Errorf("charset not supported: %q", charset)
 	}
 
 	in := bytes.NewBufferString(fields[3])
@@ -442,7 +458,7 @@ func decodeRFC2047Word(s string) (string, error) {
 	case "q":
 		r = qDecoder{r: in}
 	default:
-		return "", fmt.Errorf("mail: RFC 2047 encoding not supported: %q", enc)
+		return "", fmt.Errorf("RFC 2047 encoding not supported: %q", enc)
 	}
 
 	dec, err := ioutil.ReadAll(r)
@@ -451,6 +467,16 @@ func decodeRFC2047Word(s string) (string, error) {
 	}
 
 	switch charset {
+	case "us-ascii":
+		b := new(bytes.Buffer)
+		for _, c := range dec {
+			if c >= 0x80 {
+				b.WriteRune(unicode.ReplacementChar)
+			} else {
+				b.WriteRune(rune(c))
+			}
+		}
+		return b.String(), nil
 	case "iso-8859-1":
 		b := new(bytes.Buffer)
 		for _, c := range dec {
@@ -508,7 +534,7 @@ func isAtext(c byte, dot bool) bool {
 	return bytes.IndexByte(atextChars, c) >= 0
 }
 
-// isQtext returns true if c is an RFC 5322 qtest character.
+// isQtext returns true if c is an RFC 5322 qtext character.
 func isQtext(c byte) bool {
 	// Printable US-ASCII, excluding backslash or quote.
 	if c == '\\' || c == '"' {
@@ -521,4 +547,10 @@ func isQtext(c byte) bool {
 func isVchar(c byte) bool {
 	// Visible (printing) characters.
 	return '!' <= c && c <= '~'
+}
+
+// isWSP returns true if c is a WSP (white space).
+// WSP is a space or horizontal tab (RFC5234 Appendix B).
+func isWSP(c byte) bool {
+	return c == ' ' || c == '\t'
 }

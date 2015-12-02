@@ -22,6 +22,8 @@ var tests = []interface{}{
 	&certificateStatusMsg{},
 	&clientKeyExchangeMsg{},
 	&nextProtoMsg{},
+	&newSessionTicketMsg{},
+	&sessionState{},
 }
 
 type testMessage interface {
@@ -123,9 +125,22 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	}
 	m.ocspStapling = rand.Intn(10) > 5
 	m.supportedPoints = randomBytes(rand.Intn(5)+1, rand)
-	m.supportedCurves = make([]uint16, rand.Intn(5)+1)
+	m.supportedCurves = make([]CurveID, rand.Intn(5)+1)
 	for i := range m.supportedCurves {
-		m.supportedCurves[i] = uint16(rand.Intn(30000))
+		m.supportedCurves[i] = CurveID(rand.Intn(30000))
+	}
+	if rand.Intn(10) > 5 {
+		m.ticketSupported = true
+		if rand.Intn(10) > 5 {
+			m.sessionTicket = randomBytes(rand.Intn(300), rand)
+		}
+	}
+	if rand.Intn(10) > 5 {
+		m.signatureAndHashes = supportedSKXSignatureAlgorithms
+	}
+	m.alpnProtocols = make([]string, rand.Intn(5))
+	for i := range m.alpnProtocols {
+		m.alpnProtocols[i] = randomString(rand.Intn(20)+1, rand)
 	}
 
 	return reflect.ValueOf(m)
@@ -148,6 +163,14 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 			m.nextProtos[i] = randomString(20, rand)
 		}
 	}
+
+	if rand.Intn(10) > 5 {
+		m.ocspStapling = true
+	}
+	if rand.Intn(10) > 5 {
+		m.ticketSupported = true
+	}
+	m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
 
 	return reflect.ValueOf(m)
 }
@@ -206,4 +229,23 @@ func (*nextProtoMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &nextProtoMsg{}
 	m.proto = randomString(rand.Intn(255), rand)
 	return reflect.ValueOf(m)
+}
+
+func (*newSessionTicketMsg) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &newSessionTicketMsg{}
+	m.ticket = randomBytes(rand.Intn(4), rand)
+	return reflect.ValueOf(m)
+}
+
+func (*sessionState) Generate(rand *rand.Rand, size int) reflect.Value {
+	s := &sessionState{}
+	s.vers = uint16(rand.Intn(10000))
+	s.cipherSuite = uint16(rand.Intn(10000))
+	s.masterSecret = randomBytes(rand.Intn(100), rand)
+	numCerts := rand.Intn(20)
+	s.certificates = make([][]byte, numCerts)
+	for i := 0; i < numCerts; i++ {
+		s.certificates[i] = randomBytes(rand.Intn(10)+1, rand)
+	}
+	return reflect.ValueOf(s)
 }

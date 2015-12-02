@@ -9,7 +9,7 @@
 
 #include "interface.h"
 
-struct __go_string;
+struct String;
 struct __go_type_descriptor;
 struct __go_defer_stack;
 
@@ -34,9 +34,18 @@ struct __go_panic_stack
 extern void __go_panic (struct __go_empty_interface)
   __attribute__ ((noreturn));
 
-extern void __go_print_string (struct __go_string);
+extern void __go_print_string (struct String);
 
 extern struct __go_empty_interface __go_recover (void);
+
+extern _Bool __go_can_recover (void *);
+
+extern void __go_makefunc_can_recover (void *retaddr);
+
+struct Location;
+extern void __go_makefunc_ffi_can_recover (struct Location *, int);
+
+extern void __go_makefunc_returning (void);
 
 extern void __go_unwind_stack (void);
 

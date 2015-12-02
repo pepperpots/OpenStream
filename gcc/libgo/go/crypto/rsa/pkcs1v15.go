@@ -19,16 +19,19 @@ import (
 // WARNING: use of this function to encrypt plaintexts other than session keys
 // is dangerous. Use RSA OAEP in new protocols.
 func EncryptPKCS1v15(rand io.Reader, pub *PublicKey, msg []byte) (out []byte, err error) {
+	if err := checkPub(pub); err != nil {
+		return nil, err
+	}
 	k := (pub.N.BitLen() + 7) / 8
 	if len(msg) > k-11 {
 		err = ErrMessageTooLong
 		return
 	}
 
-	// EM = 0x02 || PS || 0x00 || M
-	em := make([]byte, k-1)
-	em[0] = 2
-	ps, mm := em[1:len(em)-len(msg)-1], em[len(em)-len(msg):]
+	// EM = 0x00 || 0x02 || PS || 0x00 || M
+	em := make([]byte, k)
+	em[1] = 2
+	ps, mm := em[2:len(em)-len(msg)-1], em[len(em)-len(msg):]
 	err = nonZeroRandomBytes(ps, rand)
 	if err != nil {
 		return
@@ -38,18 +41,26 @@ func EncryptPKCS1v15(rand io.Reader, pub *PublicKey, msg []byte) (out []byte, er
 
 	m := new(big.Int).SetBytes(em)
 	c := encrypt(new(big.Int), pub, m)
-	out = c.Bytes()
+
+	copyWithLeftPad(em, c.Bytes())
+	out = em
 	return
 }
 
 // DecryptPKCS1v15 decrypts a plaintext using RSA and the padding scheme from PKCS#1 v1.5.
 // If rand != nil, it uses RSA blinding to avoid timing side-channel attacks.
 func DecryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (out []byte, err error) {
-	valid, out, err := decryptPKCS1v15(rand, priv, ciphertext)
-	if err == nil && valid == 0 {
-		err = ErrDecryption
+	if err := checkPub(&priv.PublicKey); err != nil {
+		return nil, err
 	}
-
+	valid, out, index, err := decryptPKCS1v15(rand, priv, ciphertext)
+	if err != nil {
+		return
+	}
+	if valid == 0 {
+		return nil, ErrDecryption
+	}
+	out = out[index:]
 	return
 }
 
@@ -67,23 +78,37 @@ func DecryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (out [
 // Encryption Standard PKCS #1'', Daniel Bleichenbacher, Advances in Cryptology
 // (Crypto '98).
 func DecryptPKCS1v15SessionKey(rand io.Reader, priv *PrivateKey, ciphertext []byte, key []byte) (err error) {
+	if err := checkPub(&priv.PublicKey); err != nil {
+		return err
+	}
 	k := (priv.N.BitLen() + 7) / 8
 	if k-(len(key)+3+8) < 0 {
-		err = ErrDecryption
-		return
+		return ErrDecryption
 	}
 
-	valid, msg, err := decryptPKCS1v15(rand, priv, ciphertext)
+	valid, em, index, err := decryptPKCS1v15(rand, priv, ciphertext)
 	if err != nil {
 		return
 	}
 
-	valid &= subtle.ConstantTimeEq(int32(len(msg)), int32(len(key)))
-	subtle.ConstantTimeCopy(valid, key, msg)
+	if len(em) != k {
+		// This should be impossible because decryptPKCS1v15 always
+		// returns the full slice.
+		return ErrDecryption
+	}
+
+	valid &= subtle.ConstantTimeEq(int32(len(em)-index), int32(len(key)))
+	subtle.ConstantTimeCopy(valid, key, em[len(em)-len(key):])
 	return
 }
 
-func decryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (valid int, msg []byte, err error) {
+// decryptPKCS1v15 decrypts ciphertext using priv and blinds the operation if
+// rand is not nil. It returns one or zero in valid that indicates whether the
+// plaintext was correctly structured. In either case, the plaintext is
+// returned in em so that it may be read independently of whether it was valid
+// in order to maintain constant memory access patterns. If the plaintext was
+// valid then index contains the index of the original message in em.
+func decryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (valid int, em []byte, index int, err error) {
 	k := (priv.N.BitLen() + 7) / 8
 	if k < 11 {
 		err = ErrDecryption
@@ -96,7 +121,7 @@ func decryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (valid
 		return
 	}
 
-	em := leftPad(m.Bytes(), k)
+	em = leftPad(m.Bytes(), k)
 	firstByteIsZero := subtle.ConstantTimeByteEq(em[0], 0)
 	secondByteIsTwo := subtle.ConstantTimeByteEq(em[1], 2)
 
@@ -104,8 +129,7 @@ func decryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (valid
 	// octets, followed by a 0, followed by the message.
 	//   lookingForIndex: 1 iff we are still looking for the zero.
 	//   index: the offset of the first zero byte.
-	var lookingForIndex, index int
-	lookingForIndex = 1
+	lookingForIndex := 1
 
 	for i := 2; i < len(em); i++ {
 		equals0 := subtle.ConstantTimeByteEq(em[i], 0)
@@ -113,9 +137,13 @@ func decryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (valid
 		lookingForIndex = subtle.ConstantTimeSelect(equals0, 0, lookingForIndex)
 	}
 
-	valid = firstByteIsZero & secondByteIsTwo & (^lookingForIndex & 1)
-	msg = em[index+1:]
-	return
+	// The PS padding must be at least 8 bytes long, and it starts two
+	// bytes into em.
+	validPS := subtle.ConstantTimeLessOrEq(2+8, index)
+
+	valid = firstByteIsZero & secondByteIsTwo & (^lookingForIndex & 1) & validPS
+	index = subtle.ConstantTimeSelect(valid, index+1, 0)
+	return valid, em, index, nil
 }
 
 // nonZeroRandomBytes fills the given slice with non-zero random octets.
@@ -151,6 +179,7 @@ func nonZeroRandomBytes(s []byte, rand io.Reader) (err error) {
 var hashPrefixes = map[crypto.Hash][]byte{
 	crypto.MD5:       {0x30, 0x20, 0x30, 0x0c, 0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05, 0x05, 0x00, 0x04, 0x10},
 	crypto.SHA1:      {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14},
+	crypto.SHA224:    {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c},
 	crypto.SHA256:    {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
 	crypto.SHA384:    {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
 	crypto.SHA512:    {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
@@ -160,7 +189,8 @@ var hashPrefixes = map[crypto.Hash][]byte{
 
 // SignPKCS1v15 calculates the signature of hashed using RSASSA-PKCS1-V1_5-SIGN from RSA PKCS#1 v1.5.
 // Note that hashed must be the result of hashing the input message using the
-// given hash function.
+// given hash function. If hash is zero, hashed is signed directly. This isn't
+// advisable except for interoperability.
 func SignPKCS1v15(rand io.Reader, priv *PrivateKey, hash crypto.Hash, hashed []byte) (s []byte, err error) {
 	hashLen, prefix, err := pkcs1v15HashInfo(hash, len(hashed))
 	if err != nil {
@@ -184,16 +214,20 @@ func SignPKCS1v15(rand io.Reader, priv *PrivateKey, hash crypto.Hash, hashed []b
 
 	m := new(big.Int).SetBytes(em)
 	c, err := decrypt(rand, priv, m)
-	if err == nil {
-		s = c.Bytes()
+	if err != nil {
+		return
 	}
+
+	copyWithLeftPad(em, c.Bytes())
+	s = em
 	return
 }
 
 // VerifyPKCS1v15 verifies an RSA PKCS#1 v1.5 signature.
 // hashed is the result of hashing the input message using the given hash
 // function and sig is the signature. A valid signature is indicated by
-// returning a nil error.
+// returning a nil error. If hash is zero then hashed is used directly. This
+// isn't advisable except for interoperability.
 func VerifyPKCS1v15(pub *PublicKey, hash crypto.Hash, hashed []byte, sig []byte) (err error) {
 	hashLen, prefix, err := pkcs1v15HashInfo(hash, len(hashed))
 	if err != nil {
@@ -230,13 +264,29 @@ func VerifyPKCS1v15(pub *PublicKey, hash crypto.Hash, hashed []byte, sig []byte)
 }
 
 func pkcs1v15HashInfo(hash crypto.Hash, inLen int) (hashLen int, prefix []byte, err error) {
+	// Special case: crypto.Hash(0) is used to indicate that the data is
+	// signed directly.
+	if hash == 0 {
+		return inLen, nil, nil
+	}
+
 	hashLen = hash.Size()
 	if inLen != hashLen {
-		return 0, nil, errors.New("input must be hashed message")
+		return 0, nil, errors.New("crypto/rsa: input must be hashed message")
 	}
 	prefix, ok := hashPrefixes[hash]
 	if !ok {
-		return 0, nil, errors.New("unsupported hash function")
+		return 0, nil, errors.New("crypto/rsa: unsupported hash function")
 	}
 	return
+}
+
+// copyWithLeftPad copies src to the end of dest, padding with zero bytes as
+// needed.
+func copyWithLeftPad(dest, src []byte) {
+	numPaddingBytes := len(dest) - len(src)
+	for i := 0; i < numPaddingBytes; i++ {
+		dest[i] = 0
+	}
+	copy(dest[numPaddingBytes:], src)
 }

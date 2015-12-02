@@ -1,6 +1,6 @@
 // thread -*- C++ -*-
 
-// Copyright (C) 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+// Copyright (C) 2008-2015 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -26,6 +26,9 @@
 #include <thread>
 #include <system_error>
 #include <cerrno>
+#include <cxxabi_forced.h>
+
+#if defined(_GLIBCXX_HAS_GTHREADS) && defined(_GLIBCXX_USE_C99_STDINT_TR1)
 
 #if defined(_GLIBCXX_USE_GET_NPROCS)
 # include <sys/sysinfo.h>
@@ -55,7 +58,15 @@ static inline int get_nprocs()
 # define _GLIBCXX_NPROCS 0
 #endif
 
-#if defined(_GLIBCXX_HAS_GTHREADS) && defined(_GLIBCXX_USE_C99_STDINT_TR1)
+#ifndef _GLIBCXX_USE_NANOSLEEP
+# ifdef _GLIBCXX_HAVE_SLEEP
+#  include <unistd.h>
+# elif defined(_GLIBCXX_HAVE_WIN32_SLEEP)
+#  include <windows.h>
+# else
+#  error "No sleep function known for this target"
+# endif
+#endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -72,12 +83,16 @@ namespace std _GLIBCXX_VISIBILITY(default)
 	{
 	  __t->_M_run();
 	}
+      __catch(const __cxxabiv1::__forced_unwind&)
+	{
+	  __throw_exception_again;
+	}
       __catch(...)
 	{
 	  std::terminate();
 	}
 
-      return 0;
+      return nullptr;
     }
   }
 
@@ -115,14 +130,26 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   thread::_M_start_thread(__shared_base_type __b)
   {
     if (!__gthread_active_p())
+#if __cpp_exceptions
+      throw system_error(make_error_code(errc::operation_not_permitted),
+			 "Enable multithreading to use std::thread");
+#else
       __throw_system_error(int(errc::operation_not_permitted));
+#endif
 
-    __b->_M_this_ptr = __b;
+    _M_start_thread(std::move(__b), nullptr);
+  }
+
+  void
+  thread::_M_start_thread(__shared_base_type __b, void (*)())
+  {
+    auto ptr = __b.get();
+    ptr->_M_this_ptr = std::move(__b);
     int __e = __gthread_create(&_M_id._M_thread,
-			       &execute_native_thread_routine, __b.get());
+			       &execute_native_thread_routine, ptr);
     if (__e)
     {
-      __b->_M_this_ptr.reset();
+      ptr->_M_this_ptr.reset();
       __throw_system_error(__e);
     }
   }
@@ -137,6 +164,45 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   }
 
 _GLIBCXX_END_NAMESPACE_VERSION
+
+namespace this_thread
+{
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
+  void
+  __sleep_for(chrono::seconds __s, chrono::nanoseconds __ns)
+  {
+#ifdef _GLIBCXX_USE_NANOSLEEP
+    __gthread_time_t __ts =
+      {
+	static_cast<std::time_t>(__s.count()),
+	static_cast<long>(__ns.count())
+      };
+    ::nanosleep(&__ts, 0);
+#elif defined(_GLIBCXX_HAVE_SLEEP)
+# ifdef _GLIBCXX_HAVE_USLEEP
+    ::sleep(__s.count());
+    if (__ns.count() > 0)
+      {
+        long __us = __ns.count() / 1000;
+        if (__us == 0)
+          __us = 1;
+        ::usleep(__us);
+      }
+# else
+    ::sleep(__s.count() + (__ns.count() >= 1000000));
+# endif
+#elif defined(_GLIBCXX_HAVE_WIN32_SLEEP)
+    unsigned long ms = __ns.count() / 1000000;
+    if (__ns.count() > 0 && ms == 0)
+      ms = 1;
+    ::Sleep(chrono::milliseconds(__s).count() + ms);
+#endif
+  }
+
+_GLIBCXX_END_NAMESPACE_VERSION
+}
+
 } // namespace std
 
 #endif // _GLIBCXX_HAS_GTHREADS && _GLIBCXX_USE_C99_STDINT_TR1

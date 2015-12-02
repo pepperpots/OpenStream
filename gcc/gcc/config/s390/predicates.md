@@ -1,5 +1,5 @@
 ;; Predicate definitions for S/390 and zSeries.
-;; Copyright (C) 2005, 2007, 2008 Free Software Foundation, Inc.
+;; Copyright (C) 2005-2015 Free Software Foundation, Inc.
 ;; Contributed by Hartmut Penner (hpenner@de.ibm.com) and
 ;;                Ulrich Weigand (uweigand@de.ibm.com).
 ;;
@@ -24,16 +24,20 @@
 
 ;; operands --------------------------------------------------------------
 
-;; Return true if OP a (const_int 0) operand.
-
+;; Return true if OP a const 0 operand (int/float/vector).
 (define_predicate "const0_operand"
-  (and (match_code "const_int, const_double")
+  (and (match_code "const_int,const_double,const_vector")
        (match_test "op == CONST0_RTX (mode)")))
+
+;; Return true if OP an all ones operand (int/float/vector).
+(define_predicate "constm1_operand"
+  (and (match_code "const_int, const_double,const_vector")
+       (match_test "op == CONSTM1_RTX (mode)")))
 
 ;; Return true if OP is constant.
 
 (define_special_predicate "consttable_operand"
-  (and (match_code "symbol_ref, label_ref, const, const_int, const_double")
+  (and (match_code "symbol_ref, label_ref, const, const_int, const_double, const_vector")
        (match_test "CONSTANT_P (op)")))
 
 ;; Return true if OP is a valid S-type operand.
@@ -101,6 +105,10 @@
   return true;
 })
 
+(define_predicate "nonzero_shift_count_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), 1, GET_MODE_BITSIZE (mode) - 1)")))
+
 ;;  Return true if OP a valid operand for the LARL instruction.
 
 (define_predicate "larl_operand"
@@ -154,6 +162,12 @@
   return false;
 })
 
+(define_predicate "contiguous_bitmask_operand"
+  (match_code "const_int")
+{
+  return s390_contiguous_bitmask_p (INTVAL (op), GET_MODE_BITSIZE (mode), NULL, NULL);
+})
+
 ;; operators --------------------------------------------------------------
 
 ;; Return nonzero if OP is a valid comparison operator
@@ -166,7 +180,11 @@
 {
   if (GET_CODE (XEXP (op, 0)) != REG
       || REGNO (XEXP (op, 0)) != CC_REGNUM
-      || XEXP (op, 1) != const0_rtx)
+      || (XEXP (op, 1) != const0_rtx
+          && !(CONST_INT_P (XEXP (op, 1))
+	       && GET_MODE (XEXP (op, 0)) == CCRAWmode
+	       && INTVAL (XEXP (op, 1)) >= 0
+               && INTVAL (XEXP (op, 1)) <= 15)))
     return false;
 
   return (s390_branch_condition_mask (op) >= 0);
@@ -214,7 +232,11 @@
 
   if (GET_CODE (XEXP (op, 0)) != REG
       || REGNO (XEXP (op, 0)) != CC_REGNUM
-      || XEXP (op, 1) != const0_rtx)
+      || (XEXP (op, 1) != const0_rtx
+          && !(CONST_INT_P (XEXP (op, 1))
+	       && GET_MODE (XEXP (op, 0)) == CCRAWmode
+	       && INTVAL (XEXP (op, 1)) >= 0
+               && INTVAL (XEXP (op, 1)) <= 15)))
     return false;
 
   switch (GET_MODE (XEXP (op, 0)))
@@ -296,7 +318,7 @@
 (define_special_predicate "load_multiple_operation"
   (match_code "parallel")
 {
-  enum machine_mode elt_mode;
+  machine_mode elt_mode;
   int count = XVECLEN (op, 0);
   unsigned int dest_regno;
   rtx src_addr;
@@ -348,13 +370,58 @@
   return true;
 })
 
+;; For an execute pattern the target instruction is embedded into the
+;; RTX but will not get checked for validity by recog automatically.
+;; The execute_operation predicate extracts the target RTX and invokes
+;; recog.
+(define_special_predicate "execute_operation"
+  (match_code "parallel")
+{
+  rtx pattern = op;
+  rtx_insn *insn;
+  int icode;
+
+  /* This is redundant but since this predicate is evaluated
+     first when recognizing the insn we can prevent the more
+     expensive code below from being executed for many cases.  */
+  if (GET_CODE (XVECEXP (pattern, 0, 0)) != UNSPEC
+      || XINT (XVECEXP (pattern, 0, 0), 1) != UNSPEC_EXECUTE)
+    return false;
+
+  /* Keep in sync with s390_execute_target.  */
+  if (XVECLEN (pattern, 0) == 2)
+    {
+      pattern = copy_rtx (XVECEXP (pattern, 0, 1));
+    }
+  else
+    {
+      rtvec vec = rtvec_alloc (XVECLEN (pattern, 0) - 1);
+      int i;
+
+      for (i = 0; i < XVECLEN (pattern, 0) - 1; i++)
+	RTVEC_ELT (vec, i) = copy_rtx (XVECEXP (pattern, 0, i + 1));
+
+      pattern = gen_rtx_PARALLEL (VOIDmode, vec);
+    }
+
+  /* Since we do not have the wrapping insn here we have to build one.  */
+  insn = make_insn_raw (pattern);
+  icode = recog_memoized (insn);
+  if (icode < 0)
+    return false;
+
+  extract_constrain_insn (insn);
+
+  return which_alternative >= 0;
+})
+
 ;; Return true if OP is a store multiple operation.  It is known to be a
 ;; PARALLEL and the first section will be tested.
 
 (define_special_predicate "store_multiple_operation"
   (match_code "parallel")
 {
-  enum machine_mode elt_mode;
+  machine_mode elt_mode;
   int count = XVECLEN (op, 0);
   unsigned int src_regno;
   rtx dest_addr;

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"text/template"
@@ -537,7 +538,7 @@ func TestEscape(t *testing.T) {
 		{
 			"typed HTML in script",
 			`<button onclick="alert({{.W}})">`,
-			`<button onclick="alert(&#34;&amp;iexcl;\u003cb class=\&#34;foo\&#34;\u003eHello\u003c/b\u003e, \u003ctextarea\u003eO&#39;World\u003c/textarea\u003e!&#34;)">`,
+			`<button onclick="alert(&#34;\u0026iexcl;\u003cb class=\&#34;foo\&#34;\u003eHello\u003c/b\u003e, \u003ctextarea\u003eO&#39;World\u003c/textarea\u003e!&#34;)">`,
 		},
 		{
 			"typed HTML in RCDATA",
@@ -548,11 +549,6 @@ func TestEscape(t *testing.T) {
 			"range in textarea",
 			"<textarea>{{range .A}}{{.}}{{end}}</textarea>",
 			"<textarea>&lt;a&gt;&lt;b&gt;</textarea>",
-		},
-		{
-			"auditable exemption from escaping",
-			"{{range .A}}{{. | noescape}}{{end}}",
-			"<a><b>",
 		},
 		{
 			"No tag injection",
@@ -658,13 +654,12 @@ func TestEscape(t *testing.T) {
 
 	for _, test := range tests {
 		tmpl := New(test.name)
-		// TODO: Move noescape into template/func.go
-		tmpl.Funcs(FuncMap{
-			"noescape": func(a ...interface{}) string {
-				return fmt.Sprint(a...)
-			},
-		})
 		tmpl = Must(tmpl.Parse(test.input))
+		// Check for bug 6459: Tree field was not set in Parse.
+		if tmpl.Tree != tmpl.text.Tree {
+			t.Errorf("%s: tree not set properly", test.name)
+			continue
+		}
 		b := new(bytes.Buffer)
 		if err := tmpl.Execute(b, data); err != nil {
 			t.Errorf("%s: template execution failed: %s", test.name, err)
@@ -681,6 +676,10 @@ func TestEscape(t *testing.T) {
 		}
 		if w, g := test.output, b.String(); w != g {
 			t.Errorf("%s: escaped output for pointer: want\n\t%q\ngot\n\t%q", test.name, w, g)
+			continue
+		}
+		if tmpl.Tree != tmpl.text.Tree {
+			t.Errorf("%s: tree mismatch", test.name)
 			continue
 		}
 	}
@@ -862,29 +861,29 @@ func TestErrors(t *testing.T) {
 		// Error cases.
 		{
 			"{{if .Cond}}<a{{end}}",
-			"z:1: {{if}} branches",
+			"z:1:5: {{if}} branches",
 		},
 		{
 			"{{if .Cond}}\n{{else}}\n<a{{end}}",
-			"z:1: {{if}} branches",
+			"z:1:5: {{if}} branches",
 		},
 		{
 			// Missing quote in the else branch.
 			`{{if .Cond}}<a href="foo">{{else}}<a href="bar>{{end}}`,
-			"z:1: {{if}} branches",
+			"z:1:5: {{if}} branches",
 		},
 		{
 			// Different kind of attribute: href implies a URL.
 			"<a {{if .Cond}}href='{{else}}title='{{end}}{{.X}}'>",
-			"z:1: {{if}} branches",
+			"z:1:8: {{if}} branches",
 		},
 		{
 			"\n{{with .X}}<a{{end}}",
-			"z:2: {{with}} branches",
+			"z:2:7: {{with}} branches",
 		},
 		{
 			"\n{{with .X}}<a>{{else}}<a{{end}}",
-			"z:2: {{with}} branches",
+			"z:2:7: {{with}} branches",
 		},
 		{
 			"{{range .Items}}<a{{end}}",
@@ -892,7 +891,7 @@ func TestErrors(t *testing.T) {
 		},
 		{
 			"\n{{range .Items}} x='<a{{end}}",
-			"z:2: on range loop re-entry: {{range}} branches",
+			"z:2:8: on range loop re-entry: {{range}} branches",
 		},
 		{
 			"<a b=1 c={{.H}}",
@@ -904,7 +903,7 @@ func TestErrors(t *testing.T) {
 		},
 		{
 			`<a href="{{if .F}}/foo?a={{else}}/bar/{{end}}{{.H}}">`,
-			"z:1: {{.H}} appears in an ambiguous URL context",
+			"z:1:47: {{.H}} appears in an ambiguous URL context",
 		},
 		{
 			`<a onclick="alert('Hello \`,
@@ -933,7 +932,7 @@ func TestErrors(t *testing.T) {
 		},
 		{
 			`{{template "foo"}}`,
-			"z:1: no such template \"foo\"",
+			"z:1:11: no such template \"foo\"",
 		},
 		{
 			`<div{{template "y"}}>` +
@@ -994,6 +993,11 @@ func TestErrors(t *testing.T) {
 		if strings.Index(got, test.err) == -1 {
 			t.Errorf("input=%q: error\n\t%q\ndoes not contain expected string\n\t%q", test.input, got, test.err)
 			continue
+		}
+		// Check that we get the same error if we call Execute again.
+		if err := tmpl.Execute(buf, nil); err == nil || err.Error() != got {
+			t.Errorf("input=%q: unexpected error on second call %q", test.input, err)
+
 		}
 	}
 }
@@ -1538,6 +1542,11 @@ func TestEnsurePipelineContains(t *testing.T) {
 			".X | urlquery | html | print",
 			[]string{"urlquery", "html"},
 		},
+		{
+			"{{($).X | html | print}}",
+			"($).X | urlquery | html | print",
+			[]string{"urlquery", "html"},
+		},
 	}
 	for i, test := range tests {
 		tmpl := template.Must(template.New("test").Parse(test.input))
@@ -1634,6 +1643,46 @@ func TestIndirectPrint(t *testing.T) {
 		t.Errorf("Unexpected error: %s", err)
 	} else if buf.String() != "hello" {
 		t.Errorf(`Expected "hello"; got %q`, buf.String())
+	}
+}
+
+// This is a test for issue 3272.
+func TestEmptyTemplate(t *testing.T) {
+	page := Must(New("page").ParseFiles(os.DevNull))
+	if err := page.ExecuteTemplate(os.Stdout, "page", "nothing"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+type Issue7379 int
+
+func (Issue7379) SomeMethod(x int) string {
+	return fmt.Sprintf("<%d>", x)
+}
+
+// This is a test for issue 7379: type assertion error caused panic, and then
+// the code to handle the panic breaks escaping. It's hard to see the second
+// problem once the first is fixed, but its fix is trivial so we let that go. See
+// the discussion for issue 7379.
+func TestPipeToMethodIsEscaped(t *testing.T) {
+	tmpl := Must(New("x").Parse("<html>{{0 | .SomeMethod}}</html>\n"))
+	tryExec := func() string {
+		defer func() {
+			panicValue := recover()
+			if panicValue != nil {
+				t.Errorf("panicked: %v\n", panicValue)
+			}
+		}()
+		var b bytes.Buffer
+		tmpl.Execute(&b, Issue7379(0))
+		return b.String()
+	}
+	for i := 0; i < 3; i++ {
+		str := tryExec()
+		const expect = "<html>&lt;0&gt;</html>\n"
+		if str != expect {
+			t.Errorf("expected %q got %q", expect, str)
+		}
 	}
 }
 

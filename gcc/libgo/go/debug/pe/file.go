@@ -18,7 +18,9 @@ import (
 // A File represents an open PE file.
 type File struct {
 	FileHeader
-	Sections []*Section
+	OptionalHeader interface{} // of type *OptionalHeader32 or *OptionalHeader64
+	Sections       []*Section
+	Symbols        []*Symbol
 
 	closer io.Closer
 }
@@ -49,6 +51,14 @@ type Section struct {
 	sr *io.SectionReader
 }
 
+type Symbol struct {
+	Name          string
+	Value         uint32
+	SectionNumber int16
+	Type          uint16
+	StorageClass  uint8
+}
+
 type ImportDirectory struct {
 	OriginalFirstThunk uint32
 	TimeDateStamp      uint32
@@ -63,6 +73,9 @@ type ImportDirectory struct {
 func (s *Section) Data() ([]byte, error) {
 	dat := make([]byte, s.sr.Size())
 	n, err := s.sr.ReadAt(dat, 0)
+	if n == len(dat) {
+		err = nil
+	}
 	return dat[0:n], err
 }
 
@@ -111,6 +124,11 @@ func (f *File) Close() error {
 	return err
 }
 
+var (
+	sizeofOptionalHeader32 = uint16(binary.Size(OptionalHeader32{}))
+	sizeofOptionalHeader64 = uint16(binary.Size(OptionalHeader64{}))
+)
+
 // NewFile creates a new File for accessing a PE binary in an underlying reader.
 func NewFile(r io.ReaderAt) (*File, error) {
 	f := new(File)
@@ -122,12 +140,13 @@ func NewFile(r io.ReaderAt) (*File, error) {
 	}
 	var base int64
 	if dosheader[0] == 'M' && dosheader[1] == 'Z' {
+		signoff := int64(binary.LittleEndian.Uint32(dosheader[0x3c:]))
 		var sign [4]byte
-		r.ReadAt(sign[0:], int64(dosheader[0x3c]))
+		r.ReadAt(sign[:], signoff)
 		if !(sign[0] == 'P' && sign[1] == 'E' && sign[2] == 0 && sign[3] == 0) {
 			return nil, errors.New("Invalid PE File Format.")
 		}
-		base = int64(dosheader[0x3c]) + 4
+		base = signoff + 4
 	} else {
 		base = int64(0)
 	}
@@ -138,19 +157,78 @@ func NewFile(r io.ReaderAt) (*File, error) {
 	if f.FileHeader.Machine != IMAGE_FILE_MACHINE_UNKNOWN && f.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 && f.FileHeader.Machine != IMAGE_FILE_MACHINE_I386 {
 		return nil, errors.New("Invalid PE File Format.")
 	}
-	// get symbol string table
-	sr.Seek(int64(f.FileHeader.PointerToSymbolTable+18*f.FileHeader.NumberOfSymbols), os.SEEK_SET)
-	var l uint32
-	if err := binary.Read(sr, binary.LittleEndian, &l); err != nil {
-		return nil, err
+
+	var ss []byte
+	if f.FileHeader.NumberOfSymbols > 0 {
+		// Get COFF string table, which is located at the end of the COFF symbol table.
+		sr.Seek(int64(f.FileHeader.PointerToSymbolTable+COFFSymbolSize*f.FileHeader.NumberOfSymbols), os.SEEK_SET)
+		var l uint32
+		if err := binary.Read(sr, binary.LittleEndian, &l); err != nil {
+			return nil, err
+		}
+		ss = make([]byte, l)
+		if _, err := r.ReadAt(ss, int64(f.FileHeader.PointerToSymbolTable+COFFSymbolSize*f.FileHeader.NumberOfSymbols)); err != nil {
+			return nil, err
+		}
+
+		// Process COFF symbol table.
+		sr.Seek(int64(f.FileHeader.PointerToSymbolTable), os.SEEK_SET)
+		aux := uint8(0)
+		for i := 0; i < int(f.FileHeader.NumberOfSymbols); i++ {
+			cs := new(COFFSymbol)
+			if err := binary.Read(sr, binary.LittleEndian, cs); err != nil {
+				return nil, err
+			}
+			if aux > 0 {
+				aux--
+				continue
+			}
+			var name string
+			if cs.Name[0] == 0 && cs.Name[1] == 0 && cs.Name[2] == 0 && cs.Name[3] == 0 {
+				si := int(binary.LittleEndian.Uint32(cs.Name[4:]))
+				name, _ = getString(ss, si)
+			} else {
+				name = cstring(cs.Name[:])
+			}
+			aux = cs.NumberOfAuxSymbols
+			s := &Symbol{
+				Name:          name,
+				Value:         cs.Value,
+				SectionNumber: cs.SectionNumber,
+				Type:          cs.Type,
+				StorageClass:  cs.StorageClass,
+			}
+			f.Symbols = append(f.Symbols, s)
+		}
 	}
-	ss := make([]byte, l)
-	if _, err := r.ReadAt(ss, int64(f.FileHeader.PointerToSymbolTable+18*f.FileHeader.NumberOfSymbols)); err != nil {
-		return nil, err
-	}
+
+	// Read optional header.
 	sr.Seek(base, os.SEEK_SET)
-	binary.Read(sr, binary.LittleEndian, &f.FileHeader)
-	sr.Seek(int64(f.FileHeader.SizeOfOptionalHeader), os.SEEK_CUR) //Skip OptionalHeader
+	if err := binary.Read(sr, binary.LittleEndian, &f.FileHeader); err != nil {
+		return nil, err
+	}
+	var oh32 OptionalHeader32
+	var oh64 OptionalHeader64
+	switch f.FileHeader.SizeOfOptionalHeader {
+	case sizeofOptionalHeader32:
+		if err := binary.Read(sr, binary.LittleEndian, &oh32); err != nil {
+			return nil, err
+		}
+		if oh32.Magic != 0x10b { // PE32
+			return nil, fmt.Errorf("pe32 optional header has unexpected Magic of 0x%x", oh32.Magic)
+		}
+		f.OptionalHeader = &oh32
+	case sizeofOptionalHeader64:
+		if err := binary.Read(sr, binary.LittleEndian, &oh64); err != nil {
+			return nil, err
+		}
+		if oh64.Magic != 0x20b { // PE32+
+			return nil, fmt.Errorf("pe32+ optional header has unexpected Magic of 0x%x", oh64.Magic)
+		}
+		f.OptionalHeader = &oh64
+	}
+
+	// Process sections.
 	f.Sections = make([]*Section, f.FileHeader.NumberOfSections)
 	for i := 0; i < int(f.FileHeader.NumberOfSections); i++ {
 		sh := new(SectionHeader32)
@@ -167,15 +245,15 @@ func NewFile(r io.ReaderAt) (*File, error) {
 		s := new(Section)
 		s.SectionHeader = SectionHeader{
 			Name:                 name,
-			VirtualSize:          uint32(sh.VirtualSize),
-			VirtualAddress:       uint32(sh.VirtualAddress),
-			Size:                 uint32(sh.SizeOfRawData),
-			Offset:               uint32(sh.PointerToRawData),
-			PointerToRelocations: uint32(sh.PointerToRelocations),
-			PointerToLineNumbers: uint32(sh.PointerToLineNumbers),
-			NumberOfRelocations:  uint16(sh.NumberOfRelocations),
-			NumberOfLineNumbers:  uint16(sh.NumberOfLineNumbers),
-			Characteristics:      uint32(sh.Characteristics),
+			VirtualSize:          sh.VirtualSize,
+			VirtualAddress:       sh.VirtualAddress,
+			Size:                 sh.SizeOfRawData,
+			Offset:               sh.PointerToRawData,
+			PointerToRelocations: sh.PointerToRelocations,
+			PointerToLineNumbers: sh.PointerToLineNumbers,
+			NumberOfRelocations:  sh.NumberOfRelocations,
+			NumberOfLineNumbers:  sh.NumberOfLineNumbers,
+			Characteristics:      sh.Characteristics,
 		}
 		s.sr = io.NewSectionReader(r, int64(s.SectionHeader.Offset), int64(s.SectionHeader.Size))
 		s.ReaderAt = s.sr

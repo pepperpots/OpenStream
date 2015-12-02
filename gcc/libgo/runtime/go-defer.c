@@ -20,13 +20,15 @@ __go_defer (_Bool *frame, void (*pfn) (void *), void *arg)
   struct __go_defer_stack *n;
 
   g = runtime_g ();
-  n = (struct __go_defer_stack *) __go_alloc (sizeof (struct __go_defer_stack));
+  n = runtime_newdefer ();
   n->__next = g->defer;
   n->__frame = frame;
   n->__panic = g->panic;
   n->__pfn = pfn;
   n->__arg = arg;
   n->__retaddr = NULL;
+  n->__makefunc_can_recover = 0;
+  n->__special = 0;
   g->defer = n;
 }
 
@@ -51,7 +53,13 @@ __go_undefer (_Bool *frame)
 	(*pfn) (d->__arg);
 
       g->defer = d->__next;
-      __go_free (d);
+
+      /* This may be called by a cgo callback routine to defer the
+	 call to syscall.CgocallBackDone, in which case we will not
+	 have a memory context.  Don't try to free anything in that
+	 case--the GC will release it later.  */
+      if (runtime_m () != NULL)
+	runtime_freedefer (d);
 
       /* Since we are executing a defer function here, we know we are
 	 returning from the calling function.  If the calling
@@ -72,6 +80,6 @@ __go_set_defer_retaddr (void *retaddr)
 
   g = runtime_g ();
   if (g->defer != NULL)
-    g->defer->__retaddr = retaddr;
+    g->defer->__retaddr = __builtin_extract_return_addr (retaddr);
   return 0;
 }

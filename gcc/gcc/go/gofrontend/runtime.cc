@@ -6,8 +6,6 @@
 
 #include "go-system.h"
 
-#include <gmp.h>
-
 #include "gogo.h"
 #include "types.h"
 #include "expressions.h"
@@ -26,12 +24,14 @@ enum Runtime_function_type
 {
   // General indicator that value is not used.
   RFT_VOID,
-  // Go type bool, C type _Bool.
+  // Go untyped bool, C type _Bool.
   RFT_BOOL,
   // Go type *bool, C type _Bool*.
   RFT_BOOLPTR,
-  // Go type int, C type int.
+  // Go type int, C type intgo.
   RFT_INT,
+  // Go type int32, C type int32_t.
+  RFT_INT32,
   // Go type int64, C type int64_t.
   RFT_INT64,
   // Go type uint64, C type uint64_t.
@@ -42,6 +42,8 @@ enum Runtime_function_type
   RFT_RUNE,
   // Go type float64, C type double.
   RFT_FLOAT64,
+  // Go type complex64, C type __complex float.
+  RFT_COMPLEX64,
   // Go type complex128, C type __complex double.
   RFT_COMPLEX128,
   // Go type string, C type struct __go_string.
@@ -80,6 +82,7 @@ static Type*
 runtime_function_type(Runtime_function_type bft)
 {
   go_assert(bft < NUMBER_OF_RUNTIME_FUNCTION_TYPES);
+  Type* any = Type::make_pointer_type(Type::make_void_type());
   if (runtime_function_types[bft] == NULL)
     {
       const Location bloc = Linemap::predeclared_location();
@@ -91,7 +94,7 @@ runtime_function_type(Runtime_function_type bft)
 	  go_unreachable();
 
 	case RFT_BOOL:
-	  t = Type::lookup_bool_type();
+	  t = Type::make_boolean_type();
 	  break;
 
 	case RFT_BOOLPTR:
@@ -100,6 +103,10 @@ runtime_function_type(Runtime_function_type bft)
 
 	case RFT_INT:
 	  t = Type::lookup_integer_type("int");
+	  break;
+
+	case RFT_INT32:
+	  t = Type::lookup_integer_type("int32");
 	  break;
 
 	case RFT_INT64:
@@ -122,6 +129,10 @@ runtime_function_type(Runtime_function_type bft)
 	  t = Type::lookup_float_type("float64");
 	  break;
 
+	case RFT_COMPLEX64:
+	  t = Type::lookup_complex_type("complex64");
+	  break;
+
 	case RFT_COMPLEX128:
 	  t = Type::lookup_complex_type("complex128");
 	  break;
@@ -135,13 +146,11 @@ runtime_function_type(Runtime_function_type bft)
 	  break;
 
 	case RFT_SLICE:
-	  t = Type::make_array_type(Type::make_void_type(), NULL);
+	  t = Type::make_array_type(any, NULL);
 	  break;
 
 	case RFT_MAP:
-	  t = Type::make_map_type(Type::make_void_type(),
-				  Type::make_void_type(),
-				  bloc);
+	  t = Type::make_map_type(any, any, bloc);
 	  break;
 
 	case RFT_MAPITER:
@@ -149,7 +158,7 @@ runtime_function_type(Runtime_function_type bft)
 	  break;
 
 	case RFT_CHAN:
-	  t = Type::make_channel_type(true, true, Type::make_void_type());
+	  t = Type::make_channel_type(true, true, any);
 	  break;
 
 	case RFT_IFACE:
@@ -206,11 +215,13 @@ convert_to_runtime_function_type(Runtime_function_type bft, Expression* e,
     case RFT_BOOL:
     case RFT_BOOLPTR:
     case RFT_INT:
+    case RFT_INT32:
     case RFT_INT64:
     case RFT_UINT64:
     case RFT_UINTPTR:
     case RFT_RUNE:
     case RFT_FLOAT64:
+    case RFT_COMPLEX64:
     case RFT_COMPLEX128:
     case RFT_STRING:
     case RFT_POINTER:
@@ -386,12 +397,8 @@ Type*
 Runtime::map_iteration_type()
 {
   const unsigned long map_iteration_size = 4;
-
-  mpz_t ival;
-  mpz_init_set_ui(ival, map_iteration_size);
-  Expression* iexpr = Expression::make_integer(&ival, NULL,
-                                               Linemap::predeclared_location());
-  mpz_clear(ival);
-
+  Expression* iexpr =
+    Expression::make_integer_ul(map_iteration_size, NULL,
+				Linemap::predeclared_location());
   return Type::make_array_type(runtime_function_type(RFT_POINTER), iexpr);
 }

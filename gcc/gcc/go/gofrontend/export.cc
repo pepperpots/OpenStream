@@ -33,7 +33,7 @@ const int Export::v1_checksum_len;
 // Constructor.
 
 Export::Export(Stream* stream)
-  : stream_(stream), type_refs_(), type_index_(1)
+  : stream_(stream), type_refs_(), type_index_(1), packages_()
 {
 }
 
@@ -91,8 +91,10 @@ should_export(Named_object* no)
 
 void
 Export::export_globals(const std::string& package_name,
-		       const std::string& unique_prefix,
+		       const std::string& prefix,
+		       const std::string& pkgpath,
 		       int package_priority,
+		       const std::map<std::string, Package*>& packages,
 		       const std::map<std::string, Package*>& imports,
 		       const std::string& import_init_fn,
 		       const std::set<Import_init>& imported_init_fns,
@@ -140,15 +142,26 @@ Export::export_globals(const std::string& package_name,
   this->write_string(package_name);
   this->write_c_string(";\n");
 
-  // The unique prefix.  This prefix is used for all global symbols.
-  this->write_c_string("prefix ");
-  this->write_string(unique_prefix);
+  // The prefix or package path, used for all global symbols.
+  if (prefix.empty())
+    {
+      go_assert(!pkgpath.empty());
+      this->write_c_string("pkgpath ");
+      this->write_string(pkgpath);
+    }
+  else
+    {
+      this->write_c_string("prefix ");
+      this->write_string(prefix);
+    }
   this->write_c_string(";\n");
 
   // The package priority.
   char buf[100];
   snprintf(buf, sizeof buf, "priority %d;\n", package_priority);
   this->write_c_string(buf);
+
+  this->write_packages(packages);
 
   this->write_imports(imports);
 
@@ -180,6 +193,48 @@ Export::export_globals(const std::string& package_name,
   this->stream_->write_checksum(s);
 }
 
+// Sort packages.
+
+static bool
+packages_compare(const Package* a, const Package* b)
+{
+  return a->package_name() < b->package_name();
+}
+
+// Write out all the known packages whose pkgpath symbol is not a
+// simple transformation of the pkgpath, so that the importing code
+// can reliably know it.
+
+void
+Export::write_packages(const std::map<std::string, Package*>& packages)
+{
+  // Sort for consistent output.
+  std::vector<Package*> out;
+  for (std::map<std::string, Package*>::const_iterator p = packages.begin();
+       p != packages.end();
+       ++p)
+    {
+      if (p->second->pkgpath_symbol()
+	  != Gogo::pkgpath_for_symbol(p->second->pkgpath()))
+	out.push_back(p->second);
+    }
+
+  std::sort(out.begin(), out.end(), packages_compare);
+
+  for (std::vector<Package*>::const_iterator p = out.begin();
+       p != out.end();
+       ++p)
+    {
+      this->write_c_string("package ");
+      this->write_string((*p)->package_name());
+      this->write_c_string(" ");
+      this->write_string((*p)->pkgpath());
+      this->write_c_string(" ");
+      this->write_string((*p)->pkgpath_symbol());
+      this->write_c_string(";\n");
+    }
+}
+
 // Sort imported packages.
 
 static bool
@@ -209,12 +264,14 @@ Export::write_imports(const std::map<std::string, Package*>& imports)
        ++p)
     {
       this->write_c_string("import ");
-      this->write_string(p->second->name());
+      this->write_string(p->second->package_name());
       this->write_c_string(" ");
-      this->write_string(p->second->unique_prefix());
+      this->write_string(p->second->pkgpath());
       this->write_c_string(" \"");
       this->write_string(p->first);
       this->write_c_string("\";\n");
+
+      this->packages_.insert(p->second);
     }
 }
 
@@ -333,7 +390,7 @@ Export::write_type(const Type* type)
 	{
 	  // The builtin types should have been predefined.
 	  go_assert(!Linemap::is_predeclared_location(named_type->location())
-		     || (named_type->named_object()->package()->name()
+		     || (named_type->named_object()->package()->package_name()
 			 == "unsafe"));
 	  named_object = named_type->named_object();
 	}
@@ -345,14 +402,25 @@ Export::write_type(const Type* type)
       std::string s = "\"";
       if (package != NULL && !Gogo::is_hidden_name(named_object->name()))
 	{
-	  s += package->unique_prefix();
-	  s += '.';
-	  s += package->name();
+	  s += package->pkgpath();
 	  s += '.';
 	}
       s += named_object->name();
       s += "\" ";
       this->write_string(s);
+
+      // It is possible that this type was imported indirectly, and is
+      // not in a package in the import list.  If we have not
+      // mentioned this package before, write out the package name
+      // here so that any package importing this one will know it.
+      if (package != NULL
+	  && this->packages_.find(package) == this->packages_.end())
+	{
+	  this->write_c_string("\"");
+	  this->write_string(package->package_name());
+	  this->packages_.insert(package);
+	  this->write_c_string("\" ");
+	}
 
       // We must add a named type to the table now, since the
       // definition of the type may refer to the named type via a

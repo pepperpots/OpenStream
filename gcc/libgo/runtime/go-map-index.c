@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "runtime.h"
+#include "malloc.h"
 #include "go-alloc.h"
 #include "go-assert.h"
 #include "map.h"
@@ -63,7 +64,8 @@ __go_map_rehash (struct __go_map *map)
 	}
     }
 
-  __go_free (old_buckets);
+  if (old_bucket_count * sizeof (void *) >= TinySize)
+    __go_free (old_buckets);
 
   map->__bucket_count = new_bucket_count;
   map->__buckets = new_buckets;
@@ -98,7 +100,7 @@ __go_map_index (struct __go_map *map, const void *key, _Bool insert)
   key_descriptor = descriptor->__map_descriptor->__key_type;
   key_offset = descriptor->__key_offset;
   key_size = key_descriptor->__size;
-  __go_assert (key_size != 0 && key_size != -1UL);
+  __go_assert (key_size != -1UL);
   equalfn = key_descriptor->__equalfn;
 
   key_hash = key_descriptor->__hashfn (key, key_size);

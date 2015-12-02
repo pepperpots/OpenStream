@@ -1,7 +1,5 @@
 /* CPP Library. (Directive handling.)
-   Copyright (C) 1986, 1987, 1989, 1992, 1993, 1994, 1995, 1996, 1997, 1998,
-   1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
    Contributed by Per Bothner, 1994-95.
    Based on CCCP program by Paul Rubin, June 1986
    Adapted to ANSI C, Richard Stallman, Jan 1987
@@ -118,6 +116,9 @@ static void do_pragma_once (cpp_reader *);
 static void do_pragma_poison (cpp_reader *);
 static void do_pragma_system_header (cpp_reader *);
 static void do_pragma_dependency (cpp_reader *);
+static void do_pragma_warning_or_error (cpp_reader *, bool error);
+static void do_pragma_warning (cpp_reader *);
+static void do_pragma_error (cpp_reader *);
 static void do_linemarker (cpp_reader *);
 static const cpp_token *get_token_no_padding (cpp_reader *);
 static const cpp_token *get__Pragma_string (cpp_reader *);
@@ -212,16 +213,33 @@ skip_rest_of_line (cpp_reader *pfile)
       ;
 }
 
-/* Ensure there are no stray tokens at the end of a directive.  If
-   EXPAND is true, tokens macro-expanding to nothing are allowed.  */
+/* Helper function for check_oel.  */
+
 static void
-check_eol (cpp_reader *pfile, bool expand)
+check_eol_1 (cpp_reader *pfile, bool expand, int reason)
 {
   if (! SEEN_EOL () && (expand
 			? cpp_get_token (pfile)
 			: _cpp_lex_token (pfile))->type != CPP_EOF)
-    cpp_error (pfile, CPP_DL_PEDWARN, "extra tokens at end of #%s directive",
-	       pfile->directive->name);
+    cpp_pedwarning (pfile, reason, "extra tokens at end of #%s directive",
+		    pfile->directive->name);
+}
+
+/* Variant of check_eol used for Wendif-labels warnings.  */
+
+static void
+check_eol_endif_labels (cpp_reader *pfile)
+{
+  check_eol_1 (pfile, false, CPP_W_ENDIF_LABELS);
+}
+
+/* Ensure there are no stray tokens at the end of a directive.  If
+   EXPAND is true, tokens macro-expanding to nothing are allowed.  */
+
+static void
+check_eol (cpp_reader *pfile, bool expand)
+{
+  check_eol_1 (pfile, expand, CPP_W_NONE);
 }
 
 /* Ensure there are no stray tokens other than comments at the end of
@@ -328,7 +346,7 @@ prepare_directive_trad (cpp_reader *pfile)
 
       if (no_expand)
 	pfile->state.prevent_expansion++;
-      _cpp_scan_out_logical_line (pfile, NULL);
+      _cpp_scan_out_logical_line (pfile, NULL, false);
       if (no_expand)
 	pfile->state.prevent_expansion--;
 
@@ -446,7 +464,7 @@ _cpp_handle_directive (cpp_reader *pfile, int indented)
 	 
 	 We exclude the -fdirectives-only case because macro expansion
 	 has not been performed yet, and block comments can cause spaces
-	 to preceed the directive.  */
+	 to precede the directive.  */
       if (CPP_OPTION (pfile, preprocessed)
 	  && !CPP_OPTION (pfile, directives_only)
 	  && (indented || !(dir->flags & IN_I)))
@@ -548,6 +566,11 @@ lex_macro_node (cpp_reader *pfile, bool is_def_or_undef)
       if (is_def_or_undef && node == pfile->spec_nodes.n_defined)
 	cpp_error (pfile, CPP_DL_ERROR,
 		   "\"defined\" cannot be used as a macro name");
+      else if (is_def_or_undef
+	    && (node == pfile->spec_nodes.n__has_include__
+	     || node == pfile->spec_nodes.n__has_include_next__))
+	cpp_error (pfile, CPP_DL_ERROR,
+		   "\"__has_include__\" cannot be used as a macro name");
       else if (! (node->flags & NODE_POISONED))
 	return node;
     }
@@ -609,6 +632,11 @@ do_undef (cpp_reader *pfile)
 	  if (node->flags & NODE_WARN)
 	    cpp_error (pfile, CPP_DL_WARNING,
 		       "undefining \"%s\"", NODE_NAME (node));
+	  else if ((node->flags & NODE_BUILTIN)
+		   && CPP_OPTION (pfile, warn_builtin_macro_redefined))
+	    cpp_warning_with_line (pfile, CPP_W_BUILTIN_MACRO_REDEFINED,
+				   pfile->directive_line, 0,
+				   "undefining \"%s\"", NODE_NAME (node));
 
 	  if (CPP_OPTION (pfile, warn_unused_macros))
 	    _cpp_warn_if_unused_macro (pfile, node, NULL);
@@ -1263,6 +1291,8 @@ _cpp_init_internal_pragmas (cpp_reader *pfile)
   register_pragma_internal (pfile, "GCC", "system_header",
 			    do_pragma_system_header);
   register_pragma_internal (pfile, "GCC", "dependency", do_pragma_dependency);
+  register_pragma_internal (pfile, "GCC", "warning", do_pragma_warning);
+  register_pragma_internal (pfile, "GCC", "error", do_pragma_error);
 }
 
 /* Return the number of registered pragmas in PE.  */
@@ -1347,13 +1377,15 @@ static void
 do_pragma (cpp_reader *pfile)
 {
   const struct pragma_entry *p = NULL;
-  const cpp_token *token, *pragma_token = pfile->cur_token;
+  const cpp_token *token, *pragma_token;
+  source_location pragma_token_virt_loc = 0;
   cpp_token ns_token;
   unsigned int count = 1;
 
   pfile->state.prevent_expansion++;
 
-  token = cpp_get_token (pfile);
+  pragma_token = token = cpp_get_token_with_location (pfile,
+						      &pragma_token_virt_loc);
   ns_token = *token;
   if (token->type == CPP_NAME)
     {
@@ -1362,35 +1394,7 @@ do_pragma (cpp_reader *pfile)
 	{
 	  bool allow_name_expansion = p->allow_expansion;
 	  if (allow_name_expansion)
-	    {
-	      pfile->state.prevent_expansion--;
-	      /*
-		Kludge ahead.
-
-		Consider this code snippet:
-
-		#define P parallel
-		#pragma omp P for
-		... a for loop ...
-
-		Once we parsed the 'omp' namespace of the #pragma
-		directive, we then parse the 'P' token that represents the
-		pragma name.  P being a macro, it is expanded into the
-		resulting 'parallel' token.
-
-		At this point the 'p' variable contains the 'parallel'
-		pragma name.  And pfile->context->macro is non-null
-		because we are still right at the end of the macro
-		context of 'P'.  The problem is, if we are being
-		(indirectly) called by cpp_get_token_with_location,
-		that function might test pfile->context->macro to see
-		if we are in the context of a macro expansion, (and we
-		are) and then use pfile->invocation_location as the
-		location of the macro invocation.  So we must instruct
-		cpp_get_token below to set
-		pfile->invocation_location.  */
-	      pfile->set_invocation_location = true;
-	    }
+	    pfile->state.prevent_expansion--;
 
 	  token = cpp_get_token (pfile);
 	  if (token->type == CPP_NAME)
@@ -1407,7 +1411,7 @@ do_pragma (cpp_reader *pfile)
     {
       if (p->is_deferred)
 	{
-	  pfile->directive_result.src_loc = pragma_token->src_loc;
+	  pfile->directive_result.src_loc = pragma_token_virt_loc;
 	  pfile->directive_result.type = CPP_PRAGMA;
 	  pfile->directive_result.flags = pragma_token->flags;
 	  pfile->directive_result.val.pragma = p->u.ident;
@@ -1660,6 +1664,42 @@ do_pragma_dependency (cpp_reader *pfile)
   free ((void *) fname);
 }
 
+/* Issue a diagnostic with the message taken from the pragma.  If
+   ERROR is true, the diagnostic is a warning, otherwise, it is an
+   error.  */
+static void
+do_pragma_warning_or_error (cpp_reader *pfile, bool error)
+{
+  const cpp_token *tok = _cpp_lex_token (pfile);
+  cpp_string str;
+  if (tok->type != CPP_STRING
+      || !cpp_interpret_string_notranslate (pfile, &tok->val.str, 1, &str,
+					    CPP_STRING)
+      || str.len == 0)
+    {
+      cpp_error (pfile, CPP_DL_ERROR, "invalid \"#pragma GCC %s\" directive",
+		 error ? "error" : "warning");
+      return;
+    }
+  cpp_error (pfile, error ? CPP_DL_ERROR : CPP_DL_WARNING,
+	     "%s", str.text);
+  free ((void *)str.text);
+}
+
+/* Issue a warning diagnostic.  */
+static void
+do_pragma_warning (cpp_reader *pfile)
+{
+  do_pragma_warning_or_error (pfile, false);
+}
+
+/* Issue an error diagnostic.  */
+static void
+do_pragma_error (cpp_reader *pfile)
+{
+  do_pragma_warning_or_error (pfile, true);
+}
+
 /* Get a token but skip padding.  */
 static const cpp_token *
 get_token_no_padding (cpp_reader *pfile)
@@ -1741,10 +1781,7 @@ destringize_and_run (cpp_reader *pfile, const cpp_string *in)
   saved_cur_token = pfile->cur_token;
   saved_cur_run = pfile->cur_run;
 
-  pfile->context = XNEW (cpp_context);
-  pfile->context->c.macro = 0;
-  pfile->context->prev = 0;
-  pfile->context->next = 0;
+  pfile->context = XCNEW (cpp_context);
 
   /* Inline run_directive, since we need to delay the _cpp_pop_buffer
      until we've read all of the tokens that we want.  */
@@ -1975,7 +2012,7 @@ do_else (cpp_reader *pfile)
 
       /* Only check EOL if was not originally skipping.  */
       if (!ifs->was_skipping && CPP_OPTION (pfile, warn_endif_labels))
-	check_eol (pfile, false);
+	check_eol_endif_labels (pfile);
     }
 }
 
@@ -1999,23 +2036,16 @@ do_elif (cpp_reader *pfile)
 	}
       ifs->type = T_ELIF;
 
-      if (! ifs->was_skipping)
+      /* See DR#412: "Only the first group whose control condition
+	 evaluates to true (nonzero) is processed; any following groups
+	 are skipped and their controlling directives are processed as
+	 if they were in a group that is skipped."  */
+      if (ifs->skip_elses)
+	pfile->state.skipping = 1;
+      else
 	{
-	  bool value;
-	  /* The standard mandates that the expression be parsed even
-	     if we are skipping elses at this point -- the lexical
-	     restrictions on #elif only apply to skipped groups, but
-	     this group is not being skipped.  Temporarily set
-	     skipping to false to get lexer warnings.  */
-	  pfile->state.skipping = 0;
-	  value = _cpp_parse_expr (pfile, false);
-	  if (ifs->skip_elses)
-	    pfile->state.skipping = 1;
-	  else
-	    {
-	      pfile->state.skipping = ! value;
-	      ifs->skip_elses = value;
-	    }
+	  pfile->state.skipping = ! _cpp_parse_expr (pfile, false);
+	  ifs->skip_elses = ! pfile->state.skipping;
 	}
 
       /* Invalidate any controlling macro.  */
@@ -2036,7 +2066,7 @@ do_endif (cpp_reader *pfile)
     {
       /* Only check EOL if was not originally skipping.  */
       if (!ifs->was_skipping && CPP_OPTION (pfile, warn_endif_labels))
-	check_eol (pfile, false);
+	check_eol_endif_labels (pfile);
 
       /* If potential control macro, we go back outside again.  */
       if (ifs->next == 0 && ifs->mi_cmacro)
@@ -2363,11 +2393,11 @@ cpp_define (cpp_reader *pfile, const char *str)
 void
 cpp_define_formatted (cpp_reader *pfile, const char *fmt, ...)
 {
-  char *ptr = NULL;
+  char *ptr;
 
   va_list ap;
   va_start (ap, fmt);
-  vasprintf (&ptr, fmt, ap);
+  ptr = xvasprintf (fmt, ap);
   va_end (ap);
 
   cpp_define (pfile, ptr);
@@ -2548,6 +2578,7 @@ _cpp_pop_buffer (cpp_reader *pfile)
   cpp_buffer *buffer = pfile->buffer;
   struct _cpp_file *inc = buffer->file;
   struct if_stack *ifs;
+  const unsigned char *to_free;
 
   /* Walk back up the conditional stack till we reach its level at
      entry to this file, issuing error messages.  */
@@ -2561,6 +2592,7 @@ _cpp_pop_buffer (cpp_reader *pfile)
   /* _cpp_do_file_change expects pfile->buffer to be the new one.  */
   pfile->buffer = buffer->prev;
 
+  to_free = buffer->to_free;
   free (buffer->notes);
 
   /* Free the buffer object now; we may want to push a new buffer
@@ -2569,7 +2601,7 @@ _cpp_pop_buffer (cpp_reader *pfile)
 
   if (inc)
     {
-      _cpp_pop_file_buffer (pfile, inc);
+      _cpp_pop_file_buffer (pfile, inc, to_free);
 
       _cpp_do_file_change (pfile, LC_LEAVE, 0, 0, 0);
     }
@@ -2589,3 +2621,12 @@ _cpp_init_directives (cpp_reader *pfile)
       node->directive_index = i;
     }
 }
+
+/* Extract header file from a bracket include. Parsing starts after '<'.
+   The string is malloced and must be freed by the caller.  */
+char *
+_cpp_bracket_include(cpp_reader *pfile)
+{
+  return glue_header_name (pfile);
+}
+

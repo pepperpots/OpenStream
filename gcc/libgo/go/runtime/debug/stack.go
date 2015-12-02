@@ -8,7 +8,6 @@ package debug
 
 import (
 	"bytes"
-	_ "debug/elf"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -19,6 +18,7 @@ var (
 	dunno     = []byte("???")
 	centerDot = []byte("·")
 	dot       = []byte(".")
+	slash     = []byte("/")
 )
 
 // PrintStack prints to standard error the stack trace returned by Stack.
@@ -30,6 +30,8 @@ func PrintStack() {
 // For each routine, it includes the source line information and PC value,
 // then attempts to discover, for Go functions, the calling function or
 // method and the text of the line containing the invocation.
+//
+// This function is deprecated. Use package runtime's Stack instead.
 func Stack() []byte {
 	return stack()
 }
@@ -83,6 +85,11 @@ func function(pc uintptr) []byte {
 	//	runtime/debug.*T·ptrmethod
 	// and want
 	//	*T.ptrmethod
+	// Since the package path might contains dots (e.g. code.google.com/...),
+	// we first remove the path prefix if there is one.
+	if lastslash := bytes.LastIndex(name, slash); lastslash >= 0 {
+		name = name[lastslash+1:]
+	}
 	if period := bytes.Index(name, dot); period >= 0 {
 		name = name[period+1:]
 	}

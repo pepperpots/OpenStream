@@ -1,10 +1,8 @@
-/* Copyright (C) 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-   2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2002-2015 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    F2003 I/O support contributed by Jerry DeLisle
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -34,6 +32,17 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #include <gthr.h>
 
+
+/* POSIX 2008 specifies that the extended locale stuff is found in
+   locale.h, but some systems have them in xlocale.h.  */
+
+#include <locale.h>
+
+#ifdef HAVE_XLOCALE_H
+#include <xlocale.h>
+#endif
+
+
 /* Forward declarations.  */
 struct st_parameter_dt;
 typedef struct stream stream;
@@ -41,6 +50,19 @@ struct fbuf;
 struct format_data;
 typedef struct fnode fnode;
 struct gfc_unit;
+
+#ifdef HAVE_NEWLOCALE
+/* We have POSIX 2008 extended locale stuff.  */
+extern locale_t c_locale;
+internal_proto(c_locale);
+#else
+extern char* old_locale;
+internal_proto(old_locale);
+extern int old_locale_ctr;
+internal_proto(old_locale_ctr);
+extern __gthread_mutex_t old_locale_lock;
+internal_proto(old_locale_lock);
+#endif
 
 
 /* Macros for testing what kinds of I/O we are doing.  */
@@ -72,7 +94,7 @@ typedef struct array_loop_spec
 }
 array_loop_spec;
 
-/* A stucture to build a hash table for format data.  */
+/* A structure to build a hash table for format data.  */
 
 #define FORMAT_HASH_SIZE 16
 
@@ -188,8 +210,14 @@ typedef enum
 unit_encoding;
 
 typedef enum
-{ ROUND_UP, ROUND_DOWN, ROUND_ZERO, ROUND_NEAREST, ROUND_COMPATIBLE,
-  ROUND_PROCDEFINED, ROUND_UNSPECIFIED }
+{ ROUND_UP = GFC_FPE_UPWARD,
+  ROUND_DOWN = GFC_FPE_DOWNWARD,
+  ROUND_ZERO = GFC_FPE_TOWARDZERO,
+  ROUND_NEAREST = GFC_FPE_TONEAREST,
+  ROUND_COMPATIBLE = 10, /* round away from zero.  */
+  ROUND_PROCDEFINED, /* Here as ROUND_NEAREST. */
+  ROUND_UNSPECIFIED /* Should never occur. */
+}
 unit_round;
 
 /* NOTE: unit_sign must correspond with the sign_status enumerator in
@@ -203,7 +231,7 @@ typedef enum
 unit_advance;
 
 typedef enum
-{READING, WRITING}
+{READING, WRITING, LIST_READING, LIST_WRITING}
 unit_mode;
 
 typedef enum
@@ -293,6 +321,7 @@ st_parameter_filepos;
 #define IOPARM_INQUIRE_HAS_PENDING	(1 << 5)
 #define IOPARM_INQUIRE_HAS_SIZE		(1 << 6)
 #define IOPARM_INQUIRE_HAS_ID		(1 << 7)
+#define IOPARM_INQUIRE_HAS_IQSTREAM	(1 << 8)
 
 typedef struct
 {
@@ -326,6 +355,7 @@ typedef struct
   GFC_INTEGER_4 *pending;
   GFC_IO_INT *size;
   GFC_INTEGER_4 *id;
+  CHARACTER1 (iqstream);
 }
 st_parameter_inquire;
 
@@ -400,7 +430,7 @@ typedef struct st_parameter_dt
 	  unsigned at_eol : 1;
 	  unsigned comma_flag : 1;
 	  /* A namelist specific flag used in the list directed library
-	     to flag that calls are being made from namelist read (eg. to
+	     to flag that calls are being made from namelist read (e.g. to
 	     ignore comments or to treat '/' as a terminator)  */
 	  unsigned namelist_mode : 1;
 	  /* A namelist specific flag used in the list directed library
@@ -424,7 +454,10 @@ typedef struct st_parameter_dt
 	  unsigned g0_no_blanks : 1;
 	  /* Used to signal use of free_format_data.  */
 	  unsigned format_not_saved : 1;
-	  /* 14 unused bits.  */
+	  /* A flag used to identify when a non-standard expanded namelist read
+	     has occurred.  */
+	  unsigned expanded_read : 1;
+	  /* 13 unused bits.  */
 
 	  /* Used for ungetc() style functionality. Possible values
 	     are an unsigned char, EOF, or EOF - 1 used to mark the
@@ -441,9 +474,11 @@ typedef struct st_parameter_dt
 	  char *line_buffer;
 	  struct format_data *fmt;
 	  namelist_info *ionml;
-	  /* A flag used to identify when a non-standard expanded namelist read
-	     has occurred.  */
-	  int expanded_read;
+#ifdef HAVE_NEWLOCALE
+	  locale_t old_locale;
+#endif
+	  /* Current position within the look-ahead line buffer.  */
+	  int line_buffer_pos;
 	  /* Storage area for values except for strings.  Must be
 	     large enough to hold a complex value (two reals) of the
 	     largest kind.  */
@@ -559,14 +594,19 @@ typedef struct gfc_unit
   array_loop_spec *ls;
   int rank;
 
-  int file_len;
-  char *file;
+  /* Name of the file at the time OPEN was executed, as a
+     null-terminated C string.  */
+  char *filename;
 
   /* The format hash table.  */
   struct format_hash_entry format_hash_table[FORMAT_HASH_SIZE];
   
   /* Formatting buffer.  */
   struct fbuf *fbuf;
+  
+  /* Function pointer, points to list_read worker functions.  */
+  int (*next_char_fn_ptr) (st_parameter_dt *);
+  void (*push_char_fn_ptr) (st_parameter_dt *, int);
 }
 gfc_unit;
 
@@ -647,9 +687,6 @@ internal_proto(init_loop_spec);
 extern void next_record (st_parameter_dt *, int);
 internal_proto(next_record);
 
-extern void reverse_memcpy (void *, const void *, size_t);
-internal_proto (reverse_memcpy);
-
 extern void st_wait (st_parameter_wait *);
 export_proto(st_wait);
 
@@ -661,8 +698,8 @@ internal_proto(hit_eof);
 extern void set_integer (void *, GFC_INTEGER_LARGEST, int);
 internal_proto(set_integer);
 
-extern GFC_UINTEGER_LARGEST max_value (int, int);
-internal_proto(max_value);
+extern GFC_UINTEGER_LARGEST si_max (int);
+internal_proto(si_max);
 
 extern int convert_real (st_parameter_dt *, void *, const char *, int);
 internal_proto(convert_real);

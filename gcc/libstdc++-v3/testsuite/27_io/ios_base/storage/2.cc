@@ -1,7 +1,6 @@
 // 2000-12-19 bkoz
 
-// Copyright (C) 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009
-// Free Software Foundation
+// Copyright (C) 2000-2015 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -20,12 +19,6 @@
 
 // 27.4.2.5 ios_base storage functions
 
-// XXX This test will not work for some versions of irix6 because of
-// XXX bug(s) in libc malloc for very large allocations.  However
-// XXX -lmalloc seems to work.
-// See http://gcc.gnu.org/ml/gcc/2002-05/msg01012.html
-// { dg-options "-lmalloc" { target mips*-*-irix6* } }
-
 // This fails on some versions of Darwin 8 because malloc doesn't return
 // NULL even if an allocation fails (filed as Radar 3884894).
 // { dg-do run { xfail *-*-darwin8.[0-4].* } }
@@ -34,6 +27,9 @@
 // Radar 6467883: 10.4/10.5 setrlimits are not honored by memory allocators
 // Radar 6467884: 10.X systems are not robust when paging space is exceeded
 // { dg-skip-if "" { *-*-darwin* && lp64 } { "*" } { "" } } 
+
+// The library still throws the original definition of std::ios::failure
+// { dg-options "-D_GLIBCXX_USE_CXX11_ABI=0" }
 
 #include <sstream>
 #include <iostream>

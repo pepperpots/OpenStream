@@ -13,7 +13,9 @@ package ecdsa
 //     http://www.secg.org/download/aid-780/sec1-v2.pdf
 
 import (
+	"crypto"
 	"crypto/elliptic"
+	"encoding/asn1"
 	"io"
 	"math/big"
 )
@@ -28,6 +30,28 @@ type PublicKey struct {
 type PrivateKey struct {
 	PublicKey
 	D *big.Int
+}
+
+type ecdsaSignature struct {
+	R, S *big.Int
+}
+
+// Public returns the public key corresponding to priv.
+func (priv *PrivateKey) Public() crypto.PublicKey {
+	return &priv.PublicKey
+}
+
+// Sign signs msg with priv, reading randomness from rand. This method is
+// intended to support keys where the private part is kept in, for example, a
+// hardware module. Common uses should use the Sign function in this package
+// directly.
+func (priv *PrivateKey) Sign(rand io.Reader, msg []byte, opts crypto.SignerOpts) ([]byte, error) {
+	r, s, err := Sign(rand, priv, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	return asn1.Marshal(ecdsaSignature{r, s})
 }
 
 var one = new(big.Int).SetInt64(1)
@@ -49,7 +73,7 @@ func randFieldElement(c elliptic.Curve, rand io.Reader) (k *big.Int, err error) 
 	return
 }
 
-// GenerateKey generates a public&private key pair.
+// GenerateKey generates a public and private key pair.
 func GenerateKey(c elliptic.Curve, rand io.Reader) (priv *PrivateKey, err error) {
 	k, err := randFieldElement(c, rand)
 	if err != nil {
@@ -66,7 +90,9 @@ func GenerateKey(c elliptic.Curve, rand io.Reader) (priv *PrivateKey, err error)
 // hashToInt converts a hash value to an integer. There is some disagreement
 // about how this is done. [NSA] suggests that this is done in the obvious
 // manner, but [SECG] truncates the hash to the bit-length of the curve order
-// first. We follow [SECG] because that's what OpenSSL does.
+// first. We follow [SECG] because that's what OpenSSL does. Additionally,
+// OpenSSL right shifts excess bits from the number if the hash is too large
+// and we mirror that too.
 func hashToInt(hash []byte, c elliptic.Curve) *big.Int {
 	orderBits := c.Params().N.BitLen()
 	orderBytes := (orderBits + 7) / 8
@@ -75,11 +101,21 @@ func hashToInt(hash []byte, c elliptic.Curve) *big.Int {
 	}
 
 	ret := new(big.Int).SetBytes(hash)
-	excess := orderBytes*8 - orderBits
+	excess := len(hash)*8 - orderBits
 	if excess > 0 {
 		ret.Rsh(ret, uint(excess))
 	}
 	return ret
+}
+
+// fermatInverse calculates the inverse of k in GF(P) using Fermat's method.
+// This has better constant-time properties than Euclid's method (implemented
+// in math/big.Int.ModInverse) although math/big itself isn't strictly
+// constant-time so it's not perfect.
+func fermatInverse(k, N *big.Int) *big.Int {
+	two := big.NewInt(2)
+	nMinus2 := new(big.Int).Sub(N, two)
+	return new(big.Int).Exp(k, nMinus2, N)
 }
 
 // Sign signs an arbitrary length hash (which should be the result of hashing a
@@ -100,7 +136,7 @@ func Sign(rand io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err err
 				return
 			}
 
-			kInv = new(big.Int).ModInverse(k, N)
+			kInv = fermatInverse(k, N)
 			r, _ = priv.Curve.ScalarBaseMult(k.Bytes())
 			r.Mod(r, N)
 			if r.Sign() != 0 {
@@ -121,8 +157,8 @@ func Sign(rand io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err err
 	return
 }
 
-// Verify verifies the signature in r, s of hash using the public key, pub. It
-// returns true iff the signature is valid.
+// Verify verifies the signature in r, s of hash using the public key, pub. Its
+// return value records whether the signature is valid.
 func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
 	// See [NSA] 3.4.2
 	c := pub.Curve
@@ -138,14 +174,16 @@ func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
 	w := new(big.Int).ModInverse(s, N)
 
 	u1 := e.Mul(e, w)
+	u1.Mod(u1, N)
 	u2 := w.Mul(r, w)
+	u2.Mod(u2, N)
 
 	x1, y1 := c.ScalarBaseMult(u1.Bytes())
 	x2, y2 := c.ScalarMult(pub.X, pub.Y, u2.Bytes())
-	if x1.Cmp(x2) == 0 {
+	x, y := c.Add(x1, y1, x2, y2)
+	if x.Sign() == 0 && y.Sign() == 0 {
 		return false
 	}
-	x, _ := c.Add(x1, y1, x2, y2)
 	x.Mod(x, N)
 	return x.Cmp(r) == 0
 }

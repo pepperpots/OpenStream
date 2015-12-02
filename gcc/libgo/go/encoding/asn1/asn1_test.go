@@ -6,11 +6,38 @@ package asn1
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 	"reflect"
 	"testing"
 	"time"
 )
+
+type boolTest struct {
+	in  []byte
+	ok  bool
+	out bool
+}
+
+var boolTestData = []boolTest{
+	{[]byte{0x00}, true, false},
+	{[]byte{0xff}, true, true},
+	{[]byte{0x00, 0x00}, false, false},
+	{[]byte{0xff, 0xff}, false, false},
+	{[]byte{0x01}, false, false},
+}
+
+func TestParseBool(t *testing.T) {
+	for i, test := range boolTestData {
+		ret, err := parseBool(test.in)
+		if (err == nil) != test.ok {
+			t.Errorf("#%d: Incorrect error result (did fail? %v, expected: %v)", i, err == nil, test.ok)
+		}
+		if test.ok && ret != test.out {
+			t.Errorf("#%d: Bad result: %v (expected %v)", i, ret, test.out)
+		}
+	}
+}
 
 type int64Test struct {
 	in  []byte
@@ -64,7 +91,7 @@ var int32TestData = []int32Test{
 
 func TestParseInt32(t *testing.T) {
 	for i, test := range int32TestData {
-		ret, err := parseInt(test.in)
+		ret, err := parseInt32(test.in)
 		if (err == nil) != test.ok {
 			t.Errorf("#%d: Incorrect error result (did fail? %v, expected: %v)", i, err == nil, test.ok)
 		}
@@ -124,7 +151,7 @@ func TestBitString(t *testing.T) {
 			t.Errorf("#%d: Incorrect error result (did fail? %v, expected: %v)", i, err == nil, test.ok)
 		}
 		if err == nil {
-			if test.bitLength != ret.BitLength || bytes.Compare(ret.Bytes, test.out) != 0 {
+			if test.bitLength != ret.BitLength || !bytes.Equal(ret.Bytes, test.out) {
 				t.Errorf("#%d: Bad result: %v (expected %v %v)", i, ret, test.out, test.bitLength)
 			}
 		}
@@ -144,6 +171,12 @@ func TestBitStringAt(t *testing.T) {
 	}
 	if bs.At(9) != 1 {
 		t.Error("#4: Failed")
+	}
+	if bs.At(-1) != 0 {
+		t.Error("#5: Failed")
+	}
+	if bs.At(17) != 0 {
+		t.Error("#6: Failed")
 	}
 }
 
@@ -166,7 +199,7 @@ func TestBitStringRightAlign(t *testing.T) {
 	for i, test := range bitStringRightAlignTests {
 		bs := BitString{test.in, test.inlen}
 		out := bs.RightAlign()
-		if bytes.Compare(out, test.out) != 0 {
+		if !bytes.Equal(out, test.out) {
 			t.Errorf("#%d got: %x want: %x", i, out, test.out)
 		}
 	}
@@ -183,6 +216,7 @@ var objectIdentifierTestData = []objectIdentifierTest{
 	{[]byte{85}, true, []int{2, 5}},
 	{[]byte{85, 0x02}, true, []int{2, 5, 2}},
 	{[]byte{85, 0x02, 0xc0, 0x00}, true, []int{2, 5, 2, 0x2000}},
+	{[]byte{0x81, 0x34, 0x03}, true, []int{2, 100, 3}},
 	{[]byte{85, 0x02, 0xc0, 0x80, 0x80, 0x80, 0x80}, false, []int{}},
 }
 
@@ -198,6 +232,10 @@ func TestObjectIdentifier(t *testing.T) {
 			}
 		}
 	}
+
+	if s := ObjectIdentifier([]int{1, 2, 3, 4}).String(); s != "1.2.3.4" {
+		t.Errorf("bad ObjectIdentifier.String(). Got %s, want 1.2.3.4", s)
+	}
 }
 
 type timeTest struct {
@@ -211,6 +249,7 @@ var utcTestData = []timeTest{
 	{"910506164540+0730", true, time.Date(1991, 05, 06, 16, 45, 40, 0, time.FixedZone("", 7*60*60+30*60))},
 	{"910506234540Z", true, time.Date(1991, 05, 06, 23, 45, 40, 0, time.UTC)},
 	{"9105062345Z", true, time.Date(1991, 05, 06, 23, 45, 0, 0, time.UTC)},
+	{"5105062345Z", true, time.Date(1951, 05, 06, 23, 45, 0, 0, time.UTC)},
 	{"a10506234540Z", false, time.Time{}},
 	{"91a506234540Z", false, time.Time{}},
 	{"9105a6234540Z", false, time.Time{}},
@@ -283,6 +322,12 @@ var tagAndLengthData = []tagAndLengthTest{
 	{[]byte{0x00, 0x83, 0x01, 0x00}, false, tagAndLength{}},
 	{[]byte{0x1f, 0x85}, false, tagAndLength{}},
 	{[]byte{0x30, 0x80}, false, tagAndLength{}},
+	// Superfluous zeros in the length should be an error.
+	{[]byte{0xa0, 0x82, 0x00, 0x01}, false, tagAndLength{}},
+	// Lengths up to the maximum size of an int should work.
+	{[]byte{0xa0, 0x84, 0x7f, 0xff, 0xff, 0xff}, true, tagAndLength{2, 0, 0x7fffffff, true}},
+	// Lengths that would overflow an int should be rejected.
+	{[]byte{0xa0, 0x84, 0x80, 0x00, 0x00, 0x00}, false, tagAndLength{}},
 }
 
 func TestParseTagAndLength(t *testing.T) {
@@ -321,7 +366,7 @@ var parseFieldParametersTestData []parseFieldParametersTest = []parseFieldParame
 	{"default:42", fieldParameters{defaultValue: newInt64(42)}},
 	{"tag:17", fieldParameters{tag: newInt(17)}},
 	{"optional,explicit,default:42,tag:17", fieldParameters{optional: true, explicit: true, defaultValue: newInt64(42), tag: newInt(17)}},
-	{"optional,explicit,default:42,tag:17,rubbish1", fieldParameters{true, true, false, newInt64(42), newInt(17), 0, false}},
+	{"optional,explicit,default:42,tag:17,rubbish1", fieldParameters{true, true, false, newInt64(42), newInt(17), 0, false, false}},
 	{"set", fieldParameters{set: true}},
 }
 
@@ -347,6 +392,10 @@ type TestContextSpecificTags2 struct {
 	B int
 }
 
+type TestContextSpecificTags3 struct {
+	S string `asn1:"tag:1,utf8"`
+}
+
 type TestElementsAfterString struct {
 	S    string
 	A, B int
@@ -354,6 +403,10 @@ type TestElementsAfterString struct {
 
 type TestBigInt struct {
 	X *big.Int
+}
+
+type TestSet struct {
+	Ints []int `asn1:"set"`
 }
 
 var unmarshalTestData = []struct {
@@ -371,10 +424,12 @@ var unmarshalTestData = []struct {
 	{[]byte{0x04, 0x04, 1, 2, 3, 4}, &RawValue{0, 4, false, []byte{1, 2, 3, 4}, []byte{4, 4, 1, 2, 3, 4}}},
 	{[]byte{0x30, 0x03, 0x81, 0x01, 0x01}, &TestContextSpecificTags{1}},
 	{[]byte{0x30, 0x08, 0xa1, 0x03, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02}, &TestContextSpecificTags2{1, 2}},
+	{[]byte{0x30, 0x03, 0x81, 0x01, '@'}, &TestContextSpecificTags3{"@"}},
 	{[]byte{0x01, 0x01, 0x00}, newBool(false)},
-	{[]byte{0x01, 0x01, 0x01}, newBool(true)},
+	{[]byte{0x01, 0x01, 0xff}, newBool(true)},
 	{[]byte{0x30, 0x0b, 0x13, 0x03, 0x66, 0x6f, 0x6f, 0x02, 0x01, 0x22, 0x02, 0x01, 0x33}, &TestElementsAfterString{"foo", 0x22, 0x33}},
 	{[]byte{0x30, 0x05, 0x02, 0x03, 0x12, 0x34, 0x56}, &TestBigInt{big.NewInt(0x123456)}},
+	{[]byte{0x30, 0x0b, 0x31, 0x09, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03}, &TestSet{Ints: []int{1, 2, 3}}},
 }
 
 func TestUnmarshal(t *testing.T) {
@@ -471,8 +526,40 @@ func TestRawStructs(t *testing.T) {
 	if s.A != 0x50 {
 		t.Errorf("bad value for A: got %d want %d", s.A, 0x50)
 	}
-	if bytes.Compare([]byte(s.Raw), input) != 0 {
+	if !bytes.Equal([]byte(s.Raw), input) {
 		t.Errorf("bad value for Raw: got %x want %x", s.Raw, input)
+	}
+}
+
+type oiEqualTest struct {
+	first  ObjectIdentifier
+	second ObjectIdentifier
+	same   bool
+}
+
+var oiEqualTests = []oiEqualTest{
+	{
+		ObjectIdentifier{1, 2, 3},
+		ObjectIdentifier{1, 2, 3},
+		true,
+	},
+	{
+		ObjectIdentifier{1},
+		ObjectIdentifier{1, 2, 3},
+		false,
+	},
+	{
+		ObjectIdentifier{1, 2, 3},
+		ObjectIdentifier{10, 11, 12},
+		false,
+	},
+}
+
+func TestObjectIdentifierEqual(t *testing.T) {
+	for _, o := range oiEqualTests {
+		if s := o.first.Equal(o.second); s != o.same {
+			t.Errorf("ObjectIdentifier.Equal: got: %t want: %t", s, o.same)
+		}
 	}
 }
 
@@ -703,4 +790,78 @@ var derEncodedPaypalNULCertBytes = []byte{
 	0x63, 0x21, 0xab, 0x46, 0x9b, 0x9c, 0x78, 0xd5, 0x54, 0x5b, 0x3d, 0x0c, 0x1e,
 	0xc8, 0x64, 0x8c, 0xb5, 0x50, 0x23, 0x82, 0x6f, 0xdb, 0xb8, 0x22, 0x1c, 0x43,
 	0x96, 0x07, 0xa8, 0xbb,
+}
+
+var stringSliceTestData = [][]string{
+	{"foo", "bar"},
+	{"foo", "\\bar"},
+	{"foo", "\"bar\""},
+	{"foo", "åäö"},
+}
+
+func TestStringSlice(t *testing.T) {
+	for _, test := range stringSliceTestData {
+		bs, err := Marshal(test)
+		if err != nil {
+			t.Error(err)
+		}
+
+		var res []string
+		_, err = Unmarshal(bs, &res)
+		if err != nil {
+			t.Error(err)
+		}
+
+		if fmt.Sprintf("%v", res) != fmt.Sprintf("%v", test) {
+			t.Errorf("incorrect marshal/unmarshal; %v != %v", res, test)
+		}
+	}
+}
+
+type explicitTaggedTimeTest struct {
+	Time time.Time `asn1:"explicit,tag:0"`
+}
+
+var explicitTaggedTimeTestData = []struct {
+	in  []byte
+	out explicitTaggedTimeTest
+}{
+	{[]byte{0x30, 0x11, 0xa0, 0xf, 0x17, 0xd, '9', '1', '0', '5', '0', '6', '1', '6', '4', '5', '4', '0', 'Z'},
+		explicitTaggedTimeTest{time.Date(1991, 05, 06, 16, 45, 40, 0, time.UTC)}},
+	{[]byte{0x30, 0x17, 0xa0, 0xf, 0x18, 0x13, '2', '0', '1', '0', '0', '1', '0', '2', '0', '3', '0', '4', '0', '5', '+', '0', '6', '0', '7'},
+		explicitTaggedTimeTest{time.Date(2010, 01, 02, 03, 04, 05, 0, time.FixedZone("", 6*60*60+7*60))}},
+}
+
+func TestExplicitTaggedTime(t *testing.T) {
+	// Test that a time.Time will match either tagUTCTime or
+	// tagGeneralizedTime.
+	for i, test := range explicitTaggedTimeTestData {
+		var got explicitTaggedTimeTest
+		_, err := Unmarshal(test.in, &got)
+		if err != nil {
+			t.Errorf("Unmarshal failed at index %d %v", i, err)
+		}
+		if !got.Time.Equal(test.out.Time) {
+			t.Errorf("#%d: got %v, want %v", i, got.Time, test.out.Time)
+		}
+	}
+}
+
+type implicitTaggedTimeTest struct {
+	Time time.Time `asn1:"tag:24"`
+}
+
+func TestImplicitTaggedTime(t *testing.T) {
+	// An implicitly tagged time value, that happens to have an implicit
+	// tag equal to a GENERALIZEDTIME, should still be parsed as a UTCTime.
+	// (There's no "timeType" in fieldParameters to determine what type of
+	// time should be expected when implicitly tagged.)
+	der := []byte{0x30, 0x0f, 0x80 | 24, 0xd, '9', '1', '0', '5', '0', '6', '1', '6', '4', '5', '4', '0', 'Z'}
+	var result implicitTaggedTimeTest
+	if _, err := Unmarshal(der, &result); err != nil {
+		t.Fatalf("Error while parsing: %s", err)
+	}
+	if expected := time.Date(1991, 05, 06, 16, 45, 40, 0, time.UTC); !result.Time.Equal(expected) {
+		t.Errorf("Wrong result. Got %v, want %v", result.Time, expected)
+	}
 }

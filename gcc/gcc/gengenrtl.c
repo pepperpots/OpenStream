@@ -1,6 +1,5 @@
 /* Generate code to allocate RTL structures.
-   Copyright (C) 1997, 1998, 1999, 2000, 2002, 2003, 2004, 2007, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1997-2015 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -38,7 +37,7 @@ static const struct rtx_definition defs[] =
 {
 #include "rtl.def"		/* rtl expressions are documented here */
 };
-#define NUM_RTX_CODE ARRAY_SIZE(defs)
+#define NUM_RTX_CODE ARRAY_SIZE (defs)
 
 static const char *formats[NUM_RTX_CODE];
 
@@ -64,9 +63,9 @@ type_from_format (int c)
     case 'E':
       return "rtvec ";
     case 't':
-      return "union tree_node *";  /* tree - typedef not available */
+      return "tree ";
     case 'B':
-      return "struct basic_block_def *";  /* basic block - typedef not available */
+      return "basic_block ";
     default:
       gcc_unreachable ();
     }
@@ -124,7 +123,10 @@ special_format (const char *fmt)
 static int
 special_rtx (int idx)
 {
-  return (strcmp (defs[idx].enumname, "CONST_INT") == 0
+  return (strcmp (defs[idx].enumname, "EXPR_LIST") == 0
+	  || strcmp (defs[idx].enumname, "INSN_LIST") == 0
+	  || strcmp (defs[idx].enumname, "INSN") == 0
+	  || strcmp (defs[idx].enumname, "CONST_INT") == 0
 	  || strcmp (defs[idx].enumname, "REG") == 0
 	  || strcmp (defs[idx].enumname, "SUBREG") == 0
 	  || strcmp (defs[idx].enumname, "MEM") == 0
@@ -142,8 +144,10 @@ special_rtx (int idx)
 static int
 excluded_rtx (int idx)
 {
-  return ((strcmp (defs[idx].enumname, "CONST_DOUBLE") == 0)
-	  || (strcmp (defs[idx].enumname, "CONST_FIXED") == 0));
+  return (strcmp (defs[idx].enumname, "VAR_LOCATION") == 0
+	  || strcmp (defs[idx].enumname, "CONST_DOUBLE") == 0
+	  || strcmp (defs[idx].enumname, "CONST_WIDE_INT") == 0
+	  || strcmp (defs[idx].enumname, "CONST_FIXED") == 0);
 }
 
 /* Place a list of all format specifiers we use into the array FORMAT.  */
@@ -215,7 +219,7 @@ gendef (const char *format)
   /* Start by writing the definition of the function name and the types
      of the arguments.  */
 
-  printf ("static inline rtx\ngen_rtx_fmt_%s_stat (RTX_CODE code, enum machine_mode mode", format);
+  printf ("static inline rtx\ngen_rtx_fmt_%s_stat (RTX_CODE code, machine_mode mode", format);
   for (p = format, i = 0; *p != 0; p++)
     if (*p != '0')
       printf (",\n\t%sarg%d", type_from_format (*p), i++);
