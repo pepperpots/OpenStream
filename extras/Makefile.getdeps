@@ -489,4 +489,4 @@ $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)/Makefile: $(ARCHIVES_DIR)/numactl-$(NU
 
 $(ARCHIVES_DIR)/numactl-$(NUMACTL_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
-	wget 'ftp://oss.sgi.com/www/projects/libnuma/download/numactl-$(NUMACTL_VERSION).tar.gz' -O $@
+	wget 'https://launchpad.net/ubuntu/+archive/primary/+files/numactl_$(NUMACTL_VERSION).orig.tar.gz' -O $@
