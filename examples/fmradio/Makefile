@@ -12,7 +12,7 @@ fmradio_seq: fmradio_seq.c ../common/common.c
 stream_%: LDFLAGS += $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 stream_%: CFLAGS += -fopenmp
 stream_%: stream_%.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

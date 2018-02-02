@@ -16,7 +16,7 @@ generators/%: generators/%.c rand.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) -g -std=c99 -o $@ $^
 
 stream_df_rdag: stream_df_rdag.c rand.c rdag-common.c hash.h hash.c ../../common/common.c ../../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

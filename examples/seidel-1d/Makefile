@@ -18,31 +18,31 @@ icc_seidel_1d: seidel_1d.c ../common/common.c
 
 
 stream_seidel_1d_from_df: stream_seidel_1d_from_df.c stream_seidel_1d_from_df_outline.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 icc_stream_seidel_1d_from_df: stream_seidel_1d_from_df.c stream_seidel_1d_from_df_outline_icc.a ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
 
 
 stream_seidel_1d_seqctrl: stream_seidel_1d_seqctrl.c stream_seidel_1d_seqctrl_outline.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 icc_stream_seidel_1d_seqctrl: stream_seidel_1d_seqctrl.c stream_seidel_1d_seqctrl_outline_icc.a ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 
 stream_df_seidel_1d: stream_df_seidel_1d.c stream_df_seidel_1d_outline.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 icc_stream_df_seidel_1d: stream_df_seidel_1d.c stream_df_seidel_1d_outline_icc.a ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
 
 
 stream_df_seidel_1d_reuse: stream_df_seidel_1d_reuse.c stream_df_seidel_1d_reuse_outline.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 icc_stream_df_seidel_1d_reuse: stream_df_seidel_1d_reuse.c stream_df_seidel_1d_reuse_outline_icc.a ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(ICC_STATIC_LIBS)
 
 
 %_icc.a: %.c

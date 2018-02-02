@@ -12,12 +12,12 @@ fibo: fibo.c ../common/common.c
 stream_%: LDFLAGS += $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 stream_%: CFLAGS += -fopenmp
 stream_%: stream_%.c ../common/sync.c ../common/common.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
 
 barrier_%: LDFLAGS += -L$(LIBWSTREAM_DF_LIB_DIR) $(LD_RPATH_FLAGS) -lwstream_df
 barrier_%: CFLAGS += -fopenmp
 barrier_%: barrier_%.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp  $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp  $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_DIR) -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

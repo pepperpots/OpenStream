@@ -10,7 +10,7 @@ ring_roberts: ring_roberts.c ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline
 
 stream_%: stream_%.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

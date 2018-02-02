@@ -14,10 +14,10 @@ sparse_lu: sparse_lu.c ../common/common.c
 	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_sparse_lu: stream_sparse_lu.c ../common/common.c ../common/sync.c
-	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline -fopenmp $(LD_RPATH_FLAGS) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline -fopenmp $(LD_RPATH_FLAGS) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
 
 stream_df_sparse_lu: stream_df_sparse_lu.c ../common/common.c ../common/sync.c
-	$(GCC) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline -fopenmp $(LD_RPATH_FLAGS) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(DFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline -fopenmp $(LD_RPATH_FLAGS) -L${LIBWSTREAM_DF_LIB_DIR} -lwstream_df
 
 starss_sparse_lu: starss_sparse_lu.c ../common/common.c
 	$(MCC) $(DFLAGS) --ompss s$^ -o $@ -O3 -g

@@ -10,7 +10,7 @@ seq_fftw: seq_fftw.c ../common/common.c
 	$(GCC) $(CFLAGS) $^ -o $@ -fno-inline $(LDFLAGS)
 
 radix_fft_stream_pure: radix_fft_stream_pure.c ../common/common.c
-	$(GCC) $(CFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LDFLAGS)
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LDFLAGS)
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

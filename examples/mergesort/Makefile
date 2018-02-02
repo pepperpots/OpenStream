@@ -10,7 +10,7 @@ mergesort: mergesort.c ../common/common.c mergesort.h
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
 stream_df_mergesort: stream_df_mergesort.c ../common/common.c ../common/sync.c mergesort.h
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt

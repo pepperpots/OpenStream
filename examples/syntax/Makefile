@@ -20,7 +20,7 @@ LDFLAGS = -L$(LIB_DIR) -lm -rdynamic $(LD_RPATH_FLAGS) -L$(LIBWSTREAM_DF_LIB_DIR
 all: $(TESTS)
 
 .c:
-	$(GCC) $(CFLAGS) $(LDFLAGS) -fopenmp $< -o $*
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) -fopenmp $< -o $*
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw a.out *.txt

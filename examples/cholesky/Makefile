@@ -23,7 +23,7 @@ block_seq_cholesky: block_seq_cholesky.c ../common/common.c
 	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fno-inline -lblas -lcblas -llapack $(LD_RPATH_FLAGS) # Need -fno-inline to prevent GCC from deadcoding when no output.
 
 stream_%: stream_%.c ../common/common.c ../common/sync.c
-	$(GCC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df -lblas -lcblas -llapack $(LD_RPATH_FLAGS)
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df -lblas -lcblas -llapack $(LD_RPATH_FLAGS)
 
 clean:
 	rm -f $(TESTS) *~ *.c.* *.s *.raw *.out *.txt \
@@ -94,7 +94,7 @@ mkl_block_seq_cholesky: block_seq_cholesky.c ../common/common.c
 
 mkl_stream_%: stream_%.c ../common/common.c ../common/sync.c
 	@[ ! -z "$(MKLROOT)" ] || (echo "Could not find MKL installation" ; exit 1)
-	$(GCC) $(CFLAGS) $(LDFLAGS) $(CFLAGS_MKL) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LD_RPATH_FLAGS) $(LDFLAGS_MKL_SEQ)
+	$(GCC) $(DEFAULT_OPENSTREAM_CFLAGS) $(CFLAGS) $(LDFLAGS) $(CFLAGS_MKL) $^ -o $@ -fopenmp -L$(LIBWSTREAM_DF_LIB_DIR) -lwstream_df $(LD_RPATH_FLAGS) $(LDFLAGS_MKL_SEQ)
 
 plasma_cholesky: plasma_cholesky.c ../common/common.c ../common/sync.c
 	$(GCC)  $(CFLAGS_PLASMA) $^ -o $@ -fno-inline $(LDFLAGS_PLASMA)
