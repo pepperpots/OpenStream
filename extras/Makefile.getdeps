@@ -56,7 +56,7 @@ $(GCC_BUILD_DIR)/configdep: ./gcc/mpc/openstreamdep \
 	./gcc/mpfr/openstreamdep \
 	./gcc/gmp/openstreamdep
 	mkdir -p $(GCC_BUILD_DIR)
-	cd $(GCC_BUILD_DIR) && ../configure --enable-languages=c --disable-bootstrap CFLAGS=-g --prefix=$(INST_DIR)
+	cd $(GCC_BUILD_DIR) && ../configure --enable-languages=c --disable-bootstrap CFLAGS=-g --disable-multilib --prefix=$(INST_DIR)
 	touch $(GCC_BUILD_DIR)/configdep
 
 ################################################################################
