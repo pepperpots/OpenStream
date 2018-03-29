@@ -342,18 +342,18 @@ tdecrease_n (void *data, size_t n, bool is_write)
   /* Schedule the thread if its synchronization counter reaches 0.  */
   if (sc == 0)
     {
+      if (fp->work_fn == (void *) 1)
+	{
+	  __builtin_ia32_tend (fp);
+	  trace_state_restore(cthread);
+	  return;
+	}
+
       update_numa_nodes_of_views(cthread, fp);
 
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
-
-      if (fp->work_fn == (void *) 1)
-	{
-	  wstream_free_frame(fp);
-	  trace_state_restore(cthread);
-	  return;
-	}
 
 #if ALLOW_PUSHES
       int target_worker;
@@ -1589,24 +1589,22 @@ __builtin_ia32_tick (void *s, size_t burst)
 	  /* Allocate a fake view, with a fake data block, that allows to
 	     keep the same dependence resolution algorithm.  */
 	  size_t size = sizeof(wstream_df_view_t) + sizeof(wstream_df_frame_t);
-	  cons_frame = slab_alloc(cthread, cthread->slab_cache, size);
-	  memset(cons_frame, 0, size);
-
-	  cons_frame->synchronization_counter = burst * stream->elem_size;
-	  cons_frame->size = size;
 
 	  /* Guard for TDEC: use "work_fn" field as a marker that this
 	     frame is not to be considered in optimizations and should be
 	     deallocated if it's TDEC'd.  We assume a function pointer
 	     cannot be "0x1".  */
-	  cons_frame->work_fn = (void *)1;
+	  cons_frame = __builtin_ia32_tcreate (burst * stream->elem_size - 1, size, (void *)1, false);
 
 	  cons_view = (wstream_df_view_p)((char*)cons_frame)+sizeof(wstream_df_frame_t);
 	  cons_view->horizon = burst * stream->elem_size;
 	  cons_view->burst = cons_view->horizon;
 	  cons_view->owner = cons_frame;
+	  cons_view->refcount = 1;
+	  cons_view->reached_position = 0;
 
-	  __built_in_wstream_df_alloc_view_data(cons_view, cons_view->horizon);
+	  __built_in_wstream_df_alloc_view_data_deferred (cons_view, cons_view->horizon);
+	  __built_in_wstream_df_determine_dominant_input_numa_node (cons_frame);
 
   } else {
 	  /* TICKing mostly means flushing the active_peek_chain to the main
