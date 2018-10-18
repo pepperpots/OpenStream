@@ -900,9 +900,15 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	     optimization).  CTHREAD is guaranteed not to be null
 	     here.  */
 	  if (cthread != NULL)
-	    __asm__ __volatile__ ("mov %[current_thread], %[cthread]"
-				  : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
-
+	    {
+#ifdef __aarch64__
+	      __asm __volatile ("str %[current_thread], %[cthread]"
+				: [cthread] "=m" (cthread) : [current_thread] "r" (current_thread) : "memory");
+#else
+	      __asm__ __volatile__ ("mov %[current_thread], %[cthread]"
+				    : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
+#endif
+	    }
 	  __compiler_fence;
 
 	  trace_task_exec_end(cthread, fp);
