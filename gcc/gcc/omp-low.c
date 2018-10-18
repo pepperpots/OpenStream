@@ -133,6 +133,7 @@ typedef struct wstream_df_frame
   tree wstream_df_frame_field_refcount;
   tree wstream_df_frame_field_input_view_chain;
   tree wstream_df_frame_field_output_view_chain;
+  tree wstream_df_frame_field_bind_mode;
 } wstream_df_frame;
 
 
@@ -5151,7 +5152,7 @@ static void
 lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
     		    omp_context *ctx)
 {
-  tree c;
+  tree c, bind_mode;
   gimple_seq firstprivate_list = NULL;
   gimple_seq tcreate_call_list = NULL;
   gimple_seq datafield_list = NULL;
@@ -5616,11 +5617,20 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
       workfn = gimple_omp_task_child_fn (ctx->stmt);
       workfn = build_fold_addr_expr_loc (loc, workfn);
       /* Set the TCREATE flags.  */
+      c = find_omp_clause (clauses, OMP_CLAUSE_PROC_BIND);
+      if (c)
+	bind_mode = build_int_cst (unsigned_type_node, OMP_CLAUSE_PROC_BIND_KIND (c));
+      else
+	bind_mode = build_int_cst (unsigned_type_node, OMP_CLAUSE_PROC_BIND_FALSE);
+
       c = find_omp_clause (clauses, OMP_CLAUSE_LASTPRIVATE);
       if (c != NULL_TREE)
-	has_lp = boolean_true_node;
-
-      t = build_call_expr (tcreate_fn, 4, synch_ctr, metadata_size, workfn, has_lp);
+	{
+	  has_lp = boolean_true_node;
+	  // Also bind the execution to master node
+	  bind_mode = build_int_cst (unsigned_type_node, OMP_CLAUSE_PROC_BIND_MASTER);
+	}
+      t = build_call_expr (tcreate_fn, 5, synch_ctr, metadata_size, workfn, has_lp, bind_mode);
       gimplify_assign (frame_ptr_prematch, fold_convert (TREE_TYPE (frame_ptr_prematch), t), &tcreate_call_list);
 
       tree finish_resdep_fn = builtin_decl_explicit (BUILT_IN_FINISH_RESDEP);
@@ -13265,6 +13275,17 @@ build_wstream_df_frame_base_type (omp_context *ctx)
 
      Reversed order to ensure the above order is actually obtained.
   */
+  name = create_tmp_var_name ("bind_mode");
+  type = integer_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    TYPE_ALIGN (ctx->record_type) = DECL_ALIGN (field);
+  ctx->base_frame.wstream_df_frame_field_bind_mode = field;
+
   name = create_tmp_var_name ("output_view_chain");
   type = ptr_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);

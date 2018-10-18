@@ -32,7 +32,7 @@ static inline const char* steal_type_str(int steal_type) {
 };
 
 /* Create a new thread, with frame pointer size, and sync counter */
-extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool);
+extern void *__builtin_ia32_tcreate (size_t, size_t, void *, bool, size_t);
 /* Decrease the synchronization counter by one */
 extern void __builtin_ia32_tdecrease (void *, bool);
 /* Decrease the synchronization counter by one */
@@ -108,6 +108,26 @@ typedef struct wstream_df_stream
 } wstream_df_stream_t, *wstream_df_stream_p;
 
 
+/* enum omp_clause_proc_bind_kind */
+/* { */
+/*   /\* Numbers should match omp_proc_bind_t enum in omp.h.  *\/ */
+/*   OMP_CLAUSE_PROC_BIND_FALSE = 0, */
+/*   OMP_CLAUSE_PROC_BIND_TRUE = 1, */
+/*   OMP_CLAUSE_PROC_BIND_MASTER = 2, */
+/*   OMP_CLAUSE_PROC_BIND_CLOSE = 3, */
+/*   OMP_CLAUSE_PROC_BIND_SPREAD = 4, */
+/*   OMP_CLAUSE_PROC_BIND_LAST */
+/* }; */
+
+enum wstream_df_bind_mode {
+  BIND_MODE_FALSE = 0,
+  BIND_MODE_TRUE = 1,
+  BIND_MODE_MASTER = 2,
+  BIND_MODE_CLOSE = 3,
+  BIND_MODE_SPREAD = 4,
+  BIND_MODE_LAST
+};
+
 typedef struct wstream_df_frame
 {
   int synchronization_counter;
@@ -133,7 +153,9 @@ typedef struct wstream_df_frame
   size_t refcount;
   wstream_df_view_p input_view_chain;
   wstream_df_view_p output_view_chain;
-  /* Variable size struct */
+
+  enum wstream_df_bind_mode bind_mode;
+/* Variable size struct */
   //char buf [];
 } wstream_df_frame_t, *wstream_df_frame_p;
 

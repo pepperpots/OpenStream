@@ -189,7 +189,7 @@ wstream_df_taskwait ()
 
 /* Create a new thread, with frame pointer size, and sync counter */
 void *
-__builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
+__builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp, size_t bind_mode)
 {
   wstream_df_frame_p frame_pointer;
   barrier_p cbar = current_barrier;
@@ -222,6 +222,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->refcount = 1;
   frame_pointer->input_view_chain = NULL;
   frame_pointer->output_view_chain = NULL;
+  frame_pointer->bind_mode = bind_mode;
 
 #if ALLOW_WQEVENT_SAMPLING
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
@@ -1600,7 +1601,7 @@ __builtin_ia32_tick (void *s, size_t burst)
 	     frame is not to be considered in optimizations and should be
 	     deallocated if it's TDEC'd.  We assume a function pointer
 	     cannot be "0x1".  */
-	  cons_frame = __builtin_ia32_tcreate (burst * stream->elem_size - 1, size, (void *)1, false);
+	  cons_frame = __builtin_ia32_tcreate (burst * stream->elem_size - 1, size, (void *)1, false, BIND_MODE_TRUE);
 
 	  cons_view = (wstream_df_view_p)((char*)cons_frame)+sizeof(wstream_df_frame_t);
 	  cons_view->horizon = burst * stream->elem_size;
