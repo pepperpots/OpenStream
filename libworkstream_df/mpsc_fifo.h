@@ -13,7 +13,7 @@
 #endif
 
 #ifndef FIFO_SIZE
-#define FIFO_SIZE 16
+#define FIFO_SIZE 512
 #endif
 
 #define FIFO_BYTE_SIZE  (FIFO_SIZE * sizeof(void *))

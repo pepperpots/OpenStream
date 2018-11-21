@@ -19,10 +19,12 @@
 #include "reuse.h"
 #include "prng.h"
 #include "interleave.h"
+#include "node_proc_comm.h"
 
 #ifdef DEPENDENCE_AWARE_ALLOC
 	#error "Obsolete option 'dependence-aware allocation' enabled"
 #endif
+
 
 /***************************************************************************/
 /***************************************************************************/
@@ -31,9 +33,9 @@
 __thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
-static wstream_df_thread_p* wstream_df_worker_threads;
+wstream_df_thread_p* wstream_df_worker_threads;
 wstream_df_numa_node_p wstream_df_default_node;
-static int num_workers;
+int num_workers;
 static int* wstream_df_worker_cpus;
 int __wstream_df_num_cores_cached = -1;
 
@@ -356,6 +358,18 @@ tdecrease_n (void *data, size_t n, bool is_write)
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
 
+      if (fp->bind_mode == BIND_MODE_SPREAD)
+	{
+	  /* This push can fail - either by lack of space on the NPC
+	     queue or because sufficient work has already been made
+	     available to the other nodes.  */
+	  if (npc_push_task (fp))
+	    {
+	      trace_state_restore(cthread);
+	      return;
+	    }
+	}
+
 #if ALLOW_PUSHES
       int target_worker;
       /* Check whether the frame should be pushed somewhere else */
@@ -401,16 +415,25 @@ void __builtin_finish_resdep(void* pfp)
 void
 __builtin_ia32_tdecrease (void *data, bool is_write)
 {
-	wqueue_counters_enter_runtime(current_thread);
-	tdecrease_n (data, 1, is_write);
+  /* If the owner of the data is a NULL pointer, this task is not
+     executing in the same distributed node.  */
+  if (data == NULL)
+    return;
+  wqueue_counters_enter_runtime(current_thread);
+  tdecrease_n (data, 1, is_write);
 }
 
 /* Decrease the synchronization counter by N.  */
 void
 __builtin_ia32_tdecrease_n (void *data, size_t n, bool is_write)
 {
-	wqueue_counters_enter_runtime(current_thread);
-	tdecrease_n (data, n, is_write);
+  /* If the owner of the data is a NULL pointer, this task is not
+     executing in the same distributed node.  */
+  if (data == NULL)
+    return;
+
+  wqueue_counters_enter_runtime(current_thread);
+  tdecrease_n (data, n, is_write);
 }
 
 /* Destroy the current thread */
@@ -421,6 +444,12 @@ __builtin_ia32_tend (void *fp)
   wstream_df_thread_p cthread = current_thread;
   barrier_p cbar = current_barrier;
   barrier_p bar = cfp->own_barrier;
+
+  // When a task has executed remotely, TEND needs to send the
+  // termination notification back so this can be invoked on the owner
+  // node.  (FIXME-apop: TODO_DOS_NPC)
+  if (cfp->bind_mode == BIND_MODE_EXEC_REMOTE)
+    return;
 
   wqueue_counters_enter_runtime(cthread);
 
@@ -592,6 +621,10 @@ void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt)
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
 {
   int sc;
+
+  // This can only happen for in views of tasks that are executing remotely (_DOS_NPC)
+  if (in_view->refcount == 0)
+    return;
 
   sc = __sync_sub_and_fetch (&in_view->refcount, n);
 
@@ -923,6 +956,8 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	}
       else
 	{
+	  if (cthread->worker_id == 0 && npc_terminate ())
+	    return;
 #ifndef _WS_NO_YIELD_SPIN
 	  sched_yield ();
 #endif
@@ -1138,6 +1173,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 
 /* Use main as root task */
 void main(void);
+void post_main();
 
 __attribute__((constructor))
 void pre_main()
@@ -1257,9 +1293,16 @@ void pre_main()
     fprintf(stderr, "Cannot install signal handler for SIGUSR1\n");
 #endif
 
-  #ifdef TRACE_RT_INIT_STATE
-    trace_state_change(current_thread, WORKER_STATE_RT_INIT);
-  #endif
+#ifdef TRACE_RT_INIT_STATE
+  trace_state_change(current_thread, WORKER_STATE_RT_INIT);
+#endif
+
+  /* Jump straight to post_main if this is a worker node in
+     distributed execution. The entire set of worker threads go in a
+     scheduler loop rather than execute multiple main.  */
+  init_npc();
+  if (is_worker_node ())
+    post_main ();
 }
 
 __attribute__((destructor))
@@ -1269,12 +1312,17 @@ void post_main()
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
 
+  if (is_worker_node ())
+    worker_thread ();
+
   for (int i = 0; i < num_workers; ++i)
     wstream_df_worker_threads[i]->yield = 1;
 
   dump_events_ostv(num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(num_workers, wstream_df_worker_threads);
   dump_transfer_matrix(num_workers);
+
+  finalize_npc();
 }
 
 
@@ -1555,6 +1603,7 @@ broadcast (void *v)
 void
 __builtin_ia32_broadcast (void *v)
 {
+  // FIXME-apop _DOS_NPC
   wqueue_counters_enter_runtime(current_thread);
   broadcast (v);
 }
@@ -1564,6 +1613,11 @@ void
 __builtin_ia32_tdecrease_n_vec (size_t num, void *data, size_t n, bool is_write)
 {
   unsigned int i;
+
+  /* If the owner of the data is a NULL pointer, this task is not
+     executing in the same distributed node.  */
+  if (data == NULL)
+    return;
 
   wqueue_counters_enter_runtime(current_thread);
 

@@ -125,6 +125,7 @@ enum wstream_df_bind_mode {
   BIND_MODE_MASTER = 2,
   BIND_MODE_CLOSE = 3,
   BIND_MODE_SPREAD = 4,
+  BIND_MODE_EXEC_REMOTE = 5,
   BIND_MODE_LAST
 };
 
@@ -155,6 +156,8 @@ typedef struct wstream_df_frame
   wstream_df_view_p output_view_chain;
 
   enum wstream_df_bind_mode bind_mode;
+  int origin_node;
+  void *origin_pointer;
 /* Variable size struct */
   //char buf [];
 } wstream_df_frame_t, *wstream_df_frame_p;
@@ -256,6 +259,7 @@ int wstream_self(void);
 int worker_id_to_cpu(unsigned int worker_id);
 int cpu_to_worker_id(int cpu);
 int cpu_used(int cpu);
+wstream_df_thread_p allocate_worker_struct(int for_cpu);
 
 void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 		    unsigned int* max_worker, int* max_data);
