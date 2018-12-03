@@ -25,13 +25,17 @@
 extern __thread wstream_df_thread_p current_thread;
 npc_thread_t npc;
 
-void *
-worker_npc (void *arg)
+void
+worker_npc (void *data)
 {
-  current_thread = allocate_worker_struct (0);
-  current_thread->cpu = 0;
-  int numa_node = mem_numa_node(current_thread->cpu);
-  numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
+  current_thread = ((wstream_df_thread_p) data);
+  wstream_df_thread_p cthread = ((wstream_df_thread_p) data);
+
+  if(cthread->worker_id != 0)
+    trace_init(cthread);
+
+  init_wqueue_counters (cthread);
+
   //current_thread->slab_cache = npc.slab_cache;
   //debug_this ();
 
@@ -62,6 +66,15 @@ worker_npc (void *arg)
 
       //if (is_worker_node () && is_termination_reached ())
       //return;
+
+      // Maybe do some work or just ensure we don't keep any on the side...
+      if (cthread->own_next_cached_thread != NULL)
+	{
+	  cdeque_push_bottom (&cthread->work_deque,
+			      (wstream_df_type) cthread->own_next_cached_thread);
+	  cthread->own_next_cached_thread = NULL;
+	}
+
       sched_yield ();
     }
   return NULL;
@@ -73,8 +86,6 @@ worker_npc (void *arg)
 void
 init_npc ()
 {
-  pthread_attr_t thread_attr;
-
   npc.term_flag = 0;
   npc.remote_queue = new_mpsc_fifo ();
 
@@ -98,11 +109,6 @@ init_npc ()
   npc.outstanding_comms = NULL;
 
   prng_init (&npc.rands, 3301);
-
-  pthread_attr_init (&thread_attr);
-  pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
-  pthread_create (&npc.posix_thread_id, &thread_attr, worker_npc, NULL);
-  pthread_attr_destroy (&thread_attr);
 }
 
 void

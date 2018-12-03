@@ -449,7 +449,9 @@ __builtin_ia32_tend (void *fp)
   // termination notification back so this can be invoked on the owner
   // node.  (FIXME-apop: TODO_DOS_NPC)
   if (cfp->bind_mode == BIND_MODE_EXEC_REMOTE)
-    return;
+    {
+      return;
+    }
 
   wqueue_counters_enter_runtime(cthread);
 
@@ -1195,6 +1197,8 @@ void pre_main()
 #else
   num_workers = _WSTREAM_DF_NUM_THREADS;
 #endif
+  if (num_workers == 1)
+    num_workers++;
 
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
 		      num_workers * sizeof (wstream_df_thread_t*)))
@@ -1277,8 +1281,11 @@ void pre_main()
   current_thread->tsc_offset_init = 1;
 
   setup_wqueue_counters();
+  init_npc();
 
-  for (i = 1; i < num_workers; ++i)
+  start_worker (wstream_df_worker_threads[1], ncores, cpu_affinities, num_cpu_affinities,
+		worker_npc);
+  for (i = 2; i < num_workers; ++i)
     start_worker (wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
 		  wstream_df_worker_thread_fn);
 
@@ -1300,7 +1307,6 @@ void pre_main()
   /* Jump straight to post_main if this is a worker node in
      distributed execution. The entire set of worker threads go in a
      scheduler loop rather than execute multiple main.  */
-  init_npc();
   if (is_worker_node ())
     post_main ();
 }

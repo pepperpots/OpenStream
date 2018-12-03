@@ -90,6 +90,7 @@ typedef struct npc_thread
 extern npc_thread_t npc;
 extern int num_workers;
 extern wstream_df_thread_p* wstream_df_worker_threads;
+void worker_npc (void *arg);
 void init_npc ();
 void finalize_npc ();
 
@@ -319,6 +320,7 @@ npc_handle_incoming_task (void *data)
   handle->comm_buffer = slab_alloc (NULL, npc.slab_cache, handle->size);
   handle->type = NPC_COMM_TYPE_SEND;
 
+  // In the return packet, the first item is the address of the original frame in the node that created it
   *(void **)(handle->comm_buffer) = fp->origin_pointer;
   pos += sizeof (wstream_df_view_p);
 
@@ -327,11 +329,7 @@ npc_handle_incoming_task (void *data)
       memcpy (handle->comm_buffer + pos, (char *)v->data, v->burst);
       pos += v->burst;
     }
-
-  //fprintf (stderr, "  -- Sending back data for (%p) to node (%d) total size, tag (%d, %d)\n",
-  //fp->origin_pointer, fp->origin_node, handle->size, handle->tag);
-
-  assert (MPI_Isend (handle->comm_buffer, handle->size, MPI_CHAR, fp->origin_node,
+  assert (MPI_Isend (handle->comm_buffer, pos, MPI_CHAR, fp->origin_node,
 		     handle->tag, MPI_COMM_WORLD, &handle->comm_request) == MPI_SUCCESS);
   slab_free (npc.slab_cache, data);
 }
@@ -346,25 +344,14 @@ npc_handle_task_return (void *data)
   wstream_df_view_p v;
   size_t pos = sizeof (wstream_df_view_p);
 
-  fprintf (stderr, "  TEND (start) on return (%p) size %d\n", fp, pos);
   for (v = fp->output_view_chain; v; v = v->view_chain_next)
     {
-      fprintf (stderr, "  TEND view %p data %p burst %d\n", v, v->data, v->burst);
-      if (v->data == NULL)
-	{
-	  wstream_df_view_p consumer_view = v->consumer_view;
-	  fprintf (stderr, "  TEND got a null out_view for owner %p view %p [%d]\n", v->owner, v->consumer_view, ((wstream_df_frame_p)v->owner)->synchronization_counter);
-	  consumer_view->data = slab_alloc (NULL, npc.slab_cache, consumer_view->horizon);
-	  v->data = consumer_view->data;
-	}
+      __built_in_wstream_df_prepare_data (v);
       memcpy ((char *)v->data, (char *)data + pos, v->burst);
       __builtin_ia32_tdecrease_n (v->owner, v->burst, true);
       pos += v->burst;
     }
-  //debug_this ();
-  //__builtin_ia32_tend (fp);
-  fprintf (stderr, "  TEND (end) on return (%p) size %d\n", fp, pos);
-
+  __builtin_ia32_tend (fp);
   slab_free (npc.slab_cache, data);
 }
 
