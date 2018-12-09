@@ -21,6 +21,7 @@
 #include "mpsc_fifo.h"
 #include "alloc.h"
 #include "prng.h"
+#include "reuse.h"
 
 #ifdef MPI
 #include <mpi.h>
@@ -80,13 +81,16 @@ typedef struct npc_thread
   int term_flag;
 
   mpsc_fifo_p remote_queue;
-  slab_cache_p slab_cache;
   npc_comm_handle_p outstanding_comms;
 
   pthread_t posix_thread_id;
+
+  pthread_mutex_t npc_lock __attribute__((aligned (64)));
+
 } npc_thread_t, *npc_thread_p;
 
 
+extern __thread wstream_df_thread_p current_thread;
 extern npc_thread_t npc;
 extern int num_workers;
 extern wstream_df_thread_p* wstream_df_worker_threads;
@@ -106,10 +110,10 @@ static inline bool is_termination_reached ()
 #endif
   return npc_terminate ();
 }
-static inline npc_comm_handle_p get_new_npc_comm_handle ()
+static inline npc_comm_handle_p _unlocked_get_new_npc_comm_handle ()
 {
-  npc_comm_handle_p handle = (npc_comm_handle_p) slab_alloc (NULL, npc.slab_cache, sizeof (npc_comm_handle_t));
-
+  wstream_df_thread_p cthread = current_thread;
+  npc_comm_handle_p handle = (npc_comm_handle_p) slab_alloc (NULL, cthread->slab_cache, sizeof (npc_comm_handle_t));
   handle->prev = NULL;
   handle->chain = npc.outstanding_comms;
   if (npc.outstanding_comms != NULL)
@@ -117,9 +121,19 @@ static inline npc_comm_handle_p get_new_npc_comm_handle ()
   npc.outstanding_comms = handle;
   return handle;
 }
+static inline npc_comm_handle_p get_new_npc_comm_handle ()
+{
+  npc_comm_handle_p ret;
+  pthread_mutex_lock (&npc.npc_lock);
+  ret = _unlocked_get_new_npc_comm_handle ();
+  pthread_mutex_unlock (&npc.npc_lock);
+  return ret;
+}
 static inline npc_comm_handle_p release_npc_comm_handle (npc_comm_handle_p h)
 {
+  //pthread_mutex_lock (&npc.npc_lock);
   npc_comm_handle_p ret = h->chain;
+  wstream_df_thread_p cthread = current_thread;
 
   if (h->chain != NULL)
     h->chain->prev = h->prev;
@@ -129,7 +143,8 @@ static inline npc_comm_handle_p release_npc_comm_handle (npc_comm_handle_p h)
   else
     npc.outstanding_comms = h->chain;
 
-  slab_free (npc.slab_cache, h);
+  slab_free (cthread->slab_cache, h);
+  //pthread_mutex_unlock (&npc.npc_lock);
   return ret;
 }
 
@@ -137,12 +152,14 @@ static inline npc_comm_handle_p release_npc_comm_handle (npc_comm_handle_p h)
 
 static inline void npc_init_comm_listeners (int offset, enum npc_comm_type type, int count)
 {
+  wstream_df_thread_p cthread = current_thread;
+
   for (int c = 0; c < count; ++c)
     for (int i = __npc_default_comm_size_min; i <= __npc_default_comm_size_max; ++i)
       {
 	npc_comm_handle_p handle = get_new_npc_comm_handle ();
 	unsigned int size = 1 << i;
-	handle->comm_buffer = slab_alloc (NULL, npc.slab_cache, size);
+	handle->comm_buffer = slab_alloc (NULL, cthread->slab_cache, size);
 	handle->size = size;
 	handle->tag = get_npc_default_listener_tag (size, offset);
 	handle->type = type;
@@ -153,9 +170,12 @@ static inline void npc_init_comm_listeners (int offset, enum npc_comm_type type,
 
 static inline void npc_reissue_listener (npc_comm_handle_p h)
 {
-  h->comm_buffer = slab_alloc (NULL, npc.slab_cache, h->size);
+  wstream_df_thread_p cthread = current_thread;
+
+  h->comm_buffer = slab_alloc (NULL, cthread->slab_cache, h->size);
   assert (MPI_Irecv (h->comm_buffer, h->size, MPI_CHAR, MPI_ANY_SOURCE,
 		     h->tag, MPI_COMM_WORLD, &h->comm_request) == MPI_SUCCESS);
+
 }
 
 
@@ -170,9 +190,11 @@ npc_pack_task (wstream_df_frame_p fp)
 {
   size_t packed_size = 0;
   char *packed_frame;
-  int pos = 0;
+  size_t pos = 0;
   wstream_df_view_p pv, v;
   wstream_df_frame_p pfp;
+  wstream_df_thread_p cthread = current_thread;
+
 
   // Reserve space for the data size - then store it in the first bytes
   packed_size += 8;
@@ -184,10 +206,10 @@ npc_pack_task (wstream_df_frame_p fp)
 
   // Allocate
   //fprintf (stderr, "  allocating total %zu [where frame is %zu]\n", packed_size, fp->size);
-  packed_frame = slab_alloc(NULL, npc.slab_cache, packed_size);
+  packed_frame = slab_alloc(NULL, cthread->slab_cache, packed_size);
 
-  // Store the final packed size in the first 8 bytes
-  *((size_t *) (packed_frame + pos)) = packed_size; pos += 8;
+  // Store the final packed size in the first bytes
+  *((size_t *) (packed_frame + pos)) = packed_size; pos += sizeof (size_t);
   // Copy the frame next - THIS IS JUST A SHALLOW COPY, will need to go through and fix all pointers below
   memcpy ((packed_frame + pos), (char *)fp, fp->size); pos += fp->size;
   pfp = (wstream_df_frame_p) (packed_frame + 8);
@@ -200,18 +222,19 @@ npc_pack_task (wstream_df_frame_p fp)
   // From here out we offset-convert all pointers within the frame and views while we also pack the inputs at the end of the packed frame.
   // If there are input views, store the offset in the packed frame
   if (fp->input_view_chain != NULL)
-    pfp->input_view_chain = (char *)((size_t)fp->input_view_chain - (size_t)fp);
+    pfp->input_view_chain = (wstream_df_view_p)((size_t)fp->input_view_chain - (size_t)fp);
   // Traverse input view chain - copy data and convert pointers to offsets
   for (v = fp->input_view_chain; v; v = v->view_chain_next)
     {
       //fprintf (stderr, "   Packing data (at %zu) is %d\n", pos, *(int*)v->data);
       memcpy (packed_frame + pos, (char *)v->data, v->horizon);
       pv = (wstream_df_view_p) (((size_t) pfp) + ((size_t)v - (size_t)fp));
-      pv->data = pos - 8; // Store the position in the packed frame of the view data
+      // Store the offset in the packed frame of the view data, subtracting from pos the bytes used to store the size of the packed frame earlier
+      pv->data = (wstream_df_view_p) (pos - sizeof (size_t));
       pos += v->horizon;
       //fprintf (stderr, " In view chain: %zu, (pos : %zu -- horizon %zu)\n", pv->data, pos, v->horizon);
       if (v->view_chain_next)
-	pv->view_chain_next = ((char *)v->view_chain_next - (char *) fp);
+	pv->view_chain_next = (wstream_df_view_p)((size_t)v->view_chain_next - (size_t) fp);
       else
 	pv->view_chain_next = 0;
       // Mark the view data as having 0 references in the packed view
@@ -221,14 +244,14 @@ npc_pack_task (wstream_df_frame_p fp)
     }
 
   if (fp->output_view_chain != NULL)
-    pfp->output_view_chain = (char *)((size_t)fp->output_view_chain - (size_t)fp);
+    pfp->output_view_chain = (wstream_df_view_p)((size_t)fp->output_view_chain - (size_t)fp);
   //fprintf (stderr, " In view chain: %zu\n", pv->view_chain_next);
   for (v = fp->output_view_chain; v; v = v->view_chain_next)
     {
       pv = (wstream_df_view_p) (((size_t) pfp) + ((size_t)v - (size_t)fp));
       pv->data = 0;
       if (v->view_chain_next)
-	pv->view_chain_next = ((char *)v->view_chain_next - (char *) fp);
+	pv->view_chain_next = (wstream_df_view_p)((size_t)v->view_chain_next - (size_t) fp);
       else
 	pv->view_chain_next = 0;
       //fprintf (stderr, " In view chain: %zu\n", pv->view_chain_next);
@@ -243,6 +266,8 @@ npc_unpack_task (char *packed_frame)
   wstream_df_frame_p fp;
   wstream_df_view_p v;
   size_t voffset;
+  wstream_df_thread_p cthread = current_thread;
+
 
   fp = (wstream_df_frame_p) ((size_t)packed_frame + 8);
 
@@ -251,7 +276,7 @@ npc_unpack_task (char *packed_frame)
     {
       v = (wstream_df_view_p) ((size_t) fp + voffset);
       v->data = (void *) ((size_t) fp + (size_t) v->data);
-      voffset = v->view_chain_next;
+      voffset = (size_t) v->view_chain_next;
       if (v->view_chain_next != 0)
 	v->view_chain_next = (wstream_df_view_p) ((size_t) fp + (size_t) v->view_chain_next);
     }
@@ -259,12 +284,12 @@ npc_unpack_task (char *packed_frame)
     fp->input_view_chain = (wstream_df_view_p) ((size_t) fp + (size_t) fp->input_view_chain);
 
   // Allocate output buffers for all output views
-  for (voffset = fp->output_view_chain; voffset; )
+  for (voffset = (size_t) fp->output_view_chain; voffset; )
     {
       v = (wstream_df_view_p) ((size_t) fp + voffset);
-      v->data = slab_alloc (NULL, npc.slab_cache, v->burst);
+      v->data = slab_alloc (NULL, cthread->slab_cache, v->burst);
       v->owner = 0;
-      voffset = v->view_chain_next;
+      voffset = (size_t) v->view_chain_next;
       if (v->view_chain_next != 0)
 	v->view_chain_next = (wstream_df_view_p) ((size_t) fp + (size_t) v->view_chain_next);
     }
@@ -301,37 +326,12 @@ npc_unpack_task (char *packed_frame)
 static inline void
 npc_handle_incoming_task (void *data)
 {
+  wstream_df_thread_p cthread = current_thread;
+
   wstream_df_frame_p fp = npc_unpack_task (data);
-  fp->work_fn (fp); // FIXME-apop: _DOS_NPC this should be pushing the task for exec on a worker
+  cdeque_push_bottom (&cthread->work_deque, (wstream_df_type) fp);
 
-  // Once the task completes, pack and send the data back.
-  npc_comm_handle_p handle = get_new_npc_comm_handle ();
-  wstream_df_view_p v;
-  size_t pos = 0;
-
-  // Reserve space to store the origin frame pointer
-  handle->size = sizeof (wstream_df_frame_p);
-  // Add space for all outputs
-  for (v = fp->output_view_chain; v; v = v->view_chain_next)
-    handle->size += v->burst;
-
-  handle->tag = get_npc_default_listener_tag ((unsigned int)handle->size,
-					      __npc_default_comm_tag_returns_offset);
-  handle->comm_buffer = slab_alloc (NULL, npc.slab_cache, handle->size);
-  handle->type = NPC_COMM_TYPE_SEND;
-
-  // In the return packet, the first item is the address of the original frame in the node that created it
-  *(void **)(handle->comm_buffer) = fp->origin_pointer;
-  pos += sizeof (wstream_df_view_p);
-
-  for (v = fp->output_view_chain; v; v = v->view_chain_next)
-    {
-      memcpy (handle->comm_buffer + pos, (char *)v->data, v->burst);
-      pos += v->burst;
-    }
-  assert (MPI_Isend (handle->comm_buffer, pos, MPI_CHAR, fp->origin_node,
-		     handle->tag, MPI_COMM_WORLD, &handle->comm_request) == MPI_SUCCESS);
-  slab_free (npc.slab_cache, data);
+  //fp->work_fn (fp); // FIXME-apop: _DOS_NPC this should be pushing the task for exec on a worker
 }
 
 static inline void
@@ -343,6 +343,7 @@ npc_handle_task_return (void *data)
   wstream_df_frame_p fp = *(wstream_df_frame_p *)(data);
   wstream_df_view_p v;
   size_t pos = sizeof (wstream_df_view_p);
+  wstream_df_thread_p cthread = current_thread;
 
   for (v = fp->output_view_chain; v; v = v->view_chain_next)
     {
@@ -352,13 +353,16 @@ npc_handle_task_return (void *data)
       pos += v->burst;
     }
   __builtin_ia32_tend (fp);
-  slab_free (npc.slab_cache, data);
+  slab_free (cthread->slab_cache, data);
 }
 
 static inline void
 npc_handle_outstanding_communications ()
 {
+  pthread_mutex_lock (&npc.npc_lock);
   npc_comm_handle_p h = npc.outstanding_comms;
+  wstream_df_thread_p cthread = current_thread;
+
   while (h != NULL)
     {
       int ret;
@@ -371,7 +375,7 @@ npc_handle_outstanding_communications ()
 	  case NPC_COMM_TYPE_SEND:
 	    // If we've successfully completed the MPI_Isend, then
 	    // free the buffer and recycle the handle.
-	    slab_free (npc.slab_cache, h->comm_buffer);
+	    slab_free (cthread->slab_cache, h->comm_buffer);
 	    h = release_npc_comm_handle (h);
 	    continue;
 	  case NPC_COMM_TYPE_RECV_FRAME:
@@ -380,7 +384,7 @@ npc_handle_outstanding_communications ()
 	    npc_reissue_listener (h);
 	    break;
 	  case NPC_COMM_TYPE_RECV_RETURN:
-	    fprintf (stderr, "  - [%d] Received a return \n", npc.node_id);
+	    //fprintf (stderr, "  - [%d] Received a return \n", npc.node_id);
 	    npc_handle_task_return (h->comm_buffer);
 	    npc_reissue_listener (h);
 	    break;
@@ -389,6 +393,7 @@ npc_handle_outstanding_communications ()
 	  }
       h = h->chain;
     }
+  pthread_mutex_unlock (&npc.npc_lock);
 }
 
 
@@ -409,11 +414,15 @@ static inline void
 npc_handle_task_queues ()
 {
   // Traverse the remoting queue and MPI_send those. Add the MPI_Request to the list of outstanding.
-  char *packed_frame;
+  void *packed_frame;
   while (fifo_popfront (npc.remote_queue, &packed_frame))
     {
       npc_comm_handle_p handle = get_new_npc_comm_handle ();
-      unsigned int target = prng_nextn (&npc.rands, npc.num_nodes-1)+1;
+      unsigned int target;
+
+      while ((target = prng_nextn (&npc.rands, npc.num_nodes)) == npc.node_id);
+
+      fprintf (stderr, "Offloading target is %d (%d - %u)\n", target, npc.num_nodes, npc.rands);
 
       handle->size = *((size_t *) (packed_frame));
       handle->tag = get_npc_default_listener_tag ((unsigned int)handle->size,

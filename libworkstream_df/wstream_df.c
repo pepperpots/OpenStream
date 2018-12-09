@@ -318,9 +318,6 @@ void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p 
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
-  unsigned int max_worker;
-  int max_data;
-
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
   wstream_df_thread_p cthread = current_thread;
 
@@ -445,11 +442,44 @@ __builtin_ia32_tend (void *fp)
   barrier_p cbar = current_barrier;
   barrier_p bar = cfp->own_barrier;
 
-  // When a task has executed remotely, TEND needs to send the
-  // termination notification back so this can be invoked on the owner
-  // node.  (FIXME-apop: TODO_DOS_NPC)
+  // When  a  task has  executed  remotely,  TEND  needs to  send  the
+  // termination notification back  so this can be  further invoked on
+  // the owner node.
   if (cfp->bind_mode == BIND_MODE_EXEC_REMOTE)
     {
+      // (FIXME-apop: TODO_DOS_NPC) this may require a lock for the data structures of the NPC.
+      pthread_mutex_lock (&npc.npc_lock);
+
+      // Once the task completes, pack and send the data back.
+      npc_comm_handle_p handle = _unlocked_get_new_npc_comm_handle ();
+      wstream_df_view_p v;
+      size_t pos = 0;
+
+      // Reserve space to store the origin frame pointer
+      handle->size = sizeof (wstream_df_frame_p);
+      // Add space for all outputs
+      for (v = cfp->output_view_chain; v; v = v->view_chain_next)
+	handle->size += v->burst;
+
+      handle->tag = get_npc_default_listener_tag ((unsigned int)handle->size,
+						  __npc_default_comm_tag_returns_offset);
+      handle->comm_buffer = slab_alloc (NULL, cthread->slab_cache, handle->size);
+      handle->type = NPC_COMM_TYPE_SEND;
+
+      // In the return packet, the first item is the address of the original frame in the node that created it
+      *(void **)(handle->comm_buffer) = cfp->origin_pointer;
+      pos += sizeof (wstream_df_view_p);
+
+      for (v = cfp->output_view_chain; v; v = v->view_chain_next)
+	{
+	  memcpy (handle->comm_buffer + pos, (char *)v->data, v->burst);
+	  pos += v->burst;
+	}
+      assert (MPI_Isend (handle->comm_buffer, pos, MPI_CHAR, cfp->origin_node,
+			 handle->tag, MPI_COMM_WORLD, &handle->comm_request) == MPI_SUCCESS);
+      slab_free (cthread->slab_cache, (void *)((size_t)fp - sizeof(size_t)));
+
+      pthread_mutex_unlock (&npc.npc_lock);
       return;
     }
 
@@ -919,6 +949,10 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	  update_papi(cthread);
 	  trace_runtime_counters(cthread);
 
+	  if (fp->bind_mode == BIND_MODE_EXEC_REMOTE)
+	    {
+	      fprintf (stderr, "Node %d worker %d executing task initially created on node %d\n", npc.node_id, cthread->worker_id, fp->origin_node);
+	    }
 	  fp->work_fn (fp);
 
 	  wqueue_counters_profile_rusage(cthread);

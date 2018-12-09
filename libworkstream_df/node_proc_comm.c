@@ -31,13 +31,12 @@ worker_npc (void *data)
   current_thread = ((wstream_df_thread_p) data);
   wstream_df_thread_p cthread = ((wstream_df_thread_p) data);
 
+  prng_init (&npc.rands, npc.node_id);
+
   if(cthread->worker_id != 0)
     trace_init(cthread);
 
   init_wqueue_counters (cthread);
-
-  //current_thread->slab_cache = npc.slab_cache;
-  //debug_this ();
 
   // Start standard listeners for incoming work or returning results
   // Keep separate to avoid blocking termination of tasks (from
@@ -89,6 +88,8 @@ init_npc ()
   npc.term_flag = 0;
   npc.remote_queue = new_mpsc_fifo ();
 
+  pthread_mutex_init (&npc.npc_lock, NULL);
+
 #ifdef MPI
   assert (MPI_Init(NULL, NULL) == MPI_SUCCESS);
   MPI_Comm_size(MPI_COMM_WORLD, &npc.num_nodes);
@@ -105,10 +106,7 @@ init_npc ()
   npc.node_id = 0;
   npc.next_victim = 0;
 #endif
-  npc.slab_cache = wstream_df_worker_threads[0]->slab_cache;
   npc.outstanding_comms = NULL;
-
-  prng_init (&npc.rands, 3301);
 }
 
 void
