@@ -13,7 +13,7 @@ static inline unsigned int prng_nextb(unsigned int* rands, unsigned int mod_bits
 	*rands = (*rands) * 1103515245 + 12345;
 	unsigned int this_rands = (*rands);
 	unsigned int val = 0;
-	unsigned int mask = mod_bits < sizeof(mask)*8 ? (1 << mod_bits) - 1 : UINT_MAX;
+	unsigned int mask = mod_bits < sizeof(mask)*8 ? ((unsigned int)1 << mod_bits) - 1 : UINT_MAX;
 	unsigned int total_bits = sizeof(val)*8;
 
 	for(unsigned int i = 0; i < total_bits; i += mod_bits) {

@@ -71,10 +71,9 @@ typedef struct npc_comm_handle
 
 typedef struct npc_thread
 {
-  int num_nodes;
-  int node_id;
-
-  int next_victim;
+  unsigned int num_nodes;
+  unsigned int node_id;
+  unsigned int next_victim;
   unsigned int rands;
 
   MPI_Request termination_request;
@@ -94,7 +93,7 @@ extern __thread wstream_df_thread_p current_thread;
 extern npc_thread_t npc;
 extern int num_workers;
 extern wstream_df_thread_p* wstream_df_worker_threads;
-void worker_npc (void *arg);
+void *worker_npc (void *arg);
 void init_npc ();
 void finalize_npc ();
 

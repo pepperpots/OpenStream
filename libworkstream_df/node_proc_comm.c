@@ -25,7 +25,7 @@
 extern __thread wstream_df_thread_p current_thread;
 npc_thread_t npc;
 
-void
+void *
 worker_npc (void *data)
 {
   current_thread = ((wstream_df_thread_p) data);
