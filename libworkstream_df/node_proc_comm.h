@@ -204,7 +204,6 @@ npc_pack_task (wstream_df_frame_p fp)
     packed_size += v->horizon;
 
   // Allocate
-  //fprintf (stderr, "  allocating total %zu [where frame is %zu]\n", packed_size, fp->size);
   packed_frame = slab_alloc(NULL, cthread->slab_cache, packed_size);
 
   // Store the final packed size in the first bytes
@@ -225,13 +224,11 @@ npc_pack_task (wstream_df_frame_p fp)
   // Traverse input view chain - copy data and convert pointers to offsets
   for (v = fp->input_view_chain; v; v = v->view_chain_next)
     {
-      //fprintf (stderr, "   Packing data (at %zu) is %d\n", pos, *(int*)v->data);
       memcpy (packed_frame + pos, (char *)v->data, v->horizon);
       pv = (wstream_df_view_p) (((size_t) pfp) + ((size_t)v - (size_t)fp));
       // Store the offset in the packed frame of the view data, subtracting from pos the bytes used to store the size of the packed frame earlier
       pv->data = (wstream_df_view_p) (pos - sizeof (size_t));
       pos += v->horizon;
-      //fprintf (stderr, " In view chain: %zu, (pos : %zu -- horizon %zu)\n", pv->data, pos, v->horizon);
       if (v->view_chain_next)
 	pv->view_chain_next = (wstream_df_view_p)((size_t)v->view_chain_next - (size_t) fp);
       else
@@ -244,7 +241,6 @@ npc_pack_task (wstream_df_frame_p fp)
 
   if (fp->output_view_chain != NULL)
     pfp->output_view_chain = (wstream_df_view_p)((size_t)fp->output_view_chain - (size_t)fp);
-  //fprintf (stderr, " In view chain: %zu\n", pv->view_chain_next);
   for (v = fp->output_view_chain; v; v = v->view_chain_next)
     {
       pv = (wstream_df_view_p) (((size_t) pfp) + ((size_t)v - (size_t)fp));
@@ -253,7 +249,6 @@ npc_pack_task (wstream_df_frame_p fp)
 	pv->view_chain_next = (wstream_df_view_p)((size_t)v->view_chain_next - (size_t) fp);
       else
 	pv->view_chain_next = 0;
-      //fprintf (stderr, " In view chain: %zu\n", pv->view_chain_next);
     }
 
   return packed_frame;
@@ -378,12 +373,10 @@ npc_handle_outstanding_communications ()
 	    h = release_npc_comm_handle (h);
 	    continue;
 	  case NPC_COMM_TYPE_RECV_FRAME:
-	    //fprintf (stderr, "  - [%d] Received a frame \n", npc.node_id);
 	    npc_handle_incoming_task (h->comm_buffer);
 	    npc_reissue_listener (h);
 	    break;
 	  case NPC_COMM_TYPE_RECV_RETURN:
-	    //fprintf (stderr, "  - [%d] Received a return \n", npc.node_id);
 	    npc_handle_task_return (h->comm_buffer);
 	    npc_reissue_listener (h);
 	    break;
@@ -420,8 +413,6 @@ npc_handle_task_queues ()
       unsigned int target;
 
       while ((target = prng_nextn (&npc.rands, npc.num_nodes)) == npc.node_id);
-
-      fprintf (stderr, "Offloading target is %d (%d - %u)\n", target, npc.num_nodes, npc.rands);
 
       handle->size = *((size_t *) (packed_frame));
       handle->tag = get_npc_default_listener_tag ((unsigned int)handle->size,

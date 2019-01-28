@@ -47,13 +47,13 @@ main (int argc, char **argv)
 	 1, the burst is 0.  In other words, no data is consumed
 	 within the stream by these tasks, each subsequent read
 	 operation on stream X will see the same data elements.  */
-#pragma omp task peek (x)
+#pragma omp task peek (x) proc_bind (spread)
       {
 	printf (" => Task 2-1: read from stream %d.\n", x); fflush (stdout);
       }
 
       /* Second consumer always sees the same data as the first.  */
-#pragma omp task peek (x)
+#pragma omp task peek (x) proc_bind (spread)
       {
 	printf (" => Task 2-2: read from stream %d.\n", x); fflush (stdout);
       }

@@ -112,7 +112,6 @@ init_npc ()
 void
 finalize_npc ()
 {
-  //fprintf (stderr, "Finished executing on node %llu [%llu]\n", npc.node_id, npc.num_nodes);
 #ifdef MPI
   /* The master node decides termination and notifies all workers.  */
   if (!is_worker_node ())

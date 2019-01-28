@@ -5,7 +5,7 @@
 #include <getopt.h>
 #include "../common/common.h"
 
-#define _WITH_OUTPUT 0
+#define _WITH_OUTPUT 1
 
 #include <unistd.h>
 

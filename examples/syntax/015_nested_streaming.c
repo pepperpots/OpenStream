@@ -20,7 +20,7 @@ nested_streaming_prod (float sout __attribute__ ((stream_ref)), int i)
 {
   int v[1];
 
-#pragma omp task firstprivate (i) output (sout << v[1])
+#pragma omp task firstprivate (i) output (sout << v[1]) proc_bind (spread)
   {
     v[0] = 42 + i;
 

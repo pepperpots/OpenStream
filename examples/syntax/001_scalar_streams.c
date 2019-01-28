@@ -19,9 +19,9 @@ main (int argc, char **argv)
 	 one integer on stream X.  As the window is implicit, the
 	 burst is 1 (meaning that one base element, here an "int", is
 	 produced by one activation).  */
-#pragma omp task firstprivate (i) output (x)
+#pragma omp task firstprivate (i) output (x) proc_bind (spread)
       {
-	x = i;
+	x = i+77;
 	printf ("Task 1: write %d to stream.\n", i); fflush (stdout);
       }
 
@@ -31,7 +31,7 @@ main (int argc, char **argv)
 	 of the task, and its horizon is 1, which means that only one
 	 element can be accessed by a task activation in the stream
 	 (no "peek" capability).  */
-#pragma omp task input (x) firstprivate (i)
+#pragma omp task input (x) firstprivate (i) proc_bind (spread)
       {
 	printf (" => Task 2: read from stream %d (%d).\n", x, i); fflush (stdout);
       }

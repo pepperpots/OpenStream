@@ -447,7 +447,6 @@ __builtin_ia32_tend (void *fp)
   // the owner node.
   if (cfp->bind_mode == BIND_MODE_EXEC_REMOTE)
     {
-      // (FIXME-apop: TODO_DOS_NPC) this may require a lock for the data structures of the NPC.
       pthread_mutex_lock (&npc.npc_lock);
 
       // Once the task completes, pack and send the data back.

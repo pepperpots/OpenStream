@@ -64,7 +64,7 @@ main (int argc, char **argv)
      within the loop, it will only execute once, therefore giving an
      example of the coding pattern used to introduce a delay on a
      stream.  */
-#pragma omp task output (x << view_a[2])       // Task T1 (producer on X)
+#pragma omp task output (x << view_a[2]) proc_bind (spread)       // Task T1 (producer on X)
   {
     view_a[0] = 42;
     view_a[1] = 43;
@@ -82,7 +82,7 @@ main (int argc, char **argv)
 	 horizon, while the clause specifies the burst.  Here both are
 	 2 (output clauses do not support burst != horizon for
 	 now).  */
-#pragma omp task firstprivate (i) output (x << view_a[2])  // Task T2 (producer on X)
+#pragma omp task firstprivate (i) output (x << view_a[2]) proc_bind (spread)  // Task T2 (producer on X)
       {
 	view_a[0] = 2*i;
 	view_a[1] = 2*i + 1;
@@ -92,14 +92,14 @@ main (int argc, char **argv)
       if (i % 2)
 	{
 	  /* First consumer task.   */
-#pragma omp task input (x >> view_b[2])         // Task T3 (consumer on X)
+#pragma omp task input (x >> view_b[2]) proc_bind (spread)         // Task T3 (consumer on X)
 	  {
 	    printf ("=> Consumer 1: reads %d %d from stream.\n", view_b[0], view_b[1]); fflush (stdout);
 	  }
 	}
       else
 	{
-#pragma omp task input (x >> view_b[2])                    // Task T4 (consumer on X)
+#pragma omp task input (x >> view_b[2]) proc_bind (spread)                   // Task T4 (consumer on X)
 	  {
 	    printf ("=> Consumer 2: reads %d %d from stream.\n", view_b[0], view_b[1]); fflush (stdout);
 	  }

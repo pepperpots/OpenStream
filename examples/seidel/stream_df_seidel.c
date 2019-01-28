@@ -24,7 +24,7 @@
 #include "../common/common.h"
 #include "../common/sync.h"
 
-#define _WITH_OUTPUT 0
+#define _WITH_OUTPUT 1
 #define _WITH_BINARY_OUTPUT 0
 
 /* Global stream references (see main for details) */
