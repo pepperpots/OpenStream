@@ -204,5 +204,16 @@ typedef enum {
 
 extern double functim[TIM_END];
 
+
+typedef struct _state
+{
+  hydroparam_t H_;
+  hydrovar_t Hv_;
+  hydrovarwork_t Hvw_deltat;
+  hydrowork_t Hw_deltat;
+  hydrovarwork_t Hvw_godunov;
+  hydrowork_t Hw_godunov;
+} _state_t, *_state_p;
+
 #endif // PARAMETRES_H_INCLUDED
 //EOF

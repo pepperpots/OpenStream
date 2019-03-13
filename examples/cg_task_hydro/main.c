@@ -126,33 +126,14 @@ void printTimingsLabel(const int N, const int fmtSize)
   }
 }
 
+
 int
 main(int argc, char **argv) {
-  char myhost[256];
-  real_t dt = 0;
-  int nvtk = 0;
-  char outnum[80];
-  int time_output = 0;
-  long flops = 0;
 
-  // real_t output_time = 0.0;
-  real_t next_output_time = 0;
-  double start_time = 0, end_time = 0;
-  double start_iter = 0, end_iter = 0;
-  double elaps = 0;
-  struct timespec start, end;
-  double cellPerCycle = 0;
-  double avgCellPerCycle = 0;
-  long nbCycle = 0;
-
-  hydroparam_t H;
-  hydrovar_t Hv;                  // nvar
-  //for compute_delta
-  hydrovarwork_t Hvw_deltat;      // nvar
-  hydrowork_t Hw_deltat;
-  hydrovarwork_t Hvw_godunov;     // nvar
-  hydrowork_t Hw_godunov;
-
+  hydroparam_t _init_H, *H; H = &_init_H;
+  _state_t SStream __attribute__((stream));
+  _state_t SStream_in, SStream_out;
+  real_t _dt_stream;
   // array of timers to profile the code
   memset(functim, 0, TIM_END * sizeof(functim[0]));
 
@@ -160,214 +141,229 @@ main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
 #endif
 
-  process_args(argc, argv, &H);
-  setup_subsurface (0, &H);
-  hydro_init(&H, &Hv);
+  process_args(argc, argv, H);
 
-  if (H.mype == 0)
-    fprintf(stdout, "Hydro starts in %s precision.\n", ((sizeof(real_t) == sizeof(double))? "double": "single"));
-  gethostname(myhost, 255);
-  if (H.mype == 0) {
-    fprintf(stdout, "Hydro: Main process running on %s\n", myhost);
-  }
-
-/* #ifdef _OPENMP */
-/*   if (H.mype == 0) { */
-/*     fprintf(stdout, "Hydro:    OpenMP mode ON\n"); */
-/*     fprintf(stdout, "Hydro: OpenMP %d max threads\n", omp_get_max_threads()); */
-/*     fprintf(stdout, "Hydro: OpenMP %d num threads\n", omp_get_num_threads()); */
-/*     fprintf(stdout, "Hydro: OpenMP %d num procs\n", omp_get_num_procs()); */
-/*   } */
-/* #endif */
-#ifdef MPI
-  if (H.mype == 0) {
-    fprintf(stdout, "Hydro: MPI run with %d procs\n", H.nproc);
-  }
-#else
-  fprintf(stdout, "Hydro: standard build\n");
-#endif
-
-
-  // PRINTUOLD(H, &Hv);
-#ifdef MPI
-  if (H.nproc > 1)
-    MPI_Barrier(MPI_COMM_WORLD);
-#endif
-
-  if (H.dtoutput > 0) {
-    // outputs are in physical time not in time steps
-    time_output = 1;
-    next_output_time = next_output_time + H.dtoutput;
-  }
-
-  if (H.dtoutput > 0 || H.noutput > 0)
-    vtkfile(++nvtk, H, &Hv);
-
-  if (H.mype == 0)
-    fprintf(stdout, "Hydro starts main loop.\n");
-
-  //pre-allocate memory before entering in loop
-  //For godunov scheme
-  start = cclock();
-  start = cclock();
-  allocate_work_space(H.nxyt, H, &Hw_godunov, &Hvw_godunov);
-  compute_deltat_init_mem(H, &Hw_deltat, &Hvw_deltat);
-  end = cclock();
-
-  if (H.mype == 0) fprintf(stdout, "Hydro: init mem %lfs\n", ccelaps(start, end));
-  // we start timings here to avoid the cost of initial memory allocation
-  start_time = dcclock();
-
-  while ((H.t < H.tend) && (H.nstep < H.nstepmax)) {
-    //system("top -b -n1");
-    // reset perf counter for this iteration
-    flopsAri = flopsSqr = flopsMin = flopsTra = 0;
-    start_iter = dcclock();
-    outnum[0] = 0;
-    if ((H.nstep % 2) == 0) {
-      dt = 0;
-      // if (H.mype == 0) fprintf(stdout, "Hydro computes deltat.\n");
-      start = cclock();
-      compute_deltat(&dt, H, &Hw_deltat, &Hv, &Hvw_deltat);
-      end = cclock();
-      functim[TIM_COMPDT] += ccelaps(start, end);
-      if (H.nstep == 0) {
-        dt = dt / 2.0;
-	if (H.mype == 0) fprintf(stdout, "Hydro computes initial deltat: %le\n", dt);
-      }
-#ifdef MPI
-      if (H.nproc > 1) {
-        real_t dtmin;
-        // printf("pe=%4d\tdt=%lg\n",H.mype, dt);
-	if (sizeof(real_t) == sizeof(double)) {
-	    MPI_Allreduce(&dt, &dtmin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-	  } else {
-	    MPI_Allreduce(&dt, &dtmin, 1, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
-	  }
-        dt = dtmin;
-      }
-#endif
-    }
-    // dt = 1.e-3;
-    // if (H.mype == 1) fprintf(stdout, "Hydro starts godunov.\n");
-    if ((H.nstep % 2) == 0) {
-      hydro_godunov(1, dt, H, &Hv, &Hw_godunov, &Hvw_godunov);
-      //            hydro_godunov(2, dt, H, &Hv, &Hw, &Hvw);
-    } else {
-      hydro_godunov(2, dt, H, &Hv, &Hw_godunov, &Hvw_godunov);
-      //            hydro_godunov(1, dt, H, &Hv, &Hw, &Hvw);
-    }
-    end_iter = dcclock();
-    cellPerCycle = (double) (H.globnx * H.globny) / (end_iter - start_iter) / 1000000.0L;
-    avgCellPerCycle += cellPerCycle;
-    nbCycle++;
-
-    H.nstep++;
-    H.t += dt;
+  for (int i = 0; i < H->nproc; ++i)
     {
-      real_t iter_time = (real_t) (end_iter - start_iter);
+#pragma omp task output(SStream) firstprivate (H)
+      {
+	char myhost[256];
+	memcpy (&SStream.H_, H, sizeof (hydroparam_t));
+	setup_subsurface (i, &SStream.H_);
+	hydro_init(&SStream.H_, &SStream.Hv_);
+
+	if (SStream.H_.mype == 0)
+	  fprintf(stdout, "Hydro starts in %s precision.\n", ((sizeof(real_t) == sizeof(double))? "double": "single"));
+	gethostname(myhost, 255);
+	if (SStream.H_.mype == 0) {
+	  fprintf(stdout, "Hydro: Main process running on %s\n", myhost);
+	}
+	// PRINTUOLD(H, &SStream.Hv_);
+      }
+
+#pragma omp task input (SStream >> SStream_in) output (SStream << SStream_out) output (_dt_stream)
+      {
+	real_t dt = 0;
+	int nvtk = 0;
+	char outnum[80];
+	int time_output = 0;
+	long flops = 0;
+
+	// real_t output_time = 0.0;
+	real_t next_output_time = 0;
+	double start_time = 0, end_time = 0;
+	double start_iter = 0, end_iter = 0;
+	double elaps = 0;
+	struct timespec start, end;
+	double cellPerCycle = 0;
+	double avgCellPerCycle = 0;
+	long nbCycle = 0;
+
+	if (SStream_in.H_.dtoutput > 0) {
+	  // outputs are in physical time not in time steps
+	  time_output = 1;
+	  next_output_time = next_output_time + SStream_in.H_.dtoutput;
+	}
+
+	if (SStream_in.H_.dtoutput > 0 || SStream_in.H_.noutput > 0)
+	  vtkfile(++nvtk, SStream_in.H_, &SStream_in.Hv_);
+
+	if (SStream_in.H_.mype == 0)
+	  fprintf(stdout, "Hydro starts main loop.\n");
+
+	//pre-allocate memory before entering in loop
+	//For godunov scheme
+	start = cclock();
+	start = cclock();
+	allocate_work_space(SStream_in.H_.nxyt, SStream_in.H_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+	compute_deltat_init_mem(SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hvw_deltat);
+	end = cclock();
+
+	if (SStream_in.H_.mype == 0) fprintf(stdout, "Hydro: init mem %lfs\n", ccelaps(start, end));
+	// we start timings here to avoid the cost of initial memory allocation
+	start_time = dcclock();
+
+	while ((SStream_in.H_.t < SStream_in.H_.tend) && (SStream_in.H_.nstep < SStream_in.H_.nstepmax)) {
+	  //system("top -b -n1");
+	  // reset perf counter for this iteration
+	  flopsAri = flopsSqr = flopsMin = flopsTra = 0;
+	  start_iter = dcclock();
+	  outnum[0] = 0;
+	  if ((SStream_in.H_.nstep % 2) == 0) {
+	    dt = 0;
+	    // if (H.mype == 0) fprintf(stdout, "Hydro computes deltat.\n");
+	    start = cclock();
+	    compute_deltat(&dt, SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hv_, &SStream_in.Hvw_deltat);
+	    end = cclock();
+	    functim[TIM_COMPDT] += ccelaps(start, end);
+	    if (SStream_in.H_.nstep == 0) {
+	      dt = dt / 2.0;
+	      if (SStream_in.H_.mype == 0) fprintf(stdout, "Hydro computes initial deltat: %le\n", dt);
+	    }
+	    ////////_dt_stream = dt;
 #ifdef MPI
-      long flopsAri_t, flopsSqr_t, flopsMin_t, flopsTra_t;
-      start = cclock();
-      MPI_Allreduce(&flopsAri, &flopsAri_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&flopsSqr, &flopsSqr_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&flopsMin, &flopsMin_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&flopsTra, &flopsTra_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      //       if (H.mype == 1)
-      //        printf("%ld %ld %ld %ld %ld %ld %ld %ld \n", flopsAri, flopsSqr, flopsMin, flopsTra, flopsAri_t, flopsSqr_t, flopsMin_t, flopsTra_t);
-      flops = flopsAri_t * FLOPSARI + flopsSqr_t * FLOPSSQR + flopsMin_t * FLOPSMIN + flopsTra_t * FLOPSTRA;
-      end = cclock();
-      functim[TIM_ALLRED] += ccelaps(start, end);
+	    if (SStream_in.H_.nproc > 1) {
+	      real_t dtmin;
+	      // printf("pe=%4d\tdt=%lg\n",SStream_in.H_.mype, dt);
+	      if (sizeof(real_t) == sizeof(double)) {
+		MPI_Allreduce(&dt, &dtmin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+	      } else {
+		MPI_Allreduce(&dt, &dtmin, 1, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
+	      }
+	      dt = dtmin;
+	    }
+#endif
+	  }
+	  // dt = 1.e-3;
+	  // if (SStream_in.H_.mype == 1) fprintf(stdout, "Hydro starts godunov.\n");
+	  if ((SStream_in.H_.nstep % 2) == 0) {
+	    hydro_godunov(1, dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+	    //            hydro_godunov(2, dt, H, &SStream_in.Hv_, &Hw, &Hvw);
+	  } else {
+	    hydro_godunov(2, dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+	    //            hydro_godunov(1, dt, H, &SStream_in.Hv_, &Hw, &Hvw);
+	  }
+	  end_iter = dcclock();
+	  cellPerCycle = (double) (SStream_in.H_.globnx * SStream_in.H_.globny) / (end_iter - start_iter) / 1000000.0L;
+	  avgCellPerCycle += cellPerCycle;
+	  nbCycle++;
+
+	  SStream_in.H_.nstep++;
+	  SStream_in.H_.t += dt;
+	  {
+	    real_t iter_time = (real_t) (end_iter - start_iter);
+#ifdef MPI
+	    long flopsAri_t, flopsSqr_t, flopsMin_t, flopsTra_t;
+	    start = cclock();
+	    MPI_Allreduce(&flopsAri, &flopsAri_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+	    MPI_Allreduce(&flopsSqr, &flopsSqr_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+	    MPI_Allreduce(&flopsMin, &flopsMin_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+	    MPI_Allreduce(&flopsTra, &flopsTra_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+	    //       if (SStream_in.H_.mype == 1)
+	    //        printf("%ld %ld %ld %ld %ld %ld %ld %ld \n", flopsAri, flopsSqr, flopsMin, flopsTra, flopsAri_t, flopsSqr_t, flopsMin_t, flopsTra_t);
+	    flops = flopsAri_t * FLOPSARI + flopsSqr_t * FLOPSSQR + flopsMin_t * FLOPSMIN + flopsTra_t * FLOPSTRA;
+	    end = cclock();
+	    functim[TIM_ALLRED] += ccelaps(start, end);
 #else
-      flops = flopsAri * FLOPSARI + flopsSqr * FLOPSSQR + flopsMin * FLOPSMIN + flopsTra * FLOPSTRA;
+	    flops = flopsAri * FLOPSARI + flopsSqr * FLOPSSQR + flopsMin * FLOPSMIN + flopsTra * FLOPSTRA;
 #endif
-      nbFLOPS++;
+	    nbFLOPS++;
 
-      if (flops > 0) {
-        if (iter_time > 1.e-9) {
-          double mflops = (double) flops / (double) 1.e+6 / iter_time;
-          MflopsSUM += mflops;
-          sprintf(outnum, "%s {%.2f Mflops %ld Ops} (%.3fs)", outnum, mflops, flops, iter_time);
-        }
-      } else {
-        sprintf(outnum, "%s (%.3fs)", outnum, iter_time);
-      }
-    }
-    if (time_output == 0 && H.noutput > 0) {
-      if ((H.nstep % H.noutput) == 0) {
-        vtkfile(++nvtk, H, &Hv);
-        sprintf(outnum, "%s [%04d]", outnum, nvtk);
-      }
-    } else {
-      if (time_output == 1 && H.t >= next_output_time) {
-        vtkfile(++nvtk, H, &Hv);
-        next_output_time = next_output_time + H.dtoutput;
-        sprintf(outnum, "%s [%04d]", outnum, nvtk);
-      }
-    }
-    if (H.mype == 0) {
-	    fprintf(stdout, "--> step=%4d, %12.5e, %10.5e %.3lf MC/s%s\n", H.nstep, H.t, dt, cellPerCycle, outnum);
-      fflush(stdout);
-    }
-  } // while
-  end_time = dcclock();
+	    if (flops > 0) {
+	      if (iter_time > 1.e-9) {
+		double mflops = (double) flops / (double) 1.e+6 / iter_time;
+		MflopsSUM += mflops;
+		sprintf(outnum, "%s {%.2f Mflops %ld Ops} (%.3fs)", outnum, mflops, flops, iter_time);
+	      }
+	    } else {
+	      sprintf(outnum, "%s (%.3fs)", outnum, iter_time);
+	    }
+	  }
+	  if (time_output == 0 && SStream_in.H_.noutput > 0) {
+	    if ((SStream_in.H_.nstep % SStream_in.H_.noutput) == 0) {
+	      vtkfile(++nvtk, SStream_in.H_, &SStream_in.Hv_);
+	      sprintf(outnum, "%s [%04d]", outnum, nvtk);
+	    }
+	  } else {
+	    if (time_output == 1 && SStream_in.H_.t >= next_output_time) {
+	      vtkfile(++nvtk, SStream_in.H_, &SStream_in.Hv_);
+	      next_output_time = next_output_time + SStream_in.H_.dtoutput;
+	      sprintf(outnum, "%s [%04d]", outnum, nvtk);
+	    }
+	  }
+	  if (SStream_in.H_.mype == 0) {
+	    fprintf(stdout, "--> step=%4d, %12.5e, %10.5e %.3lf MC/s%s\n", SStream_in.H_.nstep, SStream_in.H_.t, dt, cellPerCycle, outnum);
+	    fflush(stdout);
+	  }
+	} // while
+	end_time = dcclock();
 
-  // Deallocate work spaces
-  deallocate_work_space(H.nxyt, H, &Hw_godunov, &Hvw_godunov);
-  compute_deltat_clean_mem(H, &Hw_deltat, &Hvw_deltat);
+	// Deallocate work spaces
+	deallocate_work_space(SStream_in.H_.nxyt, SStream_in.H_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+	compute_deltat_clean_mem(SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hvw_deltat);
 
-  hydro_finish(H, &Hv);
-  elaps = (double) (end_time - start_time);
-  timeToString(outnum, elaps);
-  if (H.mype == 0) {
-    fprintf(stdout, "Hydro ends in %ss (%.3lf) <%.2lf MFlops>.\n", outnum, elaps, (float) (MflopsSUM / nbFLOPS));
-    fprintf(stdout, "       ");
-  }
-  if (H.nproc == 1) {
-    int sizeFmt = sizeLabel(functim, TIM_END);
-    printTimingsLabel(TIM_END, sizeFmt);
-    fprintf(stdout, "\n");
-    if (sizeof(real_t) == sizeof(double)) {
-      fprintf(stdout, "PE0_DP ");
-    } else {
-      fprintf(stdout, "PE0_SP ");
-    }
-    printTimings(functim, TIM_END, sizeFmt);
-    fprintf(stdout, "\n");
-    fprintf(stdout, "%%      ");
-    percentTimings(functim, TIM_END);
-    printTimings(functim, TIM_END, sizeFmt);
-    fprintf(stdout, "\n");
-  }
+	hydro_finish(SStream_in.H_, &SStream_in.Hv_);
+	elaps = (double) (end_time - start_time);
+	timeToString(outnum, elaps);
+	if (SStream_in.H_.mype == 0) {
+	  fprintf(stdout, "Hydro ends in %ss (%.3lf) <%.2lf MFlops>.\n", outnum, elaps, (float) (MflopsSUM / nbFLOPS));
+	  fprintf(stdout, "       ");
+	}
+	if (SStream_in.H_.nproc == 1) {
+	  int sizeFmt = sizeLabel(functim, TIM_END);
+	  printTimingsLabel(TIM_END, sizeFmt);
+	  fprintf(stdout, "\n");
+	  if (sizeof(real_t) == sizeof(double)) {
+	    fprintf(stdout, "PE0_DP ");
+	  } else {
+	    fprintf(stdout, "PE0_SP ");
+	  }
+	  printTimings(functim, TIM_END, sizeFmt);
+	  fprintf(stdout, "\n");
+	  fprintf(stdout, "%%      ");
+	  percentTimings(functim, TIM_END);
+	  printTimings(functim, TIM_END, sizeFmt);
+	  fprintf(stdout, "\n");
+	}
 #ifdef MPI
-  if (H.nproc > 1) {
-    double timMAX[TIM_END];
-    double timMIN[TIM_END];
-    double timSUM[TIM_END];
-    MPI_Allreduce(functim, timMAX, TIM_END, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(functim, timMIN, TIM_END, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(functim, timSUM, TIM_END, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	if (SStream_in.H_.nproc > 1) {
+	  double timMAX[TIM_END];
+	  double timMIN[TIM_END];
+	  double timSUM[TIM_END];
+	  MPI_Allreduce(functim, timMAX, TIM_END, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+	  MPI_Allreduce(functim, timMIN, TIM_END, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+	  MPI_Allreduce(functim, timSUM, TIM_END, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-    if (H.mype == 0) {
-      int sizeFmt = sizeLabel(timMAX, TIM_END);
-      printTimingsLabel(TIM_END, sizeFmt);
-      fprintf(stdout, "\n");
-      fprintf(stdout, "MIN ");
-      printTimings(timMIN, TIM_END, sizeFmt);
-      fprintf(stdout, "\n");
-      fprintf(stdout, "MAX ");
-      printTimings(timMAX, TIM_END, sizeFmt);
-      fprintf(stdout, "\n");
-      fprintf(stdout, "AVG ");
-      avgTimings(timSUM, TIM_END, H.nproc);
-      printTimings(timSUM, TIM_END, sizeFmt);
-      fprintf(stdout, "\n");
-    }
-  }
+	  if (SStream_in.H_.mype == 0) {
+	    int sizeFmt = sizeLabel(timMAX, TIM_END);
+	    printTimingsLabel(TIM_END, sizeFmt);
+	    fprintf(stdout, "\n");
+	    fprintf(stdout, "MIN ");
+	    printTimings(timMIN, TIM_END, sizeFmt);
+	    fprintf(stdout, "\n");
+	    fprintf(stdout, "MAX ");
+	    printTimings(timMAX, TIM_END, sizeFmt);
+	    fprintf(stdout, "\n");
+	    fprintf(stdout, "AVG ");
+	    avgTimings(timSUM, TIM_END, SStream_in.H_.nproc);
+	    printTimings(timSUM, TIM_END, sizeFmt);
+	    fprintf(stdout, "\n");
+	  }
+	}
 #endif
-  if (H.mype == 0) {
+	if (SStream_in.H_.mype == 0) {
 	  fprintf(stdout, "Average MC/s: %.3lf\n", (double)(avgCellPerCycle / nbCycle));
-  }
+	}
+	memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+      }
+    }
+
+  for (int i = 0; i < H->nproc; ++i)
+    {
+#pragma omp tick (SStream >> 1)
+    }
+
+#pragma omp taskwait
 
 #ifdef MPI
   MPI_Finalize();

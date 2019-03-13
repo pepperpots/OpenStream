@@ -295,6 +295,12 @@ process_args(int argc, char **argv, hydroparam_t * H) {
       n++;
       continue;
     }
+    if (strcmp(argv[n], "-n") == 0) {
+      n++;
+      H->nproc = atoi (argv[n]);
+      n++;
+      continue;
+    }
     fprintf(stderr, "Key %s is unkown\n", argv[n]);
     n++;
   }
@@ -311,19 +317,24 @@ process_args(int argc, char **argv, hydroparam_t * H) {
   H->box[XMAX_BOX] = H->nx;
   H->box[YMIN_BOX] = 0;
   H->box[YMAX_BOX] = H->ny;
+
+  //if (H->nproc == 1 && H->nxystep > 1)
+  //H->nproc = (H->nx / H->nxystep) * (H->ny / H->nxystep);
 }
 
 void
 setup_subsurface (int id, hydroparam_t *H)
 {
   if (H->nproc > 1) {
+    H->mype = id;
+    
 #ifdef MPI
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
     // first pass : determin our actual sub problem size
     CalcSubSurface(0, H->globnx, 0, H->globny, 0, H->nproc - 1, 0, H->box, H->mype, 0);
     // second pass : determin our neighbours
-    CalcSubSurface(0, H->globnx, 0, H->globny, 0, H->nproc - 1, 0, H->box, H->mype, 1);
+    //CalcSubSurface(0, H->globnx, 0, H->globny, 0, H->nproc - 1, 0, H->box, H->mype, 1);
 
     H->nx = H->box[XMAX_BOX] - H->box[XMIN_BOX];
     H->ny = H->box[YMAX_BOX] - H->box[YMIN_BOX];
