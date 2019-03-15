@@ -204,6 +204,7 @@ typedef enum {
 
 extern double functim[TIM_END];
 
+#include "time.h"
 
 typedef struct _state
 {
@@ -213,6 +214,24 @@ typedef struct _state
   hydrowork_t Hw_deltat;
   hydrovarwork_t Hvw_godunov;
   hydrowork_t Hw_godunov;
+
+  real_t dt;
+  int nvtk;
+  char outnum[80];
+  int time_output;
+  long flops;
+  char myhost[256];
+
+  // real_t output_time;
+  real_t next_output_time;
+  double start_time, end_time;
+  double start_iter, end_iter;
+  double elaps;
+  struct timespec start, end;
+  double cellPerCycle;
+  double avgCellPerCycle;
+  long nbCycle;
+
 } _state_t, *_state_p;
 
 #endif // PARAMETRES_H_INCLUDED
