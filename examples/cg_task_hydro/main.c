@@ -127,40 +127,63 @@ void printTimingsLabel(const int N, const int fmtSize)
 }
 
 
+void
+partition_and_initialize_state_stream (_state_t SStream __attribute__ ((stream_ref)), hydroparam_t _init_H, int i)
+{
+  hydroparam_t *H = &_init_H;
+
+#pragma omp task output(SStream) firstprivate (H)
+  {
+    memcpy (&SStream.H_, H, sizeof (hydroparam_t));
+    setup_subsurface (i, &SStream.H_);
+    hydro_init(&SStream.H_, &SStream.Hv_);
+
+    if (SStream.H_.mype == 0)
+      fprintf(stdout, "Hydro starts in %s precision.\n", ((sizeof(real_t) == sizeof(double))? "double": "single"));
+    gethostname(SStream.myhost, 255);
+    if (SStream.H_.mype == 0) {
+      fprintf(stdout, "Hydro: Main process running on %s\n", SStream.myhost);
+    }
+    // PRINTUOLD(H, &SStream.Hv_);
+  }
+}
+
 int
 main(int argc, char **argv) {
 
   hydroparam_t _init_H, *H; H = &_init_H;
   _state_t SStream __attribute__((stream));
   _state_t SStream_in, SStream_out;
-  real_t _dt_stream;
+  real_t _dt_stream, _dt_stream_min, _current_t;
+  int _current_nstep;
   // array of timers to profile the code
   memset(functim, 0, TIM_END * sizeof(functim[0]));
 
-#ifdef MPI
-  MPI_Init(&argc, &argv);
-#endif
-
   process_args(argc, argv, H);
+  int nproc = H->nproc;
+  int nstepmax = H->nstepmax;
+  real_t tend = H->tend;
 
-  for (int i = 0; i < H->nproc; ++i)
+
+  real_t _dt_stream_in[nproc];
+  real_t _current_t_in[nproc];
+  int _current_nstep_in[nproc];
+
+  real_t _dt_stream_ref __attribute__((stream_ref));
+  real_t _current_t_ref __attribute__((stream_ref));
+  int _current_nstep_ref __attribute__((stream_ref));
+  _state_t SStream_ref __attribute__((stream_ref));
+  _dt_stream_ref = _dt_stream;
+  _current_t_ref = _current_t;
+  _current_nstep_ref = _current_nstep;
+  SStream_ref = SStream;
+
+
+  for (int i = 0; i < nproc; ++i)
     {
-#pragma omp task output(SStream) firstprivate (H)
-      {
-	memcpy (&SStream.H_, H, sizeof (hydroparam_t));
-	setup_subsurface (i, &SStream.H_);
-	hydro_init(&SStream.H_, &SStream.Hv_);
+      partition_and_initialize_state_stream (SStream, _init_H, i);
 
-	if (SStream.H_.mype == 0)
-	  fprintf(stdout, "Hydro starts in %s precision.\n", ((sizeof(real_t) == sizeof(double))? "double": "single"));
-	gethostname(SStream.myhost, 255);
-	if (SStream.H_.mype == 0) {
-	  fprintf(stdout, "Hydro: Main process running on %s\n", SStream.myhost);
-	}
-	// PRINTUOLD(H, &SStream.Hv_);
-      }
-
-#pragma omp task input (SStream >> SStream_in) output (SStream << SStream_out) //output (_dt_stream)
+#pragma omp task input (SStream >> SStream_in) output (SStream << SStream_out) output (_dt_stream, _current_t, _current_nstep)
       {
 	if (SStream_in.H_.dtoutput > 0) {
 	  // outputs are in physical time not in time steps
@@ -186,7 +209,7 @@ main(int argc, char **argv) {
 	// we start timings here to avoid the cost of initial memory allocation
 	SStream_in.start_time = dcclock();
 
-	while ((SStream_in.H_.t < SStream_in.H_.tend) && (SStream_in.H_.nstep < SStream_in.H_.nstepmax)) {
+	if ((SStream_in.H_.t < SStream_in.H_.tend) && (SStream_in.H_.nstep < SStream_in.H_.nstepmax)) {
 	  //system("top -b -n1");
 	  // reset perf counter for this iteration
 	  flopsAri = flopsSqr = flopsMin = flopsTra = 0;
@@ -203,7 +226,6 @@ main(int argc, char **argv) {
 	      SStream_in.dt = SStream_in.dt / 2.0;
 	      if (SStream_in.H_.mype == 0) fprintf(stdout, "Hydro computes initial deltat: %le\n", SStream_in.dt);
 	    }
-	    ////////_dt_stream = SStream_in.dt;
 #ifdef MPI
 	    if (SStream_in.H_.nproc > 1) {
 	      real_t dtmin;
@@ -217,6 +239,40 @@ main(int argc, char **argv) {
 	    }
 #endif
 	  }
+	}
+	_dt_stream = SStream_in.dt;
+	_current_t = SStream_in.H_.t;
+	_current_nstep = SStream_in.H_.nstep;
+      }
+    }
+
+  // Find out the minimumm dt and
+#pragma omp task input (_dt_stream >> _dt_stream_in[nproc], _current_t >> _current_t_in[nproc], _current_nstep >> _current_nstep_in[nproc]) output (_dt_stream_min)
+  {
+    real_t temp_min = _dt_stream_in[0];
+    for (int j = 1; j < nproc; ++j)
+      temp_min = (temp_min < _dt_stream_in[j]) ? temp_min : _dt_stream_in[j];
+    _dt_stream_min = temp_min;
+
+    // If the termination test is negative, setup the next iteration
+    if ((_current_t_in[0] + temp_min < tend) && (_current_nstep_in[0] + 1 < nstepmax))
+      {
+	#pragma omp task 
+  }
+
+
+    for (int i = 0; i < nproc; ++i)
+    {
+#pragma omp task peek (_dt_stream_min) output _dt_stream
+    }
+
+
+    for (int i = 0; i < nproc; ++i)
+    {
+#pragma omp task input (SStream >> SStream_in) output (SStream << SStream_out) output (_dt_stream, _current_t, _current_nstep)
+      {
+
+	while ((SStream_in.H_.t < SStream_in.H_.tend) && (SStream_in.H_.nstep < SStream_in.H_.nstepmax)) {
 	  // SStream_in.dt = 1.e-3;
 	  // if (SStream_in.H_.mype == 1) fprintf(stdout, "Hydro starts godunov.\n");
 	  if ((SStream_in.H_.nstep % 2) == 0) {
@@ -283,7 +339,7 @@ main(int argc, char **argv) {
     }
 
 	// Term
-#pragma omp task input (SStream >> SStream_in) output (SStream << SStream_out) //output (_dt_stream)
+#pragma omp task input (SStream >> SStream_in)
       {
 	SStream_in.end_time = dcclock();
 
@@ -343,7 +399,7 @@ main(int argc, char **argv) {
 	if (SStream_in.H_.mype == 0) {
 	  fprintf(stdout, "Average MC/s: %.3lf\n", (double)(SStream_in.avgCellPerCycle / SStream_in.nbCycle));
 	}
-	memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+	//memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
       }
     }
 
