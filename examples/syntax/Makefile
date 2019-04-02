@@ -9,7 +9,7 @@ TESTS = 001_scalar_streams 002_scalar_streams_broadcast \
 	012_variadic_clauses_with_arrays_of_windows \
 	013_stream_selection_arrays \
 	014_broadcasting_across_selection_arrays \
-	015_nested_streaming \
+	#015_nested_streaming \
 	016_lastprivate_clause 017_lastprivate_clause_nested \
 	018_modular_taskwait 019_streams_of_streams \
 	020_inout_reuse 021_variadic_inout_reuse
