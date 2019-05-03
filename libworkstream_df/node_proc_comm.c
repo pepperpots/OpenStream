@@ -91,10 +91,12 @@ init_npc ()
   pthread_mutex_init (&npc.npc_lock, NULL);
 
 #ifdef MPI
-  assert (MPI_Init(NULL, NULL) == MPI_SUCCESS);
+  assert (MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, NULL) == MPI_SUCCESS);
   MPI_Comm_size(MPI_COMM_WORLD, &npc.num_nodes);
   MPI_Comm_rank(MPI_COMM_WORLD, &npc.node_id);
   npc.next_victim = 1;
+
+  //fprintf(stderr, "\t MPI_Init node ID %d / %d\n", npc.node_id, npc.num_nodes);
 
   if (is_worker_node())
     {
