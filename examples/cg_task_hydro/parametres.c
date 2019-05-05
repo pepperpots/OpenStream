@@ -327,14 +327,11 @@ setup_subsurface (int id, hydroparam_t *H)
 {
   if (H->nproc > 1) {
     H->mype = id;
-    
-#ifdef MPI
-    MPI_Barrier(MPI_COMM_WORLD);
-#endif
+
     // first pass : determin our actual sub problem size
     CalcSubSurface(0, H->globnx, 0, H->globny, 0, H->nproc - 1, 0, H->box, H->mype, 0);
     // second pass : determin our neighbours
-    //CalcSubSurface(0, H->globnx, 0, H->globny, 0, H->nproc - 1, 0, H->box, H->mype, 1);
+    CalcSubSurface(0, H->globnx, 0, H->globny, 0, H->nproc - 1, 0, H->box, H->mype, 1);
 
     H->nx = H->box[XMAX_BOX] - H->box[XMIN_BOX];
     H->ny = H->box[YMAX_BOX] - H->box[YMIN_BOX];
@@ -347,12 +344,8 @@ setup_subsurface (int id, hydroparam_t *H)
     if (H->ny <= 0) {
       printf("Decomposition not suited for this geometry along Y: increase ny or change number of procs\n");
     }
-#ifdef MPI
-    if (H->nx == 0 || H->ny == 0) {
-      MPI_Abort(MPI_COMM_WORLD, 123);
-    }
-#endif
-    // adapt the boundary conditions 
+
+    // adapt the boundary conditions
     if (H->box[LEFT_BOX] != -1) {
       H->boundary_left = 0;
     }

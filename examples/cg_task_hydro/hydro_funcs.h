@@ -40,6 +40,8 @@ knowledge of the CeCILL license and that you accept its terms.
 #include "parametres.h"
 void hydro_init(hydroparam_t * H, hydrovar_t * Hv);
 void hydro_finish(const hydroparam_t H, hydrovar_t * Hv);
+size_t estimate_data_size (hydroparam_t * H);
+void reset_pointers_to_state_structures (char *data_block, _state_p st);
 
 void allocate_work_space(int ngrid, const hydroparam_t H, hydrowork_t * Hw, hydrovarwork_t * Hvw);
 void deallocate_work_space(int ngrid, const hydroparam_t H, hydrowork_t * Hw, hydrovarwork_t * Hvw);

@@ -60,9 +60,10 @@ void *_dt_stream_ref;
 void *_current_t_ref;
 void *_current_nstep_ref;
 void *SStream_ref;
+void *DStream_ref;
 void *term_ref;
 
-void create_next_rounds (int, real_t, int);
+void create_next_rounds (int, real_t, int, size_t);
 
 int sizeLabel(double *tim, const int N) {
   double maxi = 0;
@@ -136,14 +137,23 @@ void printTimingsLabel(const int N, const int fmtSize)
 
 
 void
-partition_and_initialize_state_stream (_state_t SStream __attribute__ ((stream_ref)), hydroparam_t _init_H, int i)
+partition_and_initialize_state_stream (_state_t SStream __attribute__ ((stream_ref)), hydroparam_t *_init_H, int i, size_t data_size)
 {
-  hydroparam_t *H = &_init_H;
+  hydroparam_t *H = _init_H;
+  char data_block[data_size];
 
-#pragma omp task output(SStream) firstprivate (H) proc_bind (master)
+  //fprintf(stderr, " >> partition task creation %d\n", i);
+
+#pragma omp task output (SStream) output (DStream_ref << data_block[data_size]) \
+  firstprivate (H) proc_bind (master) firstprivate (data_size)
   {
     memcpy (&SStream.H_, H, sizeof (hydroparam_t));
+
+
+    //fprintf(stderr, "H - globnx %d\t globny %d\t nx %d\t ny %d\n", H->globnx, H->globny, H->nx, H->ny);
+
     setup_subsurface (i, &SStream.H_);
+    reset_pointers_to_state_structures (data_block, &SStream);
     hydro_init(&SStream.H_, &SStream.Hv_);
 
     if (SStream.H_.mype == 0)
@@ -153,49 +163,48 @@ partition_and_initialize_state_stream (_state_t SStream __attribute__ ((stream_r
       fprintf(stdout, "Hydro: Main process running on %s\n", SStream.myhost);
     }
     // PRINTUOLD(H, &SStream.Hv_);
+
+    if (SStream.H_.dtoutput > 0) {
+      // outputs are in physical time not in time steps
+      SStream.time_output = 1;
+      SStream.next_output_time = SStream.next_output_time + SStream.H_.dtoutput;
+    }
+
+    if (SStream.H_.dtoutput > 0 || SStream.H_.noutput > 0)
+      vtkfile(++SStream.nvtk, SStream.H_, &SStream.Hv_);
+
+    if (SStream.H_.mype == 0)
+      fprintf(stdout, "Hydro starts main loop.\n");
+
+    //pre-allocate memory before entering in loop
+    //For godunov scheme
+    //SStream.start = cclock();
+    //allocate_work_space(SStream.H_.nxyt, SStream.H_, &SStream.Hw_godunov, &SStream.Hvw_godunov);
+    //compute_deltat_init_mem(SStream.H_, &SStream.Hw_deltat, &SStream.Hvw_deltat);
+    //SStream.end = cclock();
+
+    //if (SStream.H_.mype == 0) fprintf(stdout, "Hydro: init mem %lfs\n", ccelaps(SStream.start, SStream.end));
+    // we start timings here to avoid the cost of initial memory allocation
   }
 }
 
 void
-create_first_tasks ()
+create_first_tasks (size_t data_size)
 {
   real_t _dt_stream_view;
   real_t _current_t_view;
   int _current_nstep_view;
   _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
 
-  //fprintf(stderr, " \t [first_task]: create\n");
-
-#pragma omp task input (SStream_ref >> SStream_in)			\
-  output (SStream_ref << SStream_out)					\
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
-  proc_bind (master)
+  proc_bind (master) firstprivate (data_size)
   {
-    //fprintf(stderr, " \t [first_task]: exec\n");
-    if (SStream_in.H_.dtoutput > 0) {
-      // outputs are in physical time not in time steps
-      SStream_in.time_output = 1;
-      SStream_in.next_output_time = SStream_in.next_output_time + SStream_in.H_.dtoutput;
-    }
-
-    if (SStream_in.H_.dtoutput > 0 || SStream_in.H_.noutput > 0)
-      vtkfile(++SStream_in.nvtk, SStream_in.H_, &SStream_in.Hv_);
-
-    if (SStream_in.H_.mype == 0)
-      fprintf(stdout, "Hydro starts main loop.\n");
-
-    //pre-allocate memory before entering in loop
-    //For godunov scheme
-    //SStream_in.start = cclock();
-    SStream_in.start = cclock();
-    allocate_work_space(SStream_in.H_.nxyt, SStream_in.H_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
-    compute_deltat_init_mem(SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hvw_deltat);
-    SStream_in.end = cclock();
-
-    if (SStream_in.H_.mype == 0) fprintf(stdout, "Hydro: init mem %lfs\n", ccelaps(SStream_in.start, SStream_in.end));
-    // we start timings here to avoid the cost of initial memory allocation
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
     SStream_in.start_time = dcclock();
-
     if ((SStream_in.H_.t < SStream_in.H_.tend) && (SStream_in.H_.nstep < SStream_in.H_.nstepmax)) {
       //system("top -b -n1");
       // reset perf counter for this iteration
@@ -223,41 +232,49 @@ create_first_tasks ()
       }
     }
     memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
     _dt_stream_view = SStream_in.dt;
     _current_t_view = SStream_in.H_.t;
     _current_nstep_view = SStream_in.H_.nstep;
   }
 
-#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out)
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  proc_bind (spread) firstprivate (data_size)
   {
     memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+    fprintf(stderr, " REMOTE DS %d\n", data_size);
   }
 }
 
 
 void
-create_work_tasks (real_t temp_min)
+create_work_tasks (real_t temp_min, size_t data_size)
 {
   real_t _dt_stream_view;
   real_t _current_t_view;
   int _current_nstep_view;
   _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
 
   //fprintf(stderr, " \t [WORK_task]: create\n");
 
-#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view)
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
+  proc_bind (master) firstprivate (data_size)
   {
     //fprintf(stderr, " \t [WORK_task]: exec\n");
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
 
-    //while ((SStream_in.H_.t < SStream_in.H_.tend) && (SStream_in.H_.nstep < SStream_in.H_.nstepmax)) {
     SStream_in.dt = temp_min;
-    // if (SStream_in.H_.mype == 1) fprintf(stdout, "Hydro starts godunov.\n");
+
     if ((SStream_in.H_.nstep % 2) == 0) {
       hydro_godunov(1, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
-      //            hydro_godunov(2, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw, &SStream_in.Hvw);
     } else {
       hydro_godunov(2, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
-      //            hydro_godunov(1, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw, &SStream_in.Hvw);
     }
     SStream_in.end_iter = dcclock();
     SStream_in.cellPerCycle = (double) (SStream_in.H_.globnx * SStream_in.H_.globny) / (SStream_in.end_iter - SStream_in.start_iter) / 1000000.0L;
@@ -268,21 +285,7 @@ create_work_tasks (real_t temp_min)
     SStream_in.H_.t += SStream_in.dt;
     {
       real_t iter_time = (real_t) (SStream_in.end_iter - SStream_in.start_iter);
-#ifdef MPI
-      long flopsAri_t, flopsSqr_t, flopsMin_t, flopsTra_t;
-      SStream_in.start = cclock();
-      MPI_Allreduce(&flopsAri, &flopsAri_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&flopsSqr, &flopsSqr_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&flopsMin, &flopsMin_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&flopsTra, &flopsTra_t, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      //       if (SStream_in.H_.mype == 1)
-      //        printf("%ld %ld %ld %ld %ld %ld %ld %ld \n", flopsAri, flopsSqr, flopsMin, flopsTra, flopsAri_t, flopsSqr_t, flopsMin_t, flopsTra_t);
-      SStream_in.flops = flopsAri_t * FLOPSARI + flopsSqr_t * FLOPSSQR + flopsMin_t * FLOPSMIN + flopsTra_t * FLOPSTRA;
-      SStream_in.end = cclock();
-      functim[TIM_ALLRED] += ccelaps(SStream_in.start, SStream_in.end);
-#else
       SStream_in.flops = flopsAri * FLOPSARI + flopsSqr * FLOPSSQR + flopsMin * FLOPSMIN + flopsTra * FLOPSTRA;
-#endif
       nbFLOPS++;
 
       if (SStream_in.flops > 0) {
@@ -312,53 +315,62 @@ create_work_tasks (real_t temp_min)
       fflush(stdout);
     }
 
-
-    //} // while
-
-      SStream_in.start_iter = dcclock();
-      SStream_in.outnum[0] = 0;
-      if ((SStream_in.H_.nstep % 2) == 0) {
-	SStream_in.dt = 0;
-	// if (H.mype == 0) fprintf(stdout, "Hydro computes deltat.\n");
-	SStream_in.start = cclock();
-	compute_deltat(&SStream_in.dt, SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hv_, &SStream_in.Hvw_deltat);
-	SStream_in.end = cclock();
-	functim[TIM_COMPDT] += ccelaps(SStream_in.start, SStream_in.end);
-      }
+    fprintf(stderr, " DELTAT -\t- %f -- %f -- %f\n", temp_min, SStream_in.H_.t, SStream_in.dt);
 
 
+    SStream_in.start_iter = dcclock();
+    SStream_in.outnum[0] = 0;
+    if ((SStream_in.H_.nstep % 2) == 0) {
+      SStream_in.dt = 0;
+      // if (H.mype == 0) fprintf(stdout, "Hydro computes deltat.\n");
+      SStream_in.start = cclock();
+      compute_deltat(&SStream_in.dt, SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hv_, &SStream_in.Hvw_deltat);
+      SStream_in.end = cclock();
+      functim[TIM_COMPDT] += ccelaps(SStream_in.start, SStream_in.end);
+    }
 
-  memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
-  _dt_stream_view = SStream_in.dt;
-  _current_t_view = SStream_in.H_.t;
-  _current_nstep_view = SStream_in.H_.nstep;
+    fprintf(stderr, " POST- DELTAT -\t- %f -- %f -- %f\n", temp_min, SStream_in.H_.t, SStream_in.dt);
+
+
+    memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+    _dt_stream_view = SStream_in.dt;
+    _current_t_view = SStream_in.H_.t;
+    _current_nstep_view = SStream_in.H_.nstep;
   }
 
-#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out)
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  proc_bind (spread) firstprivate (data_size)
   {
     memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
   }
 }
 
 
 void
-create_termination_tasks ()
+create_termination_tasks (size_t data_size)
 {
   _state_t SStream_in;
   int term_out;
+  char data_block_in[data_size];
 
   //fprintf(stderr, " \t\t [TERM_task]: create\n");
 
-#pragma omp task input (SStream_ref >> SStream_in) output (term_ref << term_out) proc_bind (master)
+#pragma omp task input (SStream_ref >> SStream_in) output (term_ref << term_out) \
+  input (DStream_ref >> data_block_in[data_size])			\
+  proc_bind (master) firstprivate (data_size)
       {
 	//fprintf(stderr, " \t\t [TERM_task]: exec\n");
 	SStream_in.end_time = dcclock();
+	reset_pointers_to_state_structures (data_block_in, &SStream_in);
 
 	// Deallocate work spaces
-	deallocate_work_space(SStream_in.H_.nxyt, SStream_in.H_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
-	compute_deltat_clean_mem(SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hvw_deltat);
+	//deallocate_work_space(SStream_in.H_.nxyt, SStream_in.H_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+	//compute_deltat_clean_mem(SStream_in.H_, &SStream_in.Hw_deltat, &SStream_in.Hvw_deltat);
 
-	hydro_finish(SStream_in.H_, &SStream_in.Hv_);
+	//hydro_finish(SStream_in.H_, &SStream_in.Hv_);
 	SStream_in.elaps = (double) (SStream_in.end_time - SStream_in.start_time);
 	timeToString(SStream_in.outnum, SStream_in.elaps);
 	if (SStream_in.H_.mype == 0) {
@@ -414,7 +426,7 @@ create_termination_tasks ()
 }
 
 void
-create_next_rounds (int nproc, real_t tend, int nstepmax)
+create_next_rounds (int nproc, real_t tend, int nstepmax, size_t data_size)
 {
   real_t _dt_stream_in[nproc];
   real_t _current_t_in[nproc];
@@ -426,13 +438,14 @@ create_next_rounds (int nproc, real_t tend, int nstepmax)
 #pragma omp task input (_dt_stream_ref >> _dt_stream_in[nproc], _current_t_ref >> _current_t_in[nproc], _current_nstep_ref >> _current_nstep_in[nproc]) proc_bind (master)
   {
     //fprintf(stderr, " -- [next_rounds] --: exec\n");
+    fprintf(stderr, " -\t- _dt_stream_in[0] %f, %d\n", _dt_stream_in[0], nproc);
     real_t temp_min = _dt_stream_in[0];
     for (int j = 1; j < nproc; ++j)
       temp_min = (temp_min < _dt_stream_in[j]) ? temp_min : _dt_stream_in[j];
 
     // If the termination test is negative, setup the next iteration
-    //fprintf(stderr, " -- [next_rounds] --: current_t %f \t temp_min %f \t tend %f \t cur_nstep %d \t nstepmax %d\n",
-    //_current_t_in[0], temp_min, tend, _current_nstep_in[0], nstepmax);
+    fprintf(stderr, " -- [next_rounds] --: current_t %f \t temp_min %f \t tend %f \t cur_nstep %d \t nstepmax %d\n",
+	    _current_t_in[0], temp_min, tend, _current_nstep_in[0], nstepmax);
 
     if ((_current_t_in[0] + temp_min < tend) && (_current_nstep_in[0] + 1 < nstepmax))
       {
@@ -440,16 +453,17 @@ create_next_rounds (int nproc, real_t tend, int nstepmax)
 	{
 	  //fprintf(stderr, " -- [PROXY] --: exec\n");
 	  for (int j = 0; j < nproc; ++j)
-	    create_work_tasks (temp_min);
-	  create_next_rounds (nproc, tend, nstepmax);
+	    create_work_tasks (temp_min, data_size);
+	  create_next_rounds (nproc, tend, nstepmax, data_size);
 	}
       }
     else
       {
-	create_termination_tasks ();
+	create_termination_tasks (data_size);
 	for (int j = 1; j < nproc; ++j)
 	  {
 #pragma omp tick (SStream_ref >> 1)
+#pragma omp tick (DStream_ref >> data_size)
 	  }
       }
   }
@@ -461,6 +475,7 @@ main(int argc, char **argv) {
 
   hydroparam_t _init_H, *H; H = &_init_H;
   _state_t SStream __attribute__((stream));
+  char DStream __attribute__((stream));
   _state_t SStream_in, SStream_out;
   real_t _dt_stream __attribute__((stream));
   real_t _current_t __attribute__((stream));
@@ -480,16 +495,19 @@ main(int argc, char **argv) {
   _current_t_ref = _current_t;
   _current_nstep_ref = _current_nstep;
   SStream_ref = SStream;
+  DStream_ref = DStream;
   term_ref = term;
 
-  //fprintf(stderr, " >> Hydro starting on %d nodes\n", nproc);
+  size_t data_size = estimate_data_size (&_init_H);
+
+  //fprintf(stderr, " >> Hydro starting on %d nodes -- data block size is %d\n", nproc, data_size);
 
   for (int i = 0; i < nproc; ++i)
     {
-      partition_and_initialize_state_stream (SStream, _init_H, i);
-      create_first_tasks ();
+      partition_and_initialize_state_stream (SStream, &_init_H, i, data_size);
+      create_first_tasks (data_size);
     }
-  create_next_rounds (nproc, tend, nstepmax);
+  create_next_rounds (nproc, tend, nstepmax, data_size);
 
 
 #pragma omp task input (term)
