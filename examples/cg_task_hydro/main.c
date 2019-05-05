@@ -201,7 +201,7 @@ create_first_tasks (size_t data_size)
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
-  proc_bind (master) firstprivate (data_size)
+  proc_bind (spread) firstprivate (data_size)
   {
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
     SStream_in.start_time = dcclock();
@@ -244,7 +244,6 @@ create_first_tasks (size_t data_size)
   {
     memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
     memcpy (data_block_out, data_block_in, data_size);
-    fprintf(stderr, " REMOTE DS %d\n", data_size);
   }
 }
 
@@ -264,7 +263,7 @@ create_work_tasks (real_t temp_min, size_t data_size)
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
-  proc_bind (master) firstprivate (data_size)
+  proc_bind (spread) firstprivate (data_size) firstprivate (temp_min)
   {
     //fprintf(stderr, " \t [WORK_task]: exec\n");
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
@@ -315,9 +314,6 @@ create_work_tasks (real_t temp_min, size_t data_size)
       fflush(stdout);
     }
 
-    fprintf(stderr, " DELTAT -\t- %f -- %f -- %f\n", temp_min, SStream_in.H_.t, SStream_in.dt);
-
-
     SStream_in.start_iter = dcclock();
     SStream_in.outnum[0] = 0;
     if ((SStream_in.H_.nstep % 2) == 0) {
@@ -328,9 +324,6 @@ create_work_tasks (real_t temp_min, size_t data_size)
       SStream_in.end = cclock();
       functim[TIM_COMPDT] += ccelaps(SStream_in.start, SStream_in.end);
     }
-
-    fprintf(stderr, " POST- DELTAT -\t- %f -- %f -- %f\n", temp_min, SStream_in.H_.t, SStream_in.dt);
-
 
     memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
     memcpy (data_block_out, data_block_in, data_size);
@@ -360,7 +353,7 @@ create_termination_tasks (size_t data_size)
 
 #pragma omp task input (SStream_ref >> SStream_in) output (term_ref << term_out) \
   input (DStream_ref >> data_block_in[data_size])			\
-  proc_bind (master) firstprivate (data_size)
+  proc_bind (spread) firstprivate (data_size)
       {
 	//fprintf(stderr, " \t\t [TERM_task]: exec\n");
 	SStream_in.end_time = dcclock();
@@ -435,17 +428,17 @@ create_next_rounds (int nproc, real_t tend, int nstepmax, size_t data_size)
   //fprintf(stderr, " -- [next_rounds] --: create\n");
 
   // Find out the minimumm dt and
-#pragma omp task input (_dt_stream_ref >> _dt_stream_in[nproc], _current_t_ref >> _current_t_in[nproc], _current_nstep_ref >> _current_nstep_in[nproc]) proc_bind (master)
+#pragma omp task input (_dt_stream_ref >> _dt_stream_in[nproc], _current_t_ref >> _current_t_in[nproc], _current_nstep_ref >> _current_nstep_in[nproc]) \
+  proc_bind (master)
   {
     //fprintf(stderr, " -- [next_rounds] --: exec\n");
-    fprintf(stderr, " -\t- _dt_stream_in[0] %f, %d\n", _dt_stream_in[0], nproc);
     real_t temp_min = _dt_stream_in[0];
     for (int j = 1; j < nproc; ++j)
       temp_min = (temp_min < _dt_stream_in[j]) ? temp_min : _dt_stream_in[j];
 
     // If the termination test is negative, setup the next iteration
-    fprintf(stderr, " -- [next_rounds] --: current_t %f \t temp_min %f \t tend %f \t cur_nstep %d \t nstepmax %d\n",
-	    _current_t_in[0], temp_min, tend, _current_nstep_in[0], nstepmax);
+    //fprintf(stderr, " -- [next_rounds] --: current_t %f \t temp_min %f \t tend %f \t cur_nstep %d \t nstepmax %d\n",
+    //_current_t_in[0], temp_min, tend, _current_nstep_in[0], nstepmax);
 
     if ((_current_t_in[0] + temp_min < tend) && (_current_nstep_in[0] + 1 < nstepmax))
       {
@@ -510,7 +503,7 @@ main(int argc, char **argv) {
   create_next_rounds (nproc, tend, nstepmax, data_size);
 
 
-#pragma omp task input (term)
+#pragma omp task input (term) proc_bind (master)
   {
     fprintf(stderr, "TERMINATE\n");
   }
