@@ -225,6 +225,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp, size_t b
   frame_pointer->input_view_chain = NULL;
   frame_pointer->output_view_chain = NULL;
   frame_pointer->bind_mode = bind_mode;
+  frame_pointer->origin_node = npc.node_id;
 
 #if ALLOW_WQEVENT_SAMPLING
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
@@ -948,10 +949,14 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	  update_papi(cthread);
 	  trace_runtime_counters(cthread);
 
-	  if (fp->bind_mode == BIND_MODE_EXEC_REMOTE)
-	    {
-	      fprintf (stderr, "Node %d worker %d executing task initially created on node %d\n", npc.node_id, cthread->worker_id, fp->origin_node);
-	    }
+	  //if (fp->bind_mode == BIND_MODE_CLOSE)
+	  //{
+	  //fprintf (stderr, "Node %d worker %d executing task initially created on node %d\n", npc.node_id, cthread->worker_id, fp->origin_node);
+	  //}
+	  //if (npc.node_id != 0 && npc.node_id == fp->origin_node)
+	  //{
+	  //fprintf (stderr, "Node %d worker %d executing task initially created on node %d\n", npc.node_id, cthread->worker_id, fp->origin_node);
+	  //}
 	  fp->work_fn (fp);
 
 	  wqueue_counters_profile_rusage(cthread);
