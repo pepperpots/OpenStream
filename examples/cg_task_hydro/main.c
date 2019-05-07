@@ -63,6 +63,18 @@ void *SStream_ref;
 void *DStream_ref;
 void *term_ref;
 
+
+void debug_this ()
+{
+  int i = 0;
+  char hostname[256];
+  gethostname(hostname, sizeof(hostname));
+  printf("PID %d on %s ready for attach\n", getpid(), hostname);
+  fflush(stdout);
+  while (0 == i)
+    sleep(10);
+}
+
 void create_next_rounds (int, real_t, int, size_t);
 
 int sizeLabel(double *tim, const int N) {
@@ -501,7 +513,6 @@ main(int argc, char **argv) {
       create_first_tasks (data_size);
     }
   create_next_rounds (nproc, tend, nstepmax, data_size);
-
 
 #pragma omp task input (term) proc_bind (master)
   {

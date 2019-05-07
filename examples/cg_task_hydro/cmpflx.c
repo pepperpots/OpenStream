@@ -52,12 +52,12 @@ cmpflx(const int narray,
        const int Hnxyt,
        const int Hnvar,
        const real_t Hgamma,
-       const int slices, 
-       const int Hstep, 
-       real_t qgdnv[Hnvar][Hstep][Hnxyt], 
+       const int slices,
+       const int Hstep,
+       real_t qgdnv[Hnvar][Hstep][Hnxyt],
        real_t flux[Hnvar][Hstep][Hnxyt]) {
   int nface, i, IN;
-  real_t entho, ekin, etot;
+  real_t entho;
   WHERE("cmpflx");
   int s;
 
@@ -66,32 +66,38 @@ cmpflx(const int narray,
   FLOPS(1, 1, 0, 0);
 
   // Compute fluxes
-  //#pragma omp parallel for private(s, i, ekin, etot), shared(flux) 
+  //#pragma omp parallel for private(s, i, ekin, etot), shared(flux)
   for (s = 0; s < slices; s++) {
-    for (i = 0; i < nface; i++) {
-      real_t qgdnvID = qgdnv[ID][s][i];
-      real_t qgdnvIU = qgdnv[IU][s][i];
-      real_t qgdnvIP = qgdnv[IP][s][i];
-      real_t qgdnvIV = qgdnv[IV][s][i];
+#pragma omp task proc_bind (close) //firstprivate (s, entho, flux, qgdnv)
+    {
+      //fprintf (stderr, "EXEC\n");
+      real_t ekin, etot;
+      for (i = 0; i < nface; i++) {
+	real_t qgdnvID = qgdnv[ID][s][i];
+	real_t qgdnvIU = qgdnv[IU][s][i];
+	real_t qgdnvIP = qgdnv[IP][s][i];
+	real_t qgdnvIV = qgdnv[IV][s][i];
 
-      // Mass density
-      real_t massDensity = qgdnvID * qgdnvIU;
-      flux[ID][s][i] = massDensity;
+	// Mass density
+	real_t massDensity = qgdnvID * qgdnvIU;
+	flux[ID][s][i] = massDensity;
 
-      // Normal momentum
-      flux[IU][s][i] = massDensity * qgdnvIU + qgdnvIP;
-      // Transverse momentum 1
-      flux[IV][s][i] = massDensity * qgdnvIV;
+	// Normal momentum
+	flux[IU][s][i] = massDensity * qgdnvIU + qgdnvIP;
+	// Transverse momentum 1
+	flux[IV][s][i] = massDensity * qgdnvIV;
 
-      // Total energy
-      ekin = half * qgdnvID * (Square(qgdnvIU) + Square(qgdnvIV));
-      etot = qgdnvIP * entho + ekin;
+	// Total energy
+	ekin = half * qgdnvID * (Square(qgdnvIU) + Square(qgdnvIV));
+	etot = qgdnvIP * entho + ekin;
 
-      flux[IP][s][i] = qgdnvIU * (etot + qgdnvIP);
+	flux[IP][s][i] = qgdnvIU * (etot + qgdnvIP);
+      }
     }
   }
+#pragma omp taskwait
 
-  { 
+  {
     int nops = slices * nface;
     FLOPS(13 * nops, 0 * nops, 0 * nops, 0 * nops);
   }

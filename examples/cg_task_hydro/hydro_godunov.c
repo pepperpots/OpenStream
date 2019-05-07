@@ -240,6 +240,7 @@ hydro_godunov(int idimStart, real_t dt, const hydroparam_t H, hydrovar_t * Hv, h
     }
   }
 
+
   if ((H.t + dt >= H.tend) || (H.nstep + 1 >= H.nstepmax)) {
     /* LM -- HERE a more secure implementation should be used: a new parameter ? */
   }

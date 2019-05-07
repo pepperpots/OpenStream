@@ -70,23 +70,28 @@ ComputeQEforRow(const int j,
 
   //#pragma omp parallel for shared(q, e) private(s, i) COLLAPSE
   for (s = 0; s < slices; s++) {
-    for (i = 0; i < Hnx; i++) {
-      real_t eken;
-      real_t tmp;
-      int idxuID = IHV(i + ExtraLayer, j + s, ID);
-      int idxuIU = IHV(i + ExtraLayer, j + s, IU);
-      int idxuIV = IHV(i + ExtraLayer, j + s, IV);
-      int idxuIP = IHV(i + ExtraLayer, j + s, IP);
-      q[ID][s][i] = MAX(uold[idxuID], Hsmallr);
-      q[IU][s][i] = uold[idxuIU] / q[ID][s][i];
-      q[IV][s][i] = uold[idxuIV] / q[ID][s][i];
-      eken = half * (Square(q[IU][s][i]) + Square(q[IV][s][i]));
-      tmp = uold[idxuIP] / q[ID][s][i] - eken;
-      q[IP][s][i] = tmp;
-      e[s][i] = tmp;
+    //#pragma omp task
+    {
+      for (i = 0; i < Hnx; i++) {
+	real_t eken;
+	real_t tmp;
+	int idxuID = IHV(i + ExtraLayer, j + s, ID);
+	int idxuIU = IHV(i + ExtraLayer, j + s, IU);
+	int idxuIV = IHV(i + ExtraLayer, j + s, IV);
+	int idxuIP = IHV(i + ExtraLayer, j + s, IP);
+	q[ID][s][i] = MAX(uold[idxuID], Hsmallr);
+	q[IU][s][i] = uold[idxuIU] / q[ID][s][i];
+	q[IV][s][i] = uold[idxuIV] / q[ID][s][i];
+	eken = half * (Square(q[IU][s][i]) + Square(q[IV][s][i]));
+	tmp = uold[idxuIP] / q[ID][s][i] - eken;
+	q[IP][s][i] = tmp;
+	e[s][i] = tmp;
+      }
     }
   }
-  { 
+  //#pragma omp taskwait
+
+  {
     int nops = slices * Hnx;
     FLOPS(5 * nops, 3 * nops, 1 * nops, 0 * nops);
   }
@@ -151,7 +156,6 @@ void compute_deltat_init_mem(const hydroparam_t H, hydrowork_t * Hw, hydrovarwor
   Hw->c = (real_t (*))  DMalloc(         H.nxyt * H.nxystep);
   Hw->tmpm1 = (real_t *) DMalloc(H.nxystep);
   Hw->tmpm2 = (real_t *) DMalloc(H.nxystep);
-
 }
 
 void compute_deltat_clean_mem(const hydroparam_t H, hydrowork_t * Hw, hydrovarwork_t * Hvw)
