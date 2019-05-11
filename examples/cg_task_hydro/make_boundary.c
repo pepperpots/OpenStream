@@ -165,6 +165,8 @@ make_boundary(int idim, const hydroparam_t H, hydrovar_t * Hv) {
 
   static FILE *fic = NULL;
 
+  //fprintf(stderr, " [MAKE boundary]: exec idim %d, mype %d\n", idim, H.mype); fflush (stderr);
+
   WHERE("make_boundary");
 
 #ifdef MPI
