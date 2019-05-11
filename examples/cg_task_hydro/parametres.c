@@ -346,6 +346,10 @@ setup_subsurface (int id, hydroparam_t *H)
     }
 
     // adapt the boundary conditions
+    H->boundary_right = 1;
+    H->boundary_left = 1;
+    H->boundary_up = 1;
+    H->boundary_down = 1;
     if (H->box[LEFT_BOX] != -1) {
       H->boundary_left = 0;
     }
@@ -358,6 +362,7 @@ setup_subsurface (int id, hydroparam_t *H)
     if (H->box[UP_BOX] != -1) {
       H->boundary_up = 0;
     }
+    fprintf(stderr, "[boundaries for partition %d]: %d %d %d %d\n", H->mype, H->boundary_right, H->boundary_left, H->boundary_up, H->boundary_down); fflush (stderr);
     fflush(stdout);
   }
 
