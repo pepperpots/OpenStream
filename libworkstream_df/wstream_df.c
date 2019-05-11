@@ -996,7 +996,7 @@ trace_state_change(cthread, WORKER_STATE_SEEKING);
 	}
       else
 	{
-	  if (cthread->worker_id == 0 && npc_terminate ())
+	  if (npc_terminate ())
 	    return;
 #ifndef _WS_NO_YIELD_SPIN
 	  sched_yield ();
@@ -1354,9 +1354,9 @@ void post_main()
 {
   /* Current barrier is the last one, so it allows terminating the
      scheduler functions and exiting once it clears.  */
-  wstream_df_taskwait ();
-
-  if (is_worker_node ())
+  if (!is_worker_node ())
+    wstream_df_taskwait ();
+  else
     worker_thread ();
 
   for (int i = 0; i < num_workers; ++i)
