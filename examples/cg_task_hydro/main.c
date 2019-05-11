@@ -53,6 +53,7 @@
 #include "perfcnt.h"
 #include "cclock.h"
 #include "utils.h"
+#include "pack_boundary.h"
 
 double functim[TIM_END];
 
@@ -62,6 +63,11 @@ void *_current_nstep_ref;
 void *SStream_ref;
 void *DStream_ref;
 void *term_ref;
+
+void * _box_L_stream_ref;
+void * _box_R_stream_ref;
+void * _box_U_stream_ref;
+void * _box_D_stream_ref;
 
 
 void debug_this ()
@@ -75,7 +81,7 @@ void debug_this ()
     sleep(10);
 }
 
-void create_next_rounds (int, real_t, int, size_t);
+void create_next_rounds (hydroparam_t *, int, real_t, int, size_t);
 
 int sizeLabel(double *tim, const int N) {
   double maxi = 0;
@@ -274,7 +280,262 @@ create_first_forward_tasks (size_t data_size)
 }
 
 void
-create_work_tasks (real_t temp_min, size_t data_size)
+create_work_tasks_11 (hydroparam_t * H, real_t temp_min, size_t data_size)
+{
+  real_t _dt_stream_view;
+  real_t _current_t_view;
+  int _current_nstep_view;
+  _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
+
+  size_t boundary_size = ExtraLayerTot * H->nxyt * H->nvar;
+  real_t sendbufl[boundary_size];
+  real_t sendbufr[boundary_size];
+  real_t sendbufu[boundary_size];
+  real_t sendbufd[boundary_size];
+
+  //fprintf(stderr, " \t [WORK_task]: create\n");
+
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  output (_box_L_stream_ref << sendbufl[boundary_size], _box_R_stream_ref << sendbufr[boundary_size], _box_U_stream_ref << sendbufu[boundary_size], _box_D_stream_ref << sendbufd[boundary_size]) \
+  proc_bind ( master ) firstprivate (data_size) firstprivate (temp_min) firstprivate (boundary_size)
+  {
+    struct timespec start, end;
+    //fprintf(stderr, " \t [Work task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
+    int idim = (SStream_in.H_.nstep % 2) == 0 ? 1 : 2;
+
+    SStream_in.dt = temp_min;
+
+
+    // Update boundary conditions
+    //if (SStream_in.H_.prt) {
+    //fprintf(fic, "godunov %d %le %le\n", idim, dt, SStream_in.H_.t);
+    //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
+    //}
+    // if (SStream_in.H_.mype == 1) fprintf(fic, "Hydro makes boundary.\n");
+    start = cclock();
+
+    if (idim == 1)
+      {
+	pack_arrayv(ExtraLayer, SStream_in.H_, &SStream_in.Hv_, sendbufl);
+	pack_arrayv(SStream_in.H_.nx, SStream_in.H_, &SStream_in.Hv_, sendbufr);
+      }
+    else
+      {
+	pack_arrayh(ExtraLayer, SStream_in.H_, &SStream_in.Hv_, sendbufd);
+	pack_arrayh(SStream_in.H_.ny, SStream_in.H_, &SStream_in.Hv_, sendbufu);
+      }
+    memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+  }
+}
+
+void
+create_work_tasks_12 (hydroparam_t * H, size_t data_size, int jj)
+{
+  real_t _dt_stream_view;
+  real_t _current_t_view;
+  int _current_nstep_view;
+  _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
+
+  size_t boundary_size = ExtraLayerTot * H->nxyt * H->nvar;
+  size_t boundary_burst = boundary_size * H->nproc;
+  real_t sendbufl[boundary_burst];
+  real_t sendbufr[boundary_burst];
+  real_t sendbufu[boundary_burst];
+  real_t sendbufd[boundary_burst];
+  real_t cop_sendbufl[boundary_burst];
+  real_t cop_sendbufr[boundary_burst];
+  real_t cop_sendbufu[boundary_burst];
+  real_t cop_sendbufd[boundary_burst];
+
+  //fprintf(stderr, " \t [create_work_tasks_12]: boundary_size %lu  -  boundary_burst %lu // %d %d %d \n", boundary_size, boundary_burst, ExtraLayerTot, H->nxyt, H->nvar); fflush (stderr);
+
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  input (_box_L_stream_ref >> sendbufl[boundary_burst], _box_R_stream_ref >> sendbufr[boundary_burst], _box_U_stream_ref >> sendbufu[boundary_burst], _box_D_stream_ref >> sendbufd[boundary_burst]) \
+  output (_box_L_stream_ref << cop_sendbufl[boundary_burst], _box_R_stream_ref << cop_sendbufr[boundary_burst], _box_U_stream_ref << cop_sendbufu[boundary_burst], _box_D_stream_ref << cop_sendbufd[boundary_burst]) \
+  proc_bind ( master ) firstprivate (data_size) firstprivate (boundary_burst, boundary_size)
+  {
+    struct timespec start, end;
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
+    int idim = (SStream_in.H_.nstep % 2) == 0 ? 1 : 2;
+
+    if (idim == 1)
+      {
+	if (SStream_in.H_.box[RIGHT_BOX] != -1)
+	  unpack_arrayv(SStream_in.H_.nx + ExtraLayer, SStream_in.H_, &SStream_in.Hv_, &sendbufl[boundary_size * SStream_in.H_.box[RIGHT_BOX]]);
+	if (SStream_in.H_.box[LEFT_BOX] != -1)
+	  unpack_arrayv(0, SStream_in.H_, &SStream_in.Hv_, &sendbufr[boundary_size * SStream_in.H_.box[LEFT_BOX]]);
+      }
+    else
+      {
+	if (SStream_in.H_.box[DOWN_BOX] != -1)
+	  unpack_arrayh(0, SStream_in.H_, &SStream_in.Hv_, &sendbufu[boundary_size * SStream_in.H_.box[DOWN_BOX]]);
+	if (SStream_in.H_.box[UP_BOX] != -1)
+	  unpack_arrayh(SStream_in.H_.ny + ExtraLayer, SStream_in.H_, &SStream_in.Hv_, &sendbufd[boundary_size * SStream_in.H_.box[UP_BOX]]);
+     }
+    make_boundary(idim, SStream_in.H_, &SStream_in.Hv_);
+    end = cclock();
+    functim[TIM_MAKBOU] += ccelaps(start, end);
+    //if (SStream_in.H_.prt) {fprintf(fic, "MakeBoundary\n");}
+    //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
+
+    hydro_godunov(idim, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+
+    memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+    memcpy (cop_sendbufl, sendbufl, boundary_burst * sizeof (real_t));
+    memcpy (cop_sendbufr, sendbufr, boundary_burst * sizeof (real_t));
+    memcpy (cop_sendbufu, sendbufu, boundary_burst * sizeof (real_t));
+    memcpy (cop_sendbufd, sendbufd, boundary_burst * sizeof (real_t));
+  }
+
+  if (jj == H->nproc - 1)
+    {
+#pragma omp task   input (_box_L_stream_ref >> sendbufl[boundary_burst], _box_R_stream_ref >> sendbufr[boundary_burst], _box_U_stream_ref >> sendbufu[boundary_burst], _box_D_stream_ref >> sendbufd[boundary_burst])
+      {
+	;
+      }
+    }
+}
+
+#if 1
+void
+create_work_tasks_21 (hydroparam_t * H, size_t data_size)
+{
+  real_t _dt_stream_view;
+  real_t _current_t_view;
+  int _current_nstep_view;
+  _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
+
+  size_t boundary_size = ExtraLayerTot * H->nxyt * H->nvar;
+  real_t sendbufl[boundary_size];
+  real_t sendbufr[boundary_size];
+  real_t sendbufu[boundary_size];
+  real_t sendbufd[boundary_size];
+
+  //fprintf(stderr, " \t [WORK_task]: create\n");
+
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  output (_box_L_stream_ref << sendbufl[boundary_size], _box_R_stream_ref << sendbufr[boundary_size], _box_U_stream_ref << sendbufu[boundary_size], _box_D_stream_ref << sendbufd[boundary_size]) \
+  proc_bind ( master ) firstprivate (data_size) firstprivate (boundary_size)
+  {
+    struct timespec start, end;
+    //fprintf(stderr, " \t [Work task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
+    int idim = (SStream_in.H_.nstep % 2) == 0 ? 2 : 1;
+
+    // Update boundary conditions
+    //if (SStream_in.H_.prt) {
+    //fprintf(fic, "godunov %d %le %le\n", idim, dt, SStream_in.H_.t);
+    //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
+    //}
+    // if (SStream_in.H_.mype == 1) fprintf(fic, "Hydro makes boundary.\n");
+    start = cclock();
+
+    if (idim == 1)
+      {
+	pack_arrayv(ExtraLayer, SStream_in.H_, &SStream_in.Hv_, sendbufl);
+	pack_arrayv(SStream_in.H_.nx, SStream_in.H_, &SStream_in.Hv_, sendbufr);
+      }
+    else
+      {
+	pack_arrayh(ExtraLayer, SStream_in.H_, &SStream_in.Hv_, sendbufd);
+	pack_arrayh(SStream_in.H_.ny, SStream_in.H_, &SStream_in.Hv_, sendbufu);
+      }
+
+    memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+  }
+}
+
+void
+create_work_tasks_22 (hydroparam_t * H, size_t data_size, int jj)
+{
+  real_t _dt_stream_view;
+  real_t _current_t_view;
+  int _current_nstep_view;
+  _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
+
+  size_t boundary_size = ExtraLayerTot * H->nxyt * H->nvar;
+  size_t boundary_burst = boundary_size * H->nproc;
+  real_t sendbufl[boundary_burst];
+  real_t sendbufr[boundary_burst];
+  real_t sendbufu[boundary_burst];
+  real_t sendbufd[boundary_burst];
+  real_t cop_sendbufl[boundary_burst];
+  real_t cop_sendbufr[boundary_burst];
+  real_t cop_sendbufu[boundary_burst];
+  real_t cop_sendbufd[boundary_burst];
+
+  //fprintf(stderr, " \t [create_work_tasks_12]: boundary_size %lu  -  boundary_burst %lu\n", boundary_size, boundary_burst); fflush (stderr);
+
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  input (_box_L_stream_ref >> sendbufl[boundary_burst], _box_R_stream_ref >> sendbufr[boundary_burst], _box_U_stream_ref >> sendbufu[boundary_burst], _box_D_stream_ref >> sendbufd[boundary_burst]) \
+  output (_box_L_stream_ref << cop_sendbufl[boundary_burst], _box_R_stream_ref << cop_sendbufr[boundary_burst], _box_U_stream_ref << cop_sendbufu[boundary_burst], _box_D_stream_ref << cop_sendbufd[boundary_burst]) \
+  proc_bind ( master ) firstprivate (data_size) firstprivate (boundary_burst, boundary_size)
+  {
+    struct timespec start, end;
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
+    int idim = (SStream_in.H_.nstep % 2) == 0 ? 2 : 1;
+
+    if (idim == 1)
+      {
+	if (SStream_in.H_.box[RIGHT_BOX] != -1){
+	  //fprintf(stderr, " \t [boundary %d unpacking]: RIGHT_BOX from %lu\n", SStream_in.H_.mype, SStream_in.H_.box[RIGHT_BOX]); fflush (stderr);
+	  unpack_arrayv(SStream_in.H_.nx + ExtraLayer, SStream_in.H_, &SStream_in.Hv_, &sendbufl[boundary_size * SStream_in.H_.box[RIGHT_BOX]]);
+	}
+	if (SStream_in.H_.box[LEFT_BOX] != -1)
+	  unpack_arrayv(0, SStream_in.H_, &SStream_in.Hv_, &sendbufr[boundary_size * SStream_in.H_.box[LEFT_BOX]]);
+      }
+    else
+      {
+	if (SStream_in.H_.box[DOWN_BOX] != -1)
+	  unpack_arrayh(0, SStream_in.H_, &SStream_in.Hv_, &sendbufu[boundary_size * SStream_in.H_.box[DOWN_BOX]]);
+	if (SStream_in.H_.box[UP_BOX] != -1)
+	  unpack_arrayh(SStream_in.H_.ny + ExtraLayer, SStream_in.H_, &SStream_in.Hv_, &sendbufd[boundary_size * SStream_in.H_.box[UP_BOX]]);
+     }
+    make_boundary(idim, SStream_in.H_, &SStream_in.Hv_);
+    end = cclock();
+    functim[TIM_MAKBOU] += ccelaps(start, end);
+    //if (SStream_in.H_.prt) {fprintf(fic, "MakeBoundary\n");}
+    //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
+
+    hydro_godunov(idim, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
+
+    memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+    memcpy (cop_sendbufl, sendbufl, boundary_burst * sizeof (real_t));
+    memcpy (cop_sendbufr, sendbufr, boundary_burst * sizeof (real_t));
+    memcpy (cop_sendbufu, sendbufu, boundary_burst * sizeof (real_t));
+    memcpy (cop_sendbufd, sendbufd, boundary_burst * sizeof (real_t));
+  }
+
+  if (jj == H->nproc - 1)
+    {
+#pragma omp task   input (_box_L_stream_ref >> sendbufl[boundary_burst], _box_R_stream_ref >> sendbufr[boundary_burst], _box_U_stream_ref >> sendbufu[boundary_burst], _box_D_stream_ref >> sendbufd[boundary_burst])
+      {
+	;
+      }
+    }
+}
+
+
+#else
+void
+create_work_tasks_2 (hydroparam_t * H, size_t data_size)
 {
   real_t _dt_stream_view;
   real_t _current_t_view;
@@ -287,34 +548,51 @@ create_work_tasks (real_t temp_min, size_t data_size)
 
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
-  output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
-  proc_bind ( master ) firstprivate (data_size) firstprivate (temp_min)
+  proc_bind ( master ) firstprivate (data_size)
   {
     //fprintf(stderr, " \t [Work task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
 
-    SStream_in.dt = temp_min;
+    int idim = (SStream_in.H_.nstep % 2) == 0 ? 2 : 1;
 
-    int idimStart = (SStream_in.H_.nstep % 2) == 0 ? 1 : 2;
-    for (int idimIndex = 0; idimIndex < 2; idimIndex++) {
-      int idim = (idimStart - 1 + idimIndex) % 2 + 1;
+    // Update boundary conditions
+    //if (SStream_in.H_.prt) {
+    //fprintf(fic, "godunov %d %le %le\n", idim, dt, SStream_in.H_.t);
+    //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
+    //}
+    // if (SStream_in.H_.mype == 1) fprintf(fic, "Hydro makes boundary.\n");
+    struct timespec start, end;
+    start = cclock();
+    make_boundary(idim, SStream_in.H_, &SStream_in.Hv_);
+    end = cclock();
+    functim[TIM_MAKBOU] += ccelaps(start, end);
+    //if (SStream_in.H_.prt) {fprintf(fic, "MakeBoundary\n");}
+    //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
 
-      // Update boundary conditions
-      //if (SStream_in.H_.prt) {
-      //fprintf(fic, "godunov %d %le %le\n", idim, dt, SStream_in.H_.t);
-      //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
-      //}
-      // if (SStream_in.H_.mype == 1) fprintf(fic, "Hydro makes boundary.\n");
-      struct timespec start, end;
-      start = cclock();
-      make_boundary(idim, SStream_in.H_, &SStream_in.Hv_);
-      end = cclock();
-      functim[TIM_MAKBOU] += ccelaps(start, end);
-      //if (SStream_in.H_.prt) {fprintf(fic, "MakeBoundary\n");}
-      //PRINTUOLD(fic, SStream_in.H_, &SStream_in.Hv_);
+    hydro_godunov(idim, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
 
-      hydro_godunov(idim, SStream_in.dt, SStream_in.H_, &SStream_in.Hv_, &SStream_in.Hw_godunov, &SStream_in.Hvw_godunov);
-    }
+    memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
+    memcpy (data_block_out, data_block_in, data_size);
+  }
+}
+#endif
+
+void
+create_work_tasks_4 (hydroparam_t * H, size_t data_size)
+{
+  real_t _dt_stream_view;
+  real_t _current_t_view;
+  int _current_nstep_view;
+  _state_t SStream_in, SStream_out;
+  char data_block_in[data_size];
+  char data_block_out[data_size];
+
+#pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
+  input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
+  output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
+  proc_bind ( master ) firstprivate (data_size)
+  {
+    reset_pointers_to_state_structures (data_block_in, &SStream_in);
 
     SStream_in.end_iter = dcclock();
     SStream_in.cellPerCycle = (double) (SStream_in.H_.globnx * SStream_in.H_.globny) / (SStream_in.end_iter - SStream_in.start_iter) / 1000000.0L;
@@ -469,7 +747,7 @@ create_termination_tasks (size_t data_size, int nproc)
 }
 
 void
-create_next_rounds (int nproc, real_t tend, int nstepmax, size_t data_size)
+create_next_rounds (hydroparam_t * H, int nproc, real_t tend, int nstepmax, size_t data_size)
 {
   real_t _dt_stream_in[nproc];
   real_t _current_t_in[nproc];
@@ -479,7 +757,7 @@ create_next_rounds (int nproc, real_t tend, int nstepmax, size_t data_size)
 
   // Find out the minimumm dt and
 #pragma omp task input (_dt_stream_ref >> _dt_stream_in[nproc], _current_t_ref >> _current_t_in[nproc], _current_nstep_ref >> _current_nstep_in[nproc]) \
-  proc_bind (master) firstprivate (nproc)
+  proc_bind (master) firstprivate (nproc, H)
   {
     //fprintf(stderr, " -- [next_rounds] --: exec\n");
     real_t temp_min = _dt_stream_in[0];
@@ -492,14 +770,22 @@ create_next_rounds (int nproc, real_t tend, int nstepmax, size_t data_size)
 
     if ((_current_t_in[0] + temp_min < tend) && (_current_nstep_in[0] + 1 < nstepmax))
       {
-#pragma omp task proc_bind (master) firstprivate (nproc)
+#pragma omp task proc_bind (master) firstprivate (nproc, H)
 	{
 	  //fprintf(stderr, " -- [PROXY] --: exec\n");
 	  for (int j = 0; j < nproc; ++j)
-	    create_work_tasks (temp_min, data_size);
+	    create_work_tasks_11 (H, temp_min, data_size);
+	  for (int j = 0; j < nproc; ++j)
+	    create_work_tasks_12 (H, data_size, j);
+	  for (int j = 0; j < nproc; ++j)
+	    create_work_tasks_21 (H, data_size);
+	  for (int j = 0; j < nproc; ++j)
+	    create_work_tasks_22 (H, data_size, j);
+	  for (int j = 0; j < nproc; ++j)
+	    create_work_tasks_4 (H, data_size);
 	  for (int j = 0; j < nproc; ++j)
 	    create_work_forward_tasks (data_size);
-	  create_next_rounds (nproc, tend, nstepmax, data_size);
+	  create_next_rounds (H, nproc, tend, nstepmax, data_size);
 	}
       }
     else
@@ -518,6 +804,10 @@ main(int argc, char **argv) {
   real_t _current_t __attribute__((stream));
   int _current_nstep __attribute__((stream));
   int term __attribute__((stream));
+  real_t _box_L_stream __attribute__((stream));
+  real_t _box_R_stream __attribute__((stream));
+  real_t _box_U_stream __attribute__((stream));
+  real_t _box_D_stream __attribute__((stream));
 
   // array of timers to profile the code
   memset(functim, 0, TIM_END * sizeof(functim[0]));
@@ -534,21 +824,25 @@ main(int argc, char **argv) {
   SStream_ref = SStream;
   DStream_ref = DStream;
   term_ref = term;
+  _box_L_stream_ref = _box_L_stream;
+  _box_R_stream_ref = _box_R_stream;
+  _box_U_stream_ref = _box_U_stream;
+  _box_D_stream_ref = _box_D_stream;
 
-  setup_subsurface (0, &_init_H);
+  setup_subsurface (0, H);
 
-  size_t data_size = estimate_data_size (&_init_H);
+  size_t data_size = estimate_data_size (H);
 
   fprintf(stderr, " >> Hydro starting on %d nodes -- data block size is %d\n", nproc, data_size);
 
   for (int i = 0; i < nproc; ++i)
-    partition_and_initialize_data_stream (&_init_H, i, data_size);
+    partition_and_initialize_data_stream (H, i, data_size);
   for (int i = 0; i < nproc; ++i)
     create_first_tasks (data_size);
   for (int i = 0; i < nproc; ++i)
     create_first_forward_tasks (data_size);
 
-  create_next_rounds (nproc, tend, nstepmax, data_size);
+  create_next_rounds (H, nproc, tend, nstepmax, data_size);
 
 #pragma omp task input (term) proc_bind (master)
   {
