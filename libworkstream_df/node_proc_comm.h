@@ -164,6 +164,7 @@ static inline void npc_init_comm_listeners (int offset, enum npc_comm_type type,
 	handle->type = type;
 	assert (MPI_Irecv (handle->comm_buffer, handle->size, MPI_CHAR, MPI_ANY_SOURCE,
 			   handle->tag, MPI_COMM_WORLD, &handle->comm_request) == MPI_SUCCESS);
+	LOG_MPI ("MPI_Irecv issued on [node/thread] %d/%d with tag %d for request %p", npc.node_id, cthread->worker_id, handle->tag, handle->comm_request);
       }
 }
 
@@ -174,7 +175,7 @@ static inline void npc_reissue_listener (npc_comm_handle_p h)
   h->comm_buffer = slab_alloc (NULL, cthread->slab_cache, h->size);
   assert (MPI_Irecv (h->comm_buffer, h->size, MPI_CHAR, MPI_ANY_SOURCE,
 		     h->tag, MPI_COMM_WORLD, &h->comm_request) == MPI_SUCCESS);
-
+  LOG_MPI ("MPI_Irecv issued on [node/thread] %d/%d with tag %d for request %p", npc.node_id, cthread->worker_id, h->tag, h->comm_request);
 }
 
 
@@ -359,8 +360,11 @@ npc_handle_outstanding_communications ()
 
   while (h != NULL)
     {
-      int ret;
+      int ret; MPI_Request temp = h->comm_request;
+      
       assert (MPI_Test (&h->comm_request, &ret, MPI_STATUS_IGNORE) == MPI_SUCCESS);
+      if (ret)
+	LOG_MPI ("MPI_Test successful on [node/thread] %d/%d for request %p", npc.node_id, cthread->worker_id, temp);
 
       // If we've successfully completed a communication
       if (ret)
@@ -422,6 +426,7 @@ npc_handle_task_queues ()
 
       assert (MPI_Isend (handle->comm_buffer, handle->size, MPI_CHAR, target,
 			 handle->tag, MPI_COMM_WORLD, &handle->comm_request) == MPI_SUCCESS);
+      LOG_MPI ("MPI_Isend issued on [node/thread] %d/%d with tag %d for request %p", npc.node_id, current_thread->worker_id, handle->tag, handle->comm_request);
 
       // Now we need to make sure that we are going to keep track of
       // this task until we are notified of completion. Assign to it a unique ID

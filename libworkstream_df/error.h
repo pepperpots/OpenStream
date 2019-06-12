@@ -4,4 +4,6 @@
 void wstream_df_error (const char *, ...);
 void wstream_df_fatal (const char *, ...);
 
+void wstream_df_log (const char *, ...);
+
 #endif

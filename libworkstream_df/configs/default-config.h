@@ -44,6 +44,15 @@
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
+#ifndef LOG_MPI_ACTIVITY
+#  define LOG_MPI_ACTIVITY 0
+#endif
+#if LOG_MPI_ACTIVITY
+#  define LOG_MPI(...) wstream_df_log(__VA_ARGS__)
+#else
+#  define LOG_MPI(...)
+#endif
+
 //#define WS_PAPI_PROFILE
 //#define WS_PAPI_MULTIPLEX
 

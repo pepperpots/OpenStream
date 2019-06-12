@@ -478,6 +478,7 @@ __builtin_ia32_tend (void *fp)
 	}
       assert (MPI_Isend (handle->comm_buffer, pos, MPI_CHAR, cfp->origin_node,
 			 handle->tag, MPI_COMM_WORLD, &handle->comm_request) == MPI_SUCCESS);
+      LOG_MPI ("MPI_Isend issued on [node/thread] %d/%d with tag %d for request %p", npc.node_id, cthread->worker_id, handle->tag, handle->comm_request);
       slab_free (cthread->slab_cache, (void *)((size_t)fp - sizeof(size_t)));
 
       pthread_mutex_unlock (&npc.npc_lock);

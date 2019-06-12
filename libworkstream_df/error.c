@@ -33,3 +33,21 @@ wstream_df_fatal (const char *fmt, ...)
 
   exit (EXIT_FAILURE);
 }
+
+static void
+wstream_df_vlog (const char *fmt, va_list list)
+{
+  fputs ("[OS-LOG] ", stdout);
+  vfprintf (stdout, fmt, list);
+  fputc ('\n', stdout);
+}
+
+void
+wstream_df_log (const char *fmt, ...)
+{
+  va_list list;
+
+  va_start (list, fmt);
+  wstream_df_vlog (fmt, list);
+  va_end (list);
+}
