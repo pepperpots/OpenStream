@@ -32,7 +32,7 @@
 #define __npc_default_termination_tag 0
 
 #define __npc_default_comm_size_min 10 //  1KiB -- smallest default comm
-#define __npc_default_comm_size_max 21 //  2MiB -- biggest default comm
+#define __npc_default_comm_size_max 24 //  2MiB -- biggest default comm
 #define __npc_default_comm_tag_offload_offset 100
 #define __npc_default_comm_tag_returns_offset 200
 static inline unsigned int
