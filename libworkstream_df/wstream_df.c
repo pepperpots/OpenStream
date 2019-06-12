@@ -473,6 +473,7 @@ __builtin_ia32_tend (void *fp)
       for (v = cfp->output_view_chain; v; v = v->view_chain_next)
 	{
 	  memcpy (handle->comm_buffer + pos, (char *)v->data, v->burst);
+	  slab_free (cthread->slab_cache, (void *)v->data);	  
 	  pos += v->burst;
 	}
       assert (MPI_Isend (handle->comm_buffer, pos, MPI_CHAR, cfp->origin_node,
