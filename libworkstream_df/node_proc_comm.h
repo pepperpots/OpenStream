@@ -361,7 +361,7 @@ npc_handle_outstanding_communications ()
   while (h != NULL)
     {
       int ret; MPI_Request temp = h->comm_request;
-      
+
       assert (MPI_Test (&h->comm_request, &ret, MPI_STATUS_IGNORE) == MPI_SUCCESS);
       if (ret)
 	LOG_MPI ("MPI_Test successful on [node/thread] %d/%d for request %p", npc.node_id, cthread->worker_id, temp);
@@ -394,16 +394,16 @@ npc_handle_outstanding_communications ()
 
 
 
-
-
-
 static inline bool
 npc_push_task (wstream_df_frame_p fp)
 {
-  // TODO: this should be a bit more elaborate on decision of whether
-  // we want to offload any given task - use the compute ratio heuristic (N-1/N nodes)
-  char *packed_frame = npc_pack_task (fp);
-  return fifo_pushback (npc.remote_queue, packed_frame);
+  if (prng_nextn (&npc.rands, npc.num_nodes * 1.1) > 0)
+    {
+      char *packed_frame = npc_pack_task (fp);
+      return fifo_pushback (npc.remote_queue, packed_frame);
+    }
+  else
+    return false;
 }
 
 static inline void
