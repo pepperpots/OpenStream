@@ -229,7 +229,7 @@ create_first_tasks (size_t data_size)
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
-  proc_bind ( master ) firstprivate (data_size)
+  proc_bind ( spread ) firstprivate (data_size)
   {
     //fprintf(stderr, " \t [FIRST_task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc); fflush (stderr);
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
@@ -270,7 +270,7 @@ create_first_forward_tasks (size_t data_size)
   char data_block_out[data_size];
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
-  proc_bind ( master ) firstprivate (data_size)
+  proc_bind ( spread ) firstprivate (data_size)
   {
     //fprintf(stderr, " \t [FIRST forward task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
     //fprintf(stderr, " \t [FIRST forward task]: exec\n");
@@ -300,7 +300,7 @@ create_work_tasks_11 (hydroparam_t * H, real_t temp_min, size_t data_size)
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_box_L_stream_ref << sendbufl[boundary_size], _box_R_stream_ref << sendbufr[boundary_size], _box_U_stream_ref << sendbufu[boundary_size], _box_D_stream_ref << sendbufd[boundary_size]) \
-  proc_bind ( master ) firstprivate (data_size) firstprivate (temp_min) firstprivate (boundary_size)
+  proc_bind ( spread ) firstprivate (data_size) firstprivate (temp_min) firstprivate (boundary_size)
   {
     struct timespec start, end;
     //fprintf(stderr, " \t [Work task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
@@ -360,7 +360,7 @@ create_work_tasks_12 (hydroparam_t * H, size_t data_size, int jj)
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   input (_box_L_stream_ref >> sendbufl[boundary_burst], _box_R_stream_ref >> sendbufr[boundary_burst], _box_U_stream_ref >> sendbufu[boundary_burst], _box_D_stream_ref >> sendbufd[boundary_burst]) \
   output (_box_L_stream_ref << cop_sendbufl[boundary_burst], _box_R_stream_ref << cop_sendbufr[boundary_burst], _box_U_stream_ref << cop_sendbufu[boundary_burst], _box_D_stream_ref << cop_sendbufd[boundary_burst]) \
-  proc_bind ( master ) firstprivate (data_size) firstprivate (boundary_burst, boundary_size)
+  proc_bind ( spread ) firstprivate (data_size) firstprivate (boundary_burst, boundary_size)
   {
     struct timespec start, end;
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
@@ -427,7 +427,7 @@ create_work_tasks_21 (hydroparam_t * H, size_t data_size)
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_box_L_stream_ref << sendbufl[boundary_size], _box_R_stream_ref << sendbufr[boundary_size], _box_U_stream_ref << sendbufu[boundary_size], _box_D_stream_ref << sendbufd[boundary_size]) \
-  proc_bind ( master ) firstprivate (data_size) firstprivate (boundary_size)
+  proc_bind ( spread ) firstprivate (data_size) firstprivate (boundary_size)
   {
     struct timespec start, end;
     //fprintf(stderr, " \t [Work task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
@@ -485,7 +485,7 @@ create_work_tasks_22 (hydroparam_t * H, size_t data_size, int jj)
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   input (_box_L_stream_ref >> sendbufl[boundary_burst], _box_R_stream_ref >> sendbufr[boundary_burst], _box_U_stream_ref >> sendbufu[boundary_burst], _box_D_stream_ref >> sendbufd[boundary_burst]) \
   output (_box_L_stream_ref << cop_sendbufl[boundary_burst], _box_R_stream_ref << cop_sendbufr[boundary_burst], _box_U_stream_ref << cop_sendbufu[boundary_burst], _box_D_stream_ref << cop_sendbufd[boundary_burst]) \
-  proc_bind ( master ) firstprivate (data_size) firstprivate (boundary_burst, boundary_size)
+  proc_bind ( spread ) firstprivate (data_size) firstprivate (boundary_burst, boundary_size)
   {
     struct timespec start, end;
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
@@ -548,7 +548,7 @@ create_work_tasks_2 (hydroparam_t * H, size_t data_size)
 
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
-  proc_bind ( master ) firstprivate (data_size)
+  proc_bind ( spread ) firstprivate (data_size)
   {
     //fprintf(stderr, " \t [Work task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
@@ -590,7 +590,7 @@ create_work_tasks_4 (hydroparam_t * H, size_t data_size)
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
   output (_dt_stream_ref << _dt_stream_view, _current_t_ref << _current_t_view, _current_nstep_ref << _current_nstep_view) \
-  proc_bind ( master ) firstprivate (data_size)
+  proc_bind ( spread ) firstprivate (data_size)
   {
     reset_pointers_to_state_structures (data_block_in, &SStream_in);
 
@@ -659,7 +659,7 @@ create_work_forward_tasks (size_t data_size)
   char data_block_out[data_size];
 #pragma omp task input (SStream_ref >> SStream_in) output (SStream_ref << SStream_out) \
   input (DStream_ref >> data_block_in[data_size]) output (DStream_ref << data_block_out[data_size]) \
-  proc_bind ( master ) firstprivate (data_size)
+  proc_bind ( spread ) firstprivate (data_size)
   {
     //fprintf(stderr, " \t [Work forward task]: exec %d %d/%d\n", data_size, SStream_in.H_.mype, SStream_in.H_.nproc);
     memcpy (&SStream_out, &SStream_in, sizeof (_state_t));
@@ -678,7 +678,7 @@ create_termination_tasks (size_t data_size, int nproc)
 
 #pragma omp task input (SStream_ref >> SStream_in[nproc]) output (term_ref << term_out) \
   input (DStream_ref >> data_block_in[data_size*nproc])			\
-  proc_bind ( master ) firstprivate (data_size, nproc)
+  proc_bind ( spread ) firstprivate (data_size, nproc)
       {
 	for (int i = 0; i < nproc; ++i)
 	  {
