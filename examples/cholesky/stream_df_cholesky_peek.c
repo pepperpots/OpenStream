@@ -497,6 +497,8 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
+	cholesky_init_random_matrix(global_matrix, N);
+
 	matrix_add_padding(global_matrix, N, padding_elements);
 
 	sdpotrf_ref = malloc(ntiles*ntiles*sizeof(void*));
