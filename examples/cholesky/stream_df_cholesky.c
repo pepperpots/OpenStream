@@ -253,8 +253,8 @@ void create_dgemm_task(double* input_data, int x, int blocks, int block_size, in
 
 	  cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 		       block_size, block_size, block_size,
-		       -1.0, upper_in, block_size,
-		       lower_in, block_size,
+		       -1.0, lower_in, block_size,
+		       upper_in, block_size,
 		       1.0, out, block_size);
 
 	  if(stage+2 < x)
@@ -270,8 +270,8 @@ void create_dgemm_task(double* input_data, int x, int blocks, int block_size, in
 
 	cblas_dgemm (CblasRowMajor, CblasNoTrans, CblasTrans,
 		     block_size, block_size, block_size,
-		     -1.0, upper_in, block_size,
-		     lower_in, block_size,
+		     -1.0, lower_in, block_size,
+		     upper_in, block_size,
 		     1.0, out, block_size);
 
 	if(stage+2 < x)
