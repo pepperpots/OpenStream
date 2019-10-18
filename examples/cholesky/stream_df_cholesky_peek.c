@@ -399,7 +399,7 @@ static inline void create_task(struct tdesc* tdesc)
 
 void create_tasks(struct tdesc* tdesc, int ntasks, int batch)
 {
-	if(ntasks > batch) {
+	if(ntasks > batch && ntasks > 1) {
 		#pragma omp task
 		{
 			create_tasks(tdesc, ntasks / 2, batch);
