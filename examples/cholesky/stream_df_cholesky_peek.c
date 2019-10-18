@@ -96,7 +96,7 @@ int cholesky_verify(double* matrix, double* seq_input_matrix, int N, int padding
 	dpotrf_(&upper, &N, seq_input_matrix, &Npad, &nfo);
 
 	for(int x = 0; x < N; x++) {
-		for(int y = 0; y < N-x; y++) {
+		for(int y = 0; y < N; y++) {
 			if(!double_equal(matrix[y*Npad+x], seq_input_matrix[y*Npad+x])) {
 				fprintf(stderr, "Data differs at Y = %d, X = %d: expect %.20f, but was %.20f, diff is %.20f, reldiff = %.20f\n", y, x, seq_input_matrix[y*Npad+x], matrix[y*Npad+x], fabs(seq_input_matrix[y*Npad+x] - matrix[y*Npad+x]), fabs(seq_input_matrix[y*Npad+x] - matrix[y*Npad+x]) / fabs(seq_input_matrix[y*Npad+x]));
 				return 0;
