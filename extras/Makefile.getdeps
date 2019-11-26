@@ -3,6 +3,7 @@ include Makefile.config
 MPC_MIRROR=http://ftp.gnu.org/gnu/mpc/
 MPFR_MIRROR=http://ftp.gnu.org/gnu/mpfr/
 GMP_MIRROR=http://ftp.gnu.org/gnu/gmp/
+HWLOC_MIRROR=https://download.open-mpi.org/release/hwloc/
 CONTRIB_LIBDIR=$(INST_DIR)/lib
 CONTRIB_LIB64DIR=$(INST_DIR)/lib64
 CONTRIB_BINDIR=$(INST_DIR)/bin
@@ -23,6 +24,7 @@ MPFR_VERSION=3.1.3
 GMP_VERSION=6.1.0
 CONTRIB_OPT=-O3
 NUMACTL_VERSION=2.0.12
+HWLOC_VERSION=2.1.0
 
 EXAMPLE_DEPS=$(CONTRIB_LIBDIR)/libblas.so \
 	$(CONTRIB_LIBDIR)/liblapack.so \
@@ -44,7 +46,7 @@ exampledeps: $(EXAMPLE_DEPS)
 ################################################################################
 bootstrap: $(BOOTSTRAP_DEPS)
 
-$(INST_DIR)/lib64/libwstream_df.so: $(INST_DIR)/bin/gcc libnuma
+$(INST_DIR)/lib64/libwstream_df.so: $(INST_DIR)/bin/gcc libnuma hwloc
 	$(MAKE) -C libworkstream_df
 	$(MAKE) -C libworkstream_df install
 
@@ -431,3 +433,23 @@ $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)/Makefile: $(ARCHIVES_DIR)/numactl-$(NU
 $(ARCHIVES_DIR)/numactl-$(NUMACTL_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
 	wget 'https://launchpad.net/ubuntu/+archive/primary/+files/numactl_$(NUMACTL_VERSION).orig.tar.gz' -O $@
+
+################################################################################
+# Portable Hardware Locality (hwloc)                                           #
+################################################################################
+
+hwloc: $(CONTRIB_BINDIR)/lstopo
+
+$(CONTRIB_BINDIR)/lstopo : $(CONTRIB_DIR)/hwloc-$(HWLOC_VERSION)/Makefile
+	$(MAKE) -C $(CONTRIB_DIR)/hwloc-$(HWLOC_VERSION) install
+
+$(ARCHIVES_DIR)/hwloc-$(HWLOC_VERSION).tar.gz:
+	mkdir -p $(ARCHIVES_DIR)
+	wget '$(HWLOC_MIRROR)v$(shell echo "$(HWLOC_VERSION)" | sed 's/\(.*\).[0-9]\+/\1/')/hwloc-$(HWLOC_VERSION).tar.gz' -O $@
+
+$(CONTRIB_DIR)/hwloc-$(HWLOC_VERSION)/Makefile : $(ARCHIVES_DIR)/hwloc-$(HWLOC_VERSION).tar.gz
+	mkdir -p $(CONTRIB_DIR)
+	if [ -d "$(CONTRIB_DIR)/hwloc-$(HWLOC_VERSION)" ] ; \
+		then rm -rf "$(CONTRIB_DIR)/hwloc-$(HWLOC_VERSION)" ; fi
+	cd $(CONTRIB_DIR); tar xf $<
+	cd $(CONTRIB_DIR)/hwloc-$(HWLOC_VERSION); ./configure --prefix=$(INST_DIR)
