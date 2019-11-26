@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <assert.h>
+#include "hwloc-support.h"
 
 #define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
 
@@ -150,26 +151,5 @@ store_conditional (volatile size_t *ptr, size_t value)
   return status == 0;
 }
 #endif
-
-/* Count the number of cores this process has. The result is only
- * correct when this function is called before pinning threads to CPUs
- */
-static inline int
-wstream_df_num_cores_unbound ()
-{
-  cpu_set_t cs;
-  CPU_ZERO (&cs);
-  sched_getaffinity (getpid (), sizeof (cs), &cs);
-
-  return CPU_COUNT (&cs);
-}
-
-extern int __wstream_df_num_cores_cached;
-
-static inline int wstream_df_num_cores_cached(void)
-{
-  assert(__wstream_df_num_cores_cached != -1);
-  return __wstream_df_num_cores_cached;
-}
 
 #endif

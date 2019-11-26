@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <hwloc.h>
 
 #include "fibers.h"
 #include "cdeque.h"
@@ -210,7 +211,7 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 #endif // !DISABLE_WQUEUE_LOCAL_CACHE
 
   unsigned int rands;
-  unsigned int cpu;
+  hwloc_obj_t cpu;
   struct wstream_df_numa_node* numa_node;
   int64_t tsc_offset;
   int tsc_offset_init;
@@ -234,8 +235,6 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 int wstream_self(void);
 
 int worker_id_to_cpu(unsigned int worker_id);
-int cpu_to_worker_id(int cpu);
-int cpu_used(int cpu);
 
 void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 		    unsigned int* max_worker, int* max_data);

@@ -8,6 +8,7 @@
 #include <signal.h>
 
 #include "config.h"
+#include "hwloc.h"
 #include "trace.h"
 #include "wstream_df.h"
 #include "profiling.h"
@@ -19,6 +20,7 @@
 #include "reuse.h"
 #include "prng.h"
 #include "interleave.h"
+#include "hwloc-support.h"
 
 #ifdef DEPENDENCE_AWARE_ALLOC
 	#error "Obsolete option 'dependence-aware allocation' enabled"
@@ -32,10 +34,7 @@ __thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
 static wstream_df_thread_p* wstream_df_worker_threads;
-wstream_df_numa_node_p wstream_df_default_node;
 static int num_workers;
-static int* wstream_df_worker_cpus;
-int __wstream_df_num_cores_cached = -1;
 
 void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 
@@ -315,8 +314,6 @@ void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p 
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
-  unsigned int max_worker;
-  int max_data;
 
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
   wstream_df_thread_p cthread = current_thread;
@@ -327,8 +324,8 @@ tdecrease_n (void *data, size_t n, bool is_write)
     inc_wqueue_counter(&fp->bytes_cpu_in[cthread->cpu], n);
     set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->cpu], rdtsc() - cthread->tsc_offset);
 
-    if(fp->cache_misses[cthread->cpu] == 0)
-      fp->cache_misses[cthread->cpu] = mem_cache_misses(cthread);
+    if (fp->cache_misses[cthread->cpu->os_index] == 0)
+      fp->cache_misses[cthread->cpu->os_index] = mem_cache_misses(cthread);
   }
 
   int sc = 0;
@@ -842,7 +839,7 @@ worker_thread (void)
 
   /* Worker 0 has already been initialized */
   if(!cthread->tsc_offset_init) {
-    cthread->tsc_offset = get_tsc_offset(&global_tsc_ref, cthread->cpu);
+    cthread->tsc_offset = get_tsc_offset(&global_tsc_ref, cthread->cpu->os_index);
     cthread->tsc_offset_init = 1;
   }
 
@@ -1047,17 +1044,7 @@ openstream_parse_affinity (unsigned short **cpus_out, size_t *num_cpus_out)
 
 int worker_id_to_cpu(unsigned int worker_id)
 {
-  return wstream_df_worker_threads[worker_id]->cpu;
-}
-
-int cpu_to_worker_id(int cpu)
-{
-  return wstream_df_worker_cpus[cpu];
-}
-
-int cpu_used(int cpu)
-{
-  return (cpu_to_worker_id(cpu) != -1);
+  return wstream_df_worker_threads[worker_id]->cpu->os_index;
 }
 
 wstream_df_thread_p allocate_worker_struct(int for_cpu)
@@ -1075,23 +1062,16 @@ wstream_df_thread_p allocate_worker_struct(int for_cpu)
 }
 
 static void
-start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
-	      unsigned short *cpu_affinities, size_t num_cpu_affinities,
+start_worker (wstream_df_thread_p wstream_df_worker, hwloc_obj_t cpu, size_t num_cpu_affinities,
 	      void *(*work_fn) (void *))
 {
   pthread_attr_t thread_attr;
-  unsigned int i;
   int numa_node_id;
   wstream_df_numa_node_p numa_node;
 
-  int id = wstream_df_worker->worker_id;
+  wstream_df_worker->cpu = cpu;
 
-  if (cpu_affinities == NULL)
-    wstream_df_worker->cpu = id % ncores;
-  else
-    wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
-
-  numa_node_id = mem_numa_node(wstream_df_worker->cpu);
+  numa_node_id = mem_numa_node(wstream_df_worker->cpu->os_index);
   numa_node = numa_node_by_id(numa_node_id);
   numa_node_add_thread(numa_node, wstream_df_worker);
 
@@ -1106,103 +1086,95 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   pthread_attr_init (&thread_attr);
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
 
-  cpu_set_t cs;
-  CPU_ZERO (&cs);
-  CPU_SET (wstream_df_worker->cpu, &cs);
+  cpu_set_t cs = object_glibc_cpuset(wstream_df_worker->cpu);
 
-  if(cpu_used(wstream_df_worker->cpu)) {
-	  printf("WORKER %d fails for cpu %d!\n", wstream_df_worker->worker_id, wstream_df_worker->cpu);
-  }
-  assert(!cpu_used(wstream_df_worker->cpu));
-  wstream_df_worker_cpus[wstream_df_worker->cpu] = wstream_df_worker->worker_id;
-
-  int errno = pthread_attr_setaffinity_np (&thread_attr, sizeof (cs), &cs);
-  if (errno < 0)
-    wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
+  int error_val = pthread_attr_setaffinity_np(&thread_attr, sizeof(cs), &cs);
+  if (error_val < 0)
+    wstream_df_fatal("pthread_attr_setaffinity_np error: %s\n",
+                     strerror(error_val));
 
   void *stack = slab_alloc(NULL, wstream_df_worker_threads[0]->slab_cache, WSTREAM_STACK_SIZE);
-  errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
+  error_val = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
   wstream_df_worker->current_stack = stack;
 
-  pthread_create (&wstream_df_worker->posix_thread_id, &thread_attr,
-		  work_fn, wstream_df_worker);
+  error_val = pthread_create(&wstream_df_worker->posix_thread_id, &thread_attr,
+                             work_fn, wstream_df_worker);
+  if (error_val)
+    wstream_df_fatal("pthread_create error: %s\n", strerror(error_val));
 
-  CPU_ZERO (&cs);
-  errno = pthread_getaffinity_np (wstream_df_worker->posix_thread_id, sizeof (cs), &cs);
-  if (errno != 0)
-    wstream_df_fatal ("pthread_getaffinity_np error: %s\n", strerror (errno));
-
-  for (i = 0; i < CPU_SETSIZE; i++)
-    if (CPU_ISSET (i, &cs) && i != wstream_df_worker->cpu)
-      wstream_df_error ("got affinity to core %d, expecting %d\n", i, wstream_df_worker->cpu);
-
-  if (!CPU_ISSET (wstream_df_worker->cpu, &cs))
-    wstream_df_error ("no affinity to core %d\n", wstream_df_worker->cpu);
+  check_bond_to_cpu(wstream_df_worker->posix_thread_id, wstream_df_worker->cpu);
 
   pthread_attr_destroy (&thread_attr);
 }
 
 /* Use main as root task */
-void main(void);
+int main(void);
 
 __attribute__((constructor))
 void pre_main()
 {
-  int i, ncores;
+  int i;
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
   int numa_node;
-  int worker0_cpu, cpu;
+  cpu_set_t cs;
 
   init_transfer_matrix();
 
-  /* Set workers number as the number of cores.  */
+  if (!discover_machine_topology()) {
+    wstream_df_fatal("[hwloc] Cannot get architecture information from system");
+  }
+
+  /* Restrict topology to the CPU set */
+  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
+  if (num_cpu_affinities > 0) {
+    CPU_ZERO(&cs);
+    for (size_t j = 0; j < num_cpu_affinities; ++j)
+      CPU_SET(cpu_affinities[j], &cs);
+    if (!restrict_topology_to_glibc_cpuset(cs)) {
+      wstream_df_error("[hwloc] Warning: could not restrict cpuset");
+    }
+  }
+
+  /* Restrict the topology according to the number of threads */
+  num_workers = num_available_processing_units();
 #ifndef _WSTREAM_DF_NUM_THREADS
-  if(getenv("OMP_NUM_THREADS"))
-    num_workers = atoi(getenv("OMP_NUM_THREADS"));
-  else
-    num_workers = wstream_df_num_cores_unbound ();
-#else
-  num_workers = _WSTREAM_DF_NUM_THREADS;
+  if (getenv("OMP_NUM_THREADS")) {
+    int omp_num_threads = atoi(getenv("OMP_NUM_THREADS"));
+    if (omp_num_threads > num_workers) {
+      fprintf(stderr, "Warning: you are using more cpu");
+    } else {
+      num_workers = omp_num_threads;
+    }
+  }
 #endif
+  fprintf(stdout, "Using %d threads\n", num_workers);
+  hwloc_obj_t *processor_mapping = NULL;
+  if (!distribute_worker_on_topology(num_workers, &processor_mapping)) {
+    wstream_df_error("[hwloc] Warning: could distribute workers on %d CPUs\n",
+                     num_workers);
+  }
+  fprintf(stdout, "Using topology:\n");
+  print_topology_tree(stdout);
 
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
 		      num_workers * sizeof (wstream_df_thread_t*)))
     wstream_df_fatal ("Out of memory ...");
 
-  if (posix_memalign ((void **)&wstream_df_worker_cpus, 64,
-		      MAX_CPUS * sizeof (unsigned int)))
-    wstream_df_fatal ("Out of memory ...");
-
-  for(i = 0; i < MAX_CPUS; i++)
-    wstream_df_worker_cpus[i] = -1;
-
   /* Add a guard frame for the control program (in case threads catch
      up with the control program).  */
 
   tsc_reference_offset_init(&global_tsc_ref);
-  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
 
-  if (cpu_affinities == NULL)
-    worker0_cpu = 0;
-  else
-    worker0_cpu = cpu_affinities[0];
-
-  wstream_df_worker_threads[0] = allocate_worker_struct(worker0_cpu);
+  wstream_df_worker_threads[0] = allocate_worker_struct(processor_mapping[0]->os_index);
   current_thread = wstream_df_worker_threads[0];
-  current_thread->cpu = worker0_cpu;
+  current_thread->cpu = processor_mapping[0];
   current_barrier = NULL;
 
   numa_nodes_init();
 
-  wstream_df_worker_cpus[current_thread->cpu] = 0;
-
-  ncores = wstream_df_num_cores_unbound ();
-  __wstream_df_num_cores_cached = ncores;
-
-  numa_node = mem_numa_node(current_thread->cpu);
+  numa_node = mem_numa_node(current_thread->cpu->os_index);
   numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
-  wstream_df_default_node = numa_node_by_id(numa_node);
 
   trace_init(current_thread);
 
@@ -1211,18 +1183,13 @@ void pre_main()
 #endif
 
 #ifdef _PRINT_STATS
-  printf ("Creating %d workers for %d cores\n", num_workers, ncores);
+  printf ("Creating %d workers for %d cores\n", num_workers, num_workers);
 #endif
 
   for (i = 0; i < num_workers; ++i)
     {
-      if (cpu_affinities == NULL)
-	cpu = i % ncores;
-      else
-	cpu = cpu_affinities[i % num_cpu_affinities];
-
       if(i != 0)
-	wstream_df_worker_threads[i] = allocate_worker_struct(cpu);
+        wstream_df_worker_threads[i] = allocate_worker_struct(processor_mapping[i]->os_index);
 
       cdeque_init (&wstream_df_worker_threads[i]->work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
       wstream_df_worker_threads[i]->worker_id = i;
@@ -1238,28 +1205,29 @@ void pre_main()
     
     }
 
-  cpu_set_t cs;
-  CPU_ZERO (&cs);
-  CPU_SET (current_thread->cpu, &cs);
+    cs = object_glibc_cpuset(current_thread->cpu);
 
-  int errno = pthread_setaffinity_np (pthread_self(), sizeof (cs), &cs);
-  if (errno < 0)
-    wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
+    int error_val = pthread_setaffinity_np(pthread_self(), sizeof(cs), &cs);
+    if (error_val < 0)
+      wstream_df_fatal("pthread_attr_setaffinity_np error: %s\n",
+                       strerror(error_val));
+    check_bond_to_cpu(pthread_self(), current_thread->cpu);
 
-  current_thread->tsc_offset = get_tsc_offset(&global_tsc_ref, current_thread->cpu);
-  current_thread->tsc_offset_init = 1;
+    current_thread->tsc_offset =
+        get_tsc_offset(&global_tsc_ref, current_thread->cpu->os_index);
+    current_thread->tsc_offset_init = 1;
 
-  setup_wqueue_counters();
+    setup_wqueue_counters();
 
-  for (i = 1; i < num_workers; ++i)
-    start_worker (wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
-		  wstream_df_worker_thread_fn);
+    for (i = 1; i < num_workers; ++i)
+      start_worker(wstream_df_worker_threads[i], processor_mapping[i],
+                   num_cpu_affinities, wstream_df_worker_thread_fn);
 
-  free (cpu_affinities);
-  init_wqueue_counters(wstream_df_worker_threads[0]);
+    free(cpu_affinities);
+    init_wqueue_counters(wstream_df_worker_threads[0]);
 
-  wstream_df_worker_threads[0]->current_work_fn = (void*)main;
-  wstream_df_worker_threads[0]->current_frame = NULL;
+    wstream_df_worker_threads[0]->current_work_fn = (void *)main;
+    wstream_df_worker_threads[0]->current_frame = NULL;
 
 #if ALLOW_WQEVENT_SAMPLING
   if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
