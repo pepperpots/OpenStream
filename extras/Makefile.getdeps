@@ -22,7 +22,7 @@ MPC_VERSION=1.0.3
 MPFR_VERSION=3.1.3
 GMP_VERSION=6.1.0
 CONTRIB_OPT=-O3
-NUMACTL_VERSION=2.0.8
+NUMACTL_VERSION=2.0.12
 
 EXAMPLE_DEPS=$(CONTRIB_LIBDIR)/libblas.so \
 	$(CONTRIB_LIBDIR)/liblapack.so \
@@ -478,14 +478,14 @@ libnuma: $(CONTRIB_BINDIR)/numactl
 
 $(CONTRIB_BINDIR)/numactl: $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)/Makefile
 	$(MAKE) -C $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)
-	$(MAKE) PREFIX=$(INST_DIR) -C $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION) install
+	$(MAKE) -C $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION) install
 
 $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)/Makefile: $(ARCHIVES_DIR)/numactl-$(NUMACTL_VERSION).tar.gz
 	mkdir -p $(CONTRIB_DIR)
 	if [ -d $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION) ] ; \
 		then rm -rf "$(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION)" ; fi
 	cd $(CONTRIB_DIR); tar xf $<
-	touch $@
+	cd $(CONTRIB_DIR)/numactl-$(NUMACTL_VERSION); ./configure --prefix=$(INST_DIR)
 
 $(ARCHIVES_DIR)/numactl-$(NUMACTL_VERSION).tar.gz:
 	mkdir -p $(ARCHIVES_DIR)
