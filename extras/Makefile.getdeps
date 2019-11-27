@@ -7,7 +7,7 @@ CONTRIB_LIBDIR=$(INST_DIR)/lib
 CONTRIB_LIB64DIR=$(INST_DIR)/lib64
 CONTRIB_BINDIR=$(INST_DIR)/bin
 CONTRIB_INCDIR=$(INST_DIR)/include
-LAPACK_VERSION=3.3.1
+LAPACK_VERSION=3.9.0
 FFTW_VERSION=3.3.2
 SCOREP_VERSION=1.1
 OTF2_VERSION=1.1
@@ -102,92 +102,33 @@ $(ARCHIVES_DIR)/gmp-$(GMP_VERSION).tar.bz2:
 ################################################################################
 
 #
-# LAPACK (BLAS library is shipped along with LAPACK)
+# LAPACK (BLAS, CBLAS and lapacke libraries are shipped along with LAPACK)
 #
-$(CONTRIB_LIBDIR)/libblas.so: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/libblas.so
+$(CONTRIB_LIBDIR)/libblas.so: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/build/Makefile
 	mkdir -p $(CONTRIB_LIBDIR)
-	cp $< $@
+	$(MAKE) -C $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/build install
 
-$(CONTRIB_LIBDIR)/liblapack.so: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/liblapack.so
-	mkdir -p $(CONTRIB_LIBDIR)
-	cp $< $@
+$(CONTRIB_LIBDIR)/liblapack.so: $(CONTRIB_LIBDIR)/libblas.so
+$(CONTRIB_LIBDIR)/libcblas.so: $(CONTRIB_LIBDIR)/libblas.so
+$(CONTRIB_INCDIR)/cblas.h: $(CONTRIB_LIBDIR)/libblas.so
 
-$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/exdep: $(ARCHIVES_DIR)/lapack-$(LAPACK_VERSION).tgz
+$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/build/Makefile: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)
+	mkdir -p "$</build";
+	cd $</build; FFLAGS="$(CONTRIB_OPT) -g -DNDEBUG" cmake $< \
+		-DCMAKE_BUILD_TYPE=User -DCMAKE_SKIP_RPATH=OFF -DBUILD_SHARED_LIBS=ON \
+		-DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX="$(INST_DIR)" -DCBLAS=ON \
+		-DBUILD_DEPRECATED=On
+
+
+$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION): $(ARCHIVES_DIR)/lapack-$(LAPACK_VERSION).tgz
 	mkdir -p $(CONTRIB_DIR)
 	if [ -d $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION) ] ; \
 		then rm -rf $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION) ; fi
 	cd $(CONTRIB_DIR); tar xf $<
-	cd $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION); cp make.inc.example make.inc
-	touch $@
-
-$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/libblas.a: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/exdep
-	$(MAKE) OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
-		BLASLIB="../../libblas.a" \
-		-C $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/BLAS/SRC
-
-$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/libblas.so: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/libblas.a
-	rm -rf $(CONTRIB_DIR)/tmp/libblas
-	mkdir -p $(CONTRIB_DIR)/tmp/libblas
-	cd $(CONTRIB_DIR)/tmp/libblas && \
-		ar x ../../lapack-$(LAPACK_VERSION)/libblas.a && \
-		gcc -shared -Wl,-soname,libblas.so -o libblas.so *.o -lgfortran && \
-		cp libblas.so ../../lapack-$(LAPACK_VERSION)/libblas.so
-	rm -rf $(CONTRIB_DIR)/tmp/libblas
-
-$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/liblapack.a: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/libblas.a
-	$(MAKE) OPTS="-fPIC $(CONTRIB_OPT)" NOOPT="-g -fPIC -O0" \
-		BLASLIB="../../libblas.a" \
-		-C $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION) lib
-	cp $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/lapack_LINUX.a $@
-
-$(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/liblapack.so: $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/liblapack.a
-	rm -rf $(CONTRIB_DIR)/tmp/liblapack
-	mkdir -p $(CONTRIB_DIR)/tmp/liblapack
-	cd $(CONTRIB_DIR)/tmp/liblapack && \
-		ar x ../../lapack-$(LAPACK_VERSION)/liblapack.a && \
-		gcc -shared -Wl,-soname,liblapack.so -o liblapack.so *.o -lgfortran && \
-		cp liblapack.so ../../lapack-$(LAPACK_VERSION)/liblapack.so
-	rm -rf $(CONTRIB_DIR)/tmp/liblapack
 
 $(ARCHIVES_DIR)/lapack-$(LAPACK_VERSION).tgz:
 	mkdir -p $(ARCHIVES_DIR)
 	wget 'http://www.netlib.org/lapack/lapack-$(LAPACK_VERSION).tgz' -O $@
-#
-# CBLAS
-#
-$(CONTRIB_INCDIR)/cblas.h: $(CONTRIB_DIR)/CBLAS/exdep
-	mkdir -p $(CONTRIB_INCDIR)
-	cp $(CONTRIB_DIR)/CBLAS/include/cblas.h $(CONTRIB_INCDIR)
-
-$(CONTRIB_LIBDIR)/libcblas.so: $(CONTRIB_DIR)/CBLAS/libcblas.so
-	mkdir -p $(CONTRIB_LIBDIR)
-	cp $< $@
-
-$(CONTRIB_DIR)/CBLAS/exdep: $(ARCHIVES_DIR)/cblas.tgz
-	mkdir -p $(CONTRIB_DIR)
-	if [ -d $(CONTRIB_DIR)/CBLAS ] ; \
-		then rm -rf $(CONTRIB_DIR)/CBLAS ; fi
-	cd $(CONTRIB_DIR); tar xf $<
-	touch $@
-
-$(CONTRIB_DIR)/CBLAS/libcblas.a: $(CONTRIB_DIR)/CBLAS/exdep $(CONTRIB_DIR)/lapack-$(LAPACK_VERSION)/libblas.a
-	$(MAKE) CFLAGS="-fPIC $(CONTRIB_OPT) -DADD_" FFLAGS="-fPIC $(CONTRIB_OPT)" \
-		BLLIB="../../lapack-$(LAPACK_VERSION)/libblas.a" \
-		-C $(CONTRIB_DIR)/CBLAS alllib
-	cp $(CONTRIB_DIR)/CBLAS/lib/cblas_LINUX.a $@
-
-$(CONTRIB_DIR)/CBLAS/libcblas.so: $(CONTRIB_DIR)/CBLAS/libcblas.a
-	rm -rf $(CONTRIB_DIR)/tmp/libcblas
-	mkdir -p $(CONTRIB_DIR)/tmp/libcblas
-	cd $(CONTRIB_DIR)/tmp/libcblas && \
-		ar x ../../CBLAS/libcblas.a && \
-		gcc -shared -Wl,-soname,libcblas.so -o libcblas.so *.o -lgfortran && \
-		cp libcblas.so ../../CBLAS/libcblas.so
-	rm -rf $(CONTRIB_DIR)/tmp/libcblas
-
-$(ARCHIVES_DIR)/cblas.tgz:
-	mkdir -p $(ARCHIVES_DIR)
-	wget 'http://www.netlib.org/blas/blast-forum/cblas.tgz' -O $@
 
 #
 # FFTW
