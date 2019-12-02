@@ -1,6 +1,8 @@
 #ifndef WORK_DISTRIBUTION_H
 #define WORK_DISTRIBUTION_H
 
+extern "C" {
+
 #include "wstream_df.h"
 #include "config.h"
 
@@ -15,4 +17,7 @@ int work_try_push(wstream_df_frame_p fp, int target_worker, wstream_df_thread_p 
 #endif
 
 wstream_df_frame_p obtain_work(wstream_df_thread_p cthread, wstream_df_thread_p* wstream_df_worker_threads);
+
+}
+
 #endif

@@ -1,6 +1,8 @@
 #ifndef _FIBERS_H_
 #define _FIBERS_H_
 
+extern "C" {
+
 #include <stddef.h>
 #include "error.h"
 
@@ -103,4 +105,7 @@ ws_setcontext (ws_ctx_p new)
 }
 
 # endif
+
+}
+
 #endif /* _FIBERS_H_ */

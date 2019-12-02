@@ -1,3 +1,5 @@
+extern "C" {
+
 #include "reuse.h"
 #include "alloc.h"
 #include "numa.h"
@@ -300,4 +302,6 @@ void __built_in_wstream_df_reuse_update_data_vec(size_t n, void* v)
 
   for(size_t i = 0; i < n; i++)
     __built_in_wstream_df_reuse_update_data(&view_arr[i]);
+}
+
 }

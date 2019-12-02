@@ -1,6 +1,8 @@
 #ifndef TSC_H
 #define TSC_H
 
+extern "C" {
+
 uint64_t get_current_nanoseconds(void);
 uint64_t get_tsc_ticks_per_second(void);
 
@@ -17,5 +19,7 @@ void tsc_reference_offset_init(struct tsc_reference_offset* ref);
 int64_t get_tsc_offset(struct tsc_reference_offset* ref, int cpu);
 
 extern struct tsc_reference_offset global_tsc_ref;
+
+}
 
 #endif
