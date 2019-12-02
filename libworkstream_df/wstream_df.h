@@ -1,6 +1,8 @@
 #ifndef _WSTREAM_DF_H_
 #define _WSTREAM_DF_H_
 
+extern "C" {
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -247,5 +249,7 @@ void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n);
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n);
 void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt);
+
+}
 
 #endif

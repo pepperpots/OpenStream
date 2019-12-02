@@ -1,6 +1,8 @@
 #ifndef PROFILING_H
 #define PROFILING_H
 
+extern "C" {
+
 #include "config.h"
 #include <stdint.h>
 
@@ -143,5 +145,7 @@ void dump_transfer_matrix(unsigned int num_workers);
 	WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
 	WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
 	WSTREAM_DF_THREAD_PAPI_FIELDS
+
+}
 
 #endif

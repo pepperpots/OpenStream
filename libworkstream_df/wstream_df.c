@@ -1,3 +1,5 @@
+extern "C" {
+
 #include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -1136,7 +1138,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 }
 
 /* Use main as root task */
-void main(void);
+int main(void);
 
 __attribute__((constructor))
 void pre_main()
@@ -1762,4 +1764,6 @@ void openstream_pause_hardware_counters(void)
 	}
 
 	trace_measure_end(cthread);
+}
+
 }

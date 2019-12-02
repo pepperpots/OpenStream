@@ -1,6 +1,8 @@
 #ifndef NUMA_H
 #define NUMA_H
 
+extern "C" {
+
 #include "alloc.h"
 #include "wstream_df.h"
 
@@ -31,5 +33,7 @@ static inline void numa_node_add_thread(wstream_df_numa_node_p node, wstream_df_
 int numa_nodes_init(void);
 wstream_df_numa_node_p numa_node_by_id(unsigned int id);
 wstream_df_thread_p leader_of_numa_node_id(int node_id);
+
+}
 
 #endif
