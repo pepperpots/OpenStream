@@ -1767,3 +1767,4 @@ void openstream_pause_hardware_counters(void)
 }
 
 }
+

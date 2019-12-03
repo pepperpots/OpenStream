@@ -6,8 +6,11 @@ THIS_DIR = $(dir $(CURDIR)/$(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST)))
 # OpenStream toplevel installation directory
 INST_DIR = $(THIS_DIR)/../install
 
-WSTREAM_CXXFLAGS= -g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CXXFLAGS) -std=c++14 -Wno-unused-parameter -fpermissive
-WSTREAM_LDFLAGS= -lpthread $(LDFLAGS) -lnuma -lrt
+FOS_CXXFLAGS= -I$(FOS_PATH)/install/include
+FOS_LDFLAGS= -L$(FOS_PATH)/install/lib -lbit_patch -lcynq -ludmalib
+
+WSTREAM_CXXFLAGS= -g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CXXFLAGS) -std=c++14 -Wno-unused-parameter -fpermissive $(FOS_CXXFLAGS)
+WSTREAM_LDFLAGS= -lpthread $(LDFLAGS) -lnuma -lrt $(FOS_LDFLAGS)
 WSTREAM_DEPS= wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+= cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h tsc.h
 
