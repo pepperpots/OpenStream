@@ -1,8 +1,10 @@
 #include "work_distribution.h"
 #include "arch.h"
+#include "hwloc.h"
 #include "numa.h"
 #include "prng.h"
 #include "reuse.h"
+#include "wstream_df.h"
 
 #if ALLOW_PUSH_REORDER
 /*
@@ -544,8 +546,82 @@ int work_try_push(wstream_df_frame_p fp,
 
 #endif /* ALLOW_PUSHES */
 
-static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thread_p* wstream_df_worker_threads)
-{
+static wstream_df_frame_p steal_hwloc_pu(wstream_df_thread_p thief,
+                                         hwloc_obj_t current_obj) {
+  wstream_df_frame_p frame = NULL;
+  wstream_df_thread_p pu_worker_thread =
+      (wstream_df_thread_p)current_obj->userdata;
+  frame = cdeque_steal(&pu_worker_thread->work_deque);
+  if (!frame) {
+    inc_wqueue_counter(&thief->steals_fails, 1);
+  }
+  return frame;
+}
+
+static hwloc_obj_t random_hwloc_pu_in_subtree(wstream_df_thread_p thief,
+                                                     hwloc_obj_t root) {
+  hwloc_obj_t bottom = root;
+  while (bottom->arity > 0) {
+    unsigned randval = prng_nextn(&thief->rands, bottom->arity);
+    bottom = bottom->children[randval];
+  }
+  return bottom;
+}
+
+/* Steal from processing units that are close hierarchically
+ * - First visit all the siblings
+ * - If nothing found go up in the hierarchy and do the same for all the siblings
+ */
+static wstream_df_frame_p steal_hwloc_bottom_up(wstream_df_thread_p thief,
+                                                hwloc_obj_t current_obj,
+                                                hwloc_obj_t stop_at) {
+  wstream_df_frame_p frame = NULL;
+  // Continue going up until we reach the stop node or we successfully stole work
+  while (current_obj != stop_at && !frame) {
+    // Search for the first node with a siblings in the hierarchy
+    while (current_obj != stop_at && !current_obj->next_sibling &&
+           !current_obj->prev_sibling) {
+      current_obj = current_obj->parent;
+    }
+    // We found a node with a sibling in the tree
+    // Lets explore the siblings processing units
+    if (current_obj != stop_at) {
+      hwloc_obj_t one_side = current_obj->next_sibling;
+      hwloc_obj_t other_side = current_obj->prev_sibling;
+      // Visit every siblings hierarchy
+      while (!frame && (one_side || other_side)) {
+        unsigned random_direction;
+        if (one_side && other_side) {
+          random_direction = prng_nextn(&thief->rands, 2);
+        } else {
+          random_direction = one_side != NULL;
+        }
+        // We select a random pu of the sibling, try to steak work from its queue
+        // then we search for work to steal in the tree until we reach the sibling node
+        if (random_direction) { // one_side
+          hwloc_obj_t sibling_pu = random_hwloc_pu_in_subtree(thief, one_side);
+          frame = steal_hwloc_pu(thief, sibling_pu);
+          if (!frame)
+            frame = steal_hwloc_bottom_up(thief, sibling_pu, one_side);
+          one_side = one_side->next_sibling;
+        } else { // other_side
+          hwloc_obj_t sibling_pu =
+              random_hwloc_pu_in_subtree(thief, other_side);
+          frame = steal_hwloc_pu(thief, sibling_pu);
+          if (!frame)
+            frame = steal_hwloc_bottom_up(thief, sibling_pu, other_side);
+          other_side = other_side->prev_sibling;
+        }
+      }
+      current_obj = current_obj->parent;
+    }
+  }
+  return frame;
+}
+
+static wstream_df_frame_p
+work_steal(wstream_df_thread_p cthread,
+           wstream_df_thread_p *wstream_df_worker_threads) {
   int level, attempt, sibling_num;
   unsigned int steal_from = 0;
   unsigned int steal_from_cpu = 0;
@@ -554,59 +630,39 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 
 #if CACHE_LAST_STEAL_VICTIM
   /* Try to steal from the last victim worker's deque */
-  if(cthread->last_steal_from != -1) {
-    fp = cdeque_steal (&wstream_df_worker_threads[cthread->last_steal_from]->work_deque);
+  if (cthread->last_steal_from != -1) {
+    fp = cdeque_steal(
+        &wstream_df_worker_threads[cthread->last_steal_from]->work_deque);
 
-    if(fp == NULL) {
+    if (fp == NULL) {
       inc_wqueue_counter(&cthread->steals_fails, 1);
       cthread->last_steal_from = -1;
     }
   }
 #endif
 
-  if(fp == NULL) {
-  /* Try to steal from another worker's deque.
-   * Start with workers at the lowest common level, i.e. sharing the L2 cache.
-   * If the target deque is empty and the maximum number of steal attempts on
-   * the level is reached, switch to the next highest level.
-   */
-  for(level = 0; level < MEM_NUM_LEVELS && fp == NULL; level++)
-    {
-      for(attempt = 0;
-	  attempt < mem_num_steal_attempts_at_level(level) && fp == NULL;
-	  attempt++)
-	{
-	  ncores = mem_cores_at_level(level, cthread->cpu);
-	  sibling_num = prng_nextn(&cthread->rands, ncores);
-	  steal_from_cpu = mem_nth_sibling_at_level(level, cthread->cpu, sibling_num);
-
-	  if(cpu_used(steal_from_cpu)) {
-	    steal_from = cpu_to_worker_id(steal_from_cpu);
-	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from]->work_deque);
-
-	    if(fp == NULL) {
-	      inc_wqueue_counter(&cthread->steals_fails, 1);
+  if (fp == NULL) {
+    // Try to steal from another worker's queue with locality in mind
+    fp = steal_hwloc_bottom_up(cthread, cthread->cpu, NULL);
+    if (fp == NULL) {
 #if CACHE_LAST_STEAL_VICTIM
-	      cthread->last_steal_from = -1;
+      cthread->last_steal_from = -1;
 #endif
-	    } else {
-	      int real_level = mem_lowest_common_level(cthread->cpu, steal_from_cpu);
-	      inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
-	      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size, fp);
-	      fp->steal_type = STEAL_TYPE_STEAL;
+    } else {
+      int real_level = mem_lowest_common_level(cthread->cpu->os_index, steal_from_cpu);
+      (void) real_level;
+      inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
+      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size,
+                  fp);
+      fp->steal_type = STEAL_TYPE_STEAL;
 
 #if CACHE_LAST_STEAL_VICTIM
-	      cthread->last_steal_from = steal_from;
+      cthread->last_steal_from = steal_from;
 #endif
 
-	      fp->last_owner = steal_from;
-
-	    }
-	  }
-	}
+      fp->last_owner = steal_from;
     }
   }
-
   return fp;
 }
 
@@ -642,8 +698,7 @@ static wstream_df_frame_p work_take(wstream_df_thread_p cthread)
 }
 
 wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
-			       wstream_df_thread_p* wstream_df_worker_threads)
-{
+                               wstream_df_thread_p *wstream_df_worker_threads) {
   unsigned int cpu;
   int level;
   wstream_df_frame_p fp = NULL;
@@ -658,23 +713,21 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
     fp = work_take(cthread);
 
   /* Cache and deque are both empty -> steal */
-  if(fp == NULL)
+  if (fp == NULL)
     fp = work_steal(cthread, wstream_df_worker_threads);
 
   /* A frame pointer could be obtained (locally or via a steal) */
-  if (fp != NULL)
-    {
-      /* Update memory transfer statistics */
-      for(cpu = 0; cpu < MAX_CPUS; cpu++)
-	{
-	  if(fp->bytes_cpu_in[cpu])
-	    {
-	      level = mem_lowest_common_level(cthread->cpu, cpu);
-	      inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu_in[cpu]);
-	      inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu_in[cpu]);
-	    }
-	}
+  if (fp != NULL) {
+    /* Update memory transfer statistics */
+    for (cpu = 0; cpu < MAX_CPUS; cpu++) {
+      if (fp->bytes_cpu_in[cpu]) {
+        level = mem_lowest_common_level(cthread->cpu->os_index, cpu);
+        inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu_in[cpu]);
+        inc_transfer_matrix_entry(cthread->cpu->os_index, cpu,
+                                  fp->bytes_cpu_in[cpu]);
+      }
     }
+  }
 
   return fp;
 }

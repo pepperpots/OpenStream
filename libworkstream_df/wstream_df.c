@@ -826,10 +826,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 /* Threads and scheduling.  */
 /***************************************************************************/
 
-__attribute__((__optimize__("O1")))
-static void
-worker_thread (void)
-{
+__attribute__((__optimize__("O1"))) static void worker_thread(void) {
   wstream_df_thread_p cthread = current_thread;
 
   current_barrier = NULL;
@@ -838,99 +835,97 @@ worker_thread (void)
   cthread->last_steal_from = -1;
 
   /* Worker 0 has already been initialized */
-  if(!cthread->tsc_offset_init) {
-    cthread->tsc_offset = get_tsc_offset(&global_tsc_ref, cthread->cpu->os_index);
+  if (!cthread->tsc_offset_init) {
+    cthread->tsc_offset =
+        get_tsc_offset(&global_tsc_ref, cthread->cpu->os_index);
     cthread->tsc_offset_init = 1;
   }
 
   /* Enable barrier passing if needed.  */
-  if (cthread->swap_barrier != NULL)
-    {
-      barrier_p bar = cthread->swap_barrier;
-      cthread->swap_barrier = NULL;
-      try_pass_barrier (bar);
-      /* If a swap occurs in try_pass_barrier, then that swap is final
-	 and this stack is recycled, so no need to restore TLS local
-	 saves.  */
-    }
+  if (cthread->swap_barrier != NULL) {
+    barrier_p bar = cthread->swap_barrier;
+    cthread->swap_barrier = NULL;
+    try_pass_barrier(bar);
+    /* If a swap occurs in try_pass_barrier, then that swap is final
+       and this stack is recycled, so no need to restore TLS local
+       saves.  */
+  }
 
-trace_state_change(cthread, WORKER_STATE_SEEKING);
-  while (true)
-    {
-      if(cthread->yield)
-	while(true) {
-	  struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000 };
-	  nanosleep(&ts, NULL);
-	}
-
+  trace_state_change(cthread, WORKER_STATE_SEEKING);
+  while (true) {
+    if (cthread->yield)
+      while (true) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+        nanosleep(&ts, NULL);
+      }
 
 #if ALLOW_PUSHES
 #if !ALLOW_PUSH_REORDER
-      import_pushes(cthread);
+    import_pushes(cthread);
 #else
-      reorder_pushes(cthread);
+    reorder_pushes(cthread);
 #endif
 #endif
 
-      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
+    wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
 
-      if(fp != NULL)
-	{
-	  cthread->current_work_fn = fp->work_fn;
-	  cthread->current_frame = fp;
+    if (fp != NULL) {
+      cthread->current_work_fn = fp->work_fn;
+      cthread->current_frame = fp;
 
-	  wqueue_counters_enter_runtime(current_thread);
-	  trace_task_exec_start(cthread, fp);
-	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
+      wqueue_counters_enter_runtime(current_thread);
+      trace_task_exec_start(cthread, fp);
+      trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 
-	  wqueue_counters_profile_rusage(cthread);
-	  update_papi(cthread);
-	  trace_runtime_counters(cthread);
+      wqueue_counters_profile_rusage(cthread);
+      update_papi(cthread);
+      trace_runtime_counters(cthread);
 
-	  fp->work_fn (fp);
+      fp->work_fn(fp);
 
-	  wqueue_counters_profile_rusage(cthread);
-	  trace_runtime_counters(cthread);
-	  update_papi(cthread);
+      wqueue_counters_profile_rusage(cthread);
+      trace_runtime_counters(cthread);
+      update_papi(cthread);
 
-	  __compiler_fence;
+      __compiler_fence;
 
-	  /* It is possible that the work function was suspended then
-	     its continuation migrated.  We need to restore TLS local
-	     saves.  */
+      /* It is possible that the work function was suspended then
+         its continuation migrated.  We need to restore TLS local
+         saves.  */
 
-	  /* WARNING: Hack to prevent GCC from deadcoding the next
-	     assignment (volatile qualifier does not prevent the
-	     optimization).  CTHREAD is guaranteed not to be null
-	     here.  */
-	  if (cthread != NULL)
-	    {
+      /* WARNING: Hack to prevent GCC from deadcoding the next
+         assignment (volatile qualifier does not prevent the
+         optimization).  CTHREAD is guaranteed not to be null
+         here.  */
+      if (cthread != NULL) {
 #ifdef __aarch64__
-	      __asm __volatile ("str %[current_thread], %[cthread]"
-				: [cthread] "=m" (cthread) : [current_thread] "r" (current_thread) : "memory");
+        __asm __volatile("str %[current_thread], %[cthread]"
+                         : [ cthread ] "=m"(cthread)
+                         : [ current_thread ] "r"(current_thread)
+                         : "memory");
 #else
-	      __asm__ __volatile__ ("mov %[current_thread], %[cthread]"
-				    : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
+        __asm__ __volatile__("mov %[current_thread], %[cthread]"
+                             : [ cthread ] "=m"(cthread)
+                             : [ current_thread ] "R"(current_thread)
+                             : "memory");
 #endif
-	    }
-	  __compiler_fence;
+      }
+      __compiler_fence;
 
-	  trace_task_exec_end(cthread, fp);
-	  cthread->current_work_fn = NULL;
-	  cthread->current_frame = NULL;
+      trace_task_exec_end(cthread, fp);
+      cthread->current_work_fn = NULL;
+      cthread->current_frame = NULL;
 
-	  trace_state_restore(cthread);
+      trace_state_restore(cthread);
 
-	  wqueue_counters_enter_runtime(current_thread);
-	  inc_wqueue_counter(&cthread->tasks_executed, 1);
-	}
-      else
-	{
+      wqueue_counters_enter_runtime(current_thread);
+      inc_wqueue_counter(&cthread->tasks_executed, 1);
+    } else {
 #ifndef _WS_NO_YIELD_SPIN
-	  sched_yield ();
+      sched_yield();
 #endif
-	}
     }
+  }
 }
 
 void *
@@ -1070,8 +1065,6 @@ start_worker (wstream_df_thread_p wstream_df_worker, hwloc_obj_t cpu, size_t num
   int numa_node_id;
   wstream_df_numa_node_p numa_node;
 
-  wstream_df_worker->cpu = cpu;
-
   numa_node_id = mem_numa_node(wstream_df_worker->cpu->os_index);
   numa_node = numa_node_by_id(numa_node_id);
   numa_node_add_thread(numa_node, wstream_df_worker);
@@ -1081,7 +1074,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, hwloc_obj_t cpu, size_t num
 #endif
 
 #ifdef _PRINT_STATS
-  printf ("worker %d mapped to core %d\n", id, wstream_df_worker->cpu);
+  printf ("worker %d mapped to core %d\n", id, wstream_df_worker->cpu->os_index);
 #endif
 
   pthread_attr_init (&thread_attr);
@@ -1169,8 +1162,8 @@ void pre_main()
 
   wstream_df_worker_threads[0] = allocate_worker_struct(processor_mapping[0]);
   current_thread = wstream_df_worker_threads[0];
-  current_thread->cpu = processor_mapping[0];
   current_barrier = NULL;
+  // Store the thread structure for easy access to work deque
 
   numa_nodes_init();
 
@@ -1200,10 +1193,11 @@ void pre_main()
       wstream_df_worker_threads[i]->current_work_fn = NULL;
       wstream_df_worker_threads[i]->current_frame = NULL;
       wstream_df_worker_threads[i]->yield = 0;
+      wstream_df_worker_threads[i]->cpu = processor_mapping[i];
+      wstream_df_worker_threads[i]->cpu->userdata = wstream_df_worker_threads[i];
 #if !DISABLE_WQUEUE_LOCAL_CACHE
       wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
 #endif // !DISABLE_WQUEUE_LOCAL_CACHE
-    
     }
 
     cs = object_glibc_cpuset(current_thread->cpu);
