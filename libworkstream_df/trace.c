@@ -8,8 +8,9 @@
 #include "wstream_df.h"
 #include "arch.h"
 #include "numa.h"
+#include "hwloc-support.h"
+#include "interleave.h"
 
-int wstream_df_alloc_on_node(void* p, size_t size, int node);
 
 static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "wq_length",
@@ -40,8 +41,7 @@ void trace_init(struct wstream_df_thread* cthread)
 	if(!cthread->events) {
 		exit(1);
 	}
-
-	wstream_df_alloc_on_node(cthread->events, size, cthread->numa_node->id);
+	bind_memory_to_cpu_memspace(cthread->events, size, cthread->cpu);
 	//slab_force_advise_pages(cthread->events, size, MADV_HUGEPAGE);
 }
 

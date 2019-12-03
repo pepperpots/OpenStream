@@ -148,8 +148,7 @@ void check_bond_to_cpu(pthread_t tid, hwloc_obj_t cpu) {
     exit(EXIT_FAILURE);
   }
   if (!hwloc_bitmap_isincluded(hwlocset, cpu->cpuset)) {
-    fprintf(stderr,
-            "Warning: Worker did not get affected to requested cpu\n");
+    fprintf(stderr, "Warning: Worker did not get affected to requested cpu\n");
   }
   int num_set = hwloc_bitmap_weight(hwlocset);
   if (num_set == -1) {
@@ -167,4 +166,17 @@ void check_bond_to_cpu(pthread_t tid, hwloc_obj_t cpu) {
     } while (pu != NULL);
   }
   free(hwlocset);
+}
+
+int bind_memory_to_cpu_memspace(const void *addr, size_t len, hwloc_obj_t cpu) {
+  return hwloc_set_area_membind(
+      machine_topology, addr, len, cpu->cpuset, HWLOC_MEMBIND_BIND,
+      HWLOC_MEMBIND_MIGRATE | HWLOC_MEMBIND_NOCPUBIND);
+}
+
+int interleave_memory_on_machine_nodes(const void *addr, size_t len) {
+  return hwloc_set_area_membind(
+      machine_topology, addr, len, hwloc_get_root_obj(machine_topology)->cpuset,
+      HWLOC_MEMBIND_INTERLEAVE,
+      HWLOC_MEMBIND_MIGRATE | HWLOC_MEMBIND_NOCPUBIND);
 }

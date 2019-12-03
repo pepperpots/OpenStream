@@ -1047,16 +1047,17 @@ int worker_id_to_cpu(unsigned int worker_id)
   return wstream_df_worker_threads[worker_id]->cpu->os_index;
 }
 
-wstream_df_thread_p allocate_worker_struct(int for_cpu)
+static wstream_df_thread_p allocate_worker_struct(hwloc_obj_t on_cpu_mem)
 {
-	int node = mem_numa_node(for_cpu);
 	void* ptr;
 	size_t size = ROUND_UP(sizeof(wstream_df_thread_t), PAGE_SIZE);
 
 	if(posix_memalign(&ptr, PAGE_SIZE, size))
 		wstream_df_fatal("Memory allocation failed!");
 
-	wstream_df_alloc_on_node(ptr, size, node);
+  if(bind_memory_to_cpu_memspace(ptr, size, on_cpu_mem)) {
+    perror("hwloc_membind");
+  }
 
 	return ptr;
 }
@@ -1166,7 +1167,7 @@ void pre_main()
 
   tsc_reference_offset_init(&global_tsc_ref);
 
-  wstream_df_worker_threads[0] = allocate_worker_struct(processor_mapping[0]->os_index);
+  wstream_df_worker_threads[0] = allocate_worker_struct(processor_mapping[0]);
   current_thread = wstream_df_worker_threads[0];
   current_thread->cpu = processor_mapping[0];
   current_barrier = NULL;
@@ -1189,7 +1190,7 @@ void pre_main()
   for (i = 0; i < num_workers; ++i)
     {
       if(i != 0)
-        wstream_df_worker_threads[i] = allocate_worker_struct(processor_mapping[i]->os_index);
+        wstream_df_worker_threads[i] = allocate_worker_struct(processor_mapping[i]);
 
       cdeque_init (&wstream_df_worker_threads[i]->work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
       wstream_df_worker_threads[i]->worker_id = i;

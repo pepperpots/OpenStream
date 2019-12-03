@@ -14,14 +14,14 @@
 
 void openstream_start_hardware_counters(void);
 void openstream_pause_hardware_counters(void);
-int wstream_df_interleave_data(void* p, size_t size);
+int interleave_memory_on_machine_nodes(const void *addr, size_t len);
 
 static inline void* malloc_interleaved(size_t size)
 {
 	void* p = malloc(size);
 
 	if(p) {
-		if(wstream_df_interleave_data(p, size)) {
+		if(interleave_memory_on_machine_nodes(p, size)) {
 			free(p);
 			return NULL;
 		}
@@ -35,7 +35,7 @@ static inline int posix_memalign_interleaved(void **memptr, size_t alignment, si
 	int err;
 
 	if(!(err = posix_memalign(memptr, alignment, size))) {
-		if(wstream_df_interleave_data(*memptr, size)) {
+		if(interleave_memory_on_machine_nodes(*memptr, size)) {
 			free(*memptr);
 			return ENOMEM;
 		}

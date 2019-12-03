@@ -28,4 +28,8 @@ bool distribute_worker_on_topology(unsigned num_workers,
 
 void print_topology_tree(FILE *where);
 
+int bind_memory_to_cpu_memspace(const void *addr, size_t len, hwloc_obj_t cpu);
+
+int interleave_memory_on_machine_nodes(const void *addr, size_t len);
+
 #endif // HWLOC_SUPPORT_H_

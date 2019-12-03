@@ -3,34 +3,6 @@
 #include <stdio.h>
 #include "config.h"
 
-#ifdef UNIFORM_MEMORY_ACCESS
-int wstream_df_interleave_data(void* p, size_t size)
-{
-	return 0;
-}
-
-int wstream_df_alloc_on_node(void* p, size_t size, int node)
-{
-	return 0;
-}
-#else
-int wstream_df_interleave_data(void* p, size_t size)
-{
-	unsigned long nodemask = 0;
-	unsigned long pagemask = 0xFFF;
-
-	for(int i = 0; i < MAX_NUMA_NODES; i++)
-		nodemask = (nodemask << 1) | 1;
-
-	if(mbind((void*)((long)p & ~(pagemask)), size, MPOL_INTERLEAVE, &nodemask, MAX_NUMA_NODES, MPOL_MF_MOVE) != 0) {
-		fprintf(stderr, "mbind error:\n");
-		perror("mbind");
-		return 1;
-	}
-
-	return 0;
-}
-
 int wstream_df_alloc_on_node(void* p, size_t size, int node)
 {
 	unsigned long nodemask = 1 << node;
@@ -44,4 +16,3 @@ int wstream_df_alloc_on_node(void* p, size_t size, int node)
 
 	return 0;
 }
-#endif
