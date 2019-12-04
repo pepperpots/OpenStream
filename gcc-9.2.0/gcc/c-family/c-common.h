@@ -1094,6 +1094,8 @@ class substring_loc;
 extern const char *c_get_substring_location (const substring_loc &substr_loc,
 					     location_t *out_loc);
 
+extern void set_stream_type (tree, bool);
+
 /* In c-gimplify.c  */
 extern void c_genericize (tree);
 extern int c_gimplify_expr (tree *, gimple_seq *, gimple_seq *);

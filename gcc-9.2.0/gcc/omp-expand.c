@@ -121,6 +121,22 @@ is_combined_parallel (struct omp_region *region)
   return region->is_combined_parallel;
 }
 
+/* Return true if STMT is a streaming task statement.  */
+
+static bool
+is_streaming_task (gimple *stmt)
+{
+  return true;
+
+  tree c  = gimple_omp_task_clauses (stmt);
+
+  if (omp_find_clause (c, OMP_CLAUSE_INPUT) != NULL
+      || omp_find_clause (c, OMP_CLAUSE_OUTPUT) != NULL
+      || omp_find_clause (c, OMP_CLAUSE_TASK_NAME) != NULL)
+    return true;
+  return false;
+}
+
 /* Given two blocks PAR_ENTRY_BB and WS_ENTRY_BB such that WS_ENTRY_BB
    is the immediate dominator of PAR_ENTRY_BB, return true if there
    are no data dependencies that would prevent expanding the parallel
@@ -1511,7 +1527,7 @@ expand_omp_taskreg (struct omp_region *region)
 			  as_a <gomp_parallel *> (entry_stmt), ws_args);
   else if (gimple_code (entry_stmt) == GIMPLE_OMP_TEAMS)
     expand_teams_call (new_bb, as_a <gomp_teams *> (entry_stmt));
-  else
+  else if (!is_streaming_task (entry_stmt))
     expand_task_call (region, new_bb, as_a <gomp_task *> (entry_stmt));
   if (gimple_in_ssa_p (cfun))
     update_ssa (TODO_update_ssa_only_virtuals);

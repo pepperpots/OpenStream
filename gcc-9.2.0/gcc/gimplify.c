@@ -1298,7 +1298,7 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
   tree bind_expr = *expr_p;
   bool old_keep_stack = gimplify_ctxp->keep_stack;
   bool old_save_stack = gimplify_ctxp->save_stack;
-  tree t;
+  tree t, prev;
   gbind *bind_stmt;
   gimple_seq body, cleanup;
   gcall *stack_save;
@@ -1374,6 +1374,68 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
     }
   if (start_locus == 0)
     start_locus = EXPR_LOCATION (bind_expr);
+
+  /* If any of this bind's variables were used as streams, add
+     constructor and destructor calls within the bind.  */
+  /* FIXME-apop: */
+  prev = NULL_TREE;
+  for (t = gimple_bind_vars (bind_stmt);
+       t != NULL_TREE; t = DECL_CHAIN (t))
+    {
+      tree tmp = DECL_CHAIN (t);
+
+      /* Skip and discard all view variables from declarations.  */
+      if (DECL_STREAMING_FLAG_1 (t))
+	{
+	  if (prev)
+	    DECL_CHAIN (prev) = tmp;
+	  else
+	    gimple_bind_set_vars (bind_stmt, tmp);
+	  continue;
+	}
+
+      if (DECL_STREAMING_FLAG_0 (t) && !DECL_STREAMING_FLAG_3 (t))
+	{
+	  tree fn, type, num_streams;
+	  gimple_seq cleanup = NULL, new_body = NULL;
+	  gcall *call;
+	  gtry *gs;
+
+	  /* Find the number of streams to deallocate if this is an array of streams.  */
+	  type = DECL_INITIAL_TYPE (t);
+	  if (TREE_CODE (type) == ARRAY_TYPE)
+	    {
+	      tree n_streams = create_tmp_var (size_type_node, ".num_streams");
+	      tree size = TYPE_MAX_VALUE (TYPE_DOMAIN (type));
+	      num_streams = fold_build2 (PLUS_EXPR, size_type_node,
+					 size, size_one_node);
+
+	      gimplify_assign (n_streams, num_streams, &cleanup);
+
+	      fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_ARRAY_DTOR);
+	      call = gimple_build_call (fn, 2, t, n_streams);
+	    }
+	  else
+	    {
+	      fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_DTOR);
+	      call = gimple_build_call (fn, 1, t);
+	    }
+
+	  gimplify_seq_add_stmt (&cleanup, call);
+	  gs = gimple_build_try (gimple_bind_body (bind_stmt), cleanup,
+				 GIMPLE_TRY_FINALLY);
+	  gimplify_seq_add_stmt (&new_body, gs);
+	  gimple_bind_set_body (bind_stmt, new_body);
+
+#if 0
+	  if (prev)
+	    DECL_CHAIN (prev) = tmp;
+	  else
+	    gimple_bind_set_vars (bind_stmt, tmp);
+#endif
+	}
+      prev = t;
+    }
 
   cleanup = NULL;
   stack_save = NULL;
@@ -1660,6 +1722,96 @@ force_labels_r (tree *tp, int *walk_subtrees, void *data ATTRIBUTE_UNUSED)
   return NULL_TREE;
 }
 
+/* Gimplifies a stream or stream array declaration, issuing alloca and
+   ctor calls as needed.  */
+
+static void
+gimplify_stream_decl (tree decl, gimple_seq *seq_p, tree str)
+{
+  tree type, element_size;
+  gcall *call;
+  tree num_streams = size_one_node;
+
+  type = DECL_INITIAL_TYPE (decl);
+  if (!TYPE_SIZES_GIMPLIFIED (type))
+    gimplify_type_sizes (type, seq_p);
+
+  gimplify_one_sizepos (&DECL_SIZE (decl), seq_p);
+  gimplify_one_sizepos (&DECL_SIZE_UNIT (decl), seq_p);
+
+  if (TREE_CODE (decl) == FIELD_DECL)
+    {
+      gcc_assert (str != NULL_TREE);
+      decl = build3 (COMPONENT_REF, TREE_TYPE (decl),
+		     str, decl, NULL);
+    }
+
+  /* Find the number of streams to allocate if this is an array of
+     streams and switch the stream constructor function to call.  */
+  if (TREE_CODE (type) == ARRAY_TYPE)
+    {
+      tree t = builtin_decl_explicit (BUILT_IN_ALLOCA);
+      tree size;
+
+      tree sz_ref = create_tmp_var (size_type_node, ".size_stream_ref");
+
+      num_streams = fold_build2 (PLUS_EXPR, size_type_node,
+				 TYPE_MAX_VALUE (TYPE_DOMAIN (type)),
+				 size_one_node);
+
+      element_size = TYPE_SIZE_UNIT (ptr_type_node);
+      size = fold_build2 (MULT_EXPR, size_type_node,
+			  num_streams, element_size);
+#if 0
+      call = gimple_build_call (t, 1, size);
+      gimple_call_set_lhs (call, decl);
+      gimplify_seq_add_stmt (seq_p, call);
+#else
+      //gimplify_assign (sz_ref, size, seq_p);
+      size = build2 (MODIFY_EXPR, size_type_node, sz_ref, size);
+      gimplify_and_add (size, seq_p);
+      t = build_call_expr (t, 1, sz_ref);
+      /* The call has been built for a variable-sized object.  */
+      CALL_ALLOCA_FOR_VAR_P (t) = 1;
+      t = fold_convert (TREE_TYPE (decl), t);
+      t = build2 (MODIFY_EXPR, TREE_TYPE (decl), decl, t);
+      gimplify_and_add (t, seq_p);
+#endif
+
+      /* Indicate that we need to restore the stack level when the
+	 enclosing BIND_EXPR is exited.  */
+      gimplify_ctxp->save_stack = true;
+    }
+
+  /* If this is a true array of streams (not reference), call
+     ctor.  */
+  if (!DECL_STREAMING_FLAG_3 (decl))
+    {
+      if (TREE_CODE (type) == ARRAY_TYPE)
+	{
+	  tree n_streams = create_tmp_var (size_type_node, ".num_streams");
+	  tree fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_ARRAY_CTOR);
+
+	  tree t = build2 (MODIFY_EXPR, size_type_node, n_streams, num_streams);
+	  gimplify_and_add (t, seq_p);
+
+	  type = TREE_TYPE (type);
+	  element_size = TYPE_SIZE_UNIT (type);
+	  call = gimple_build_call (fn, 3, decl,
+				    n_streams, element_size);
+	}
+      else
+	{
+	  tree fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_STREAM_CTOR);
+	  element_size = TYPE_SIZE_UNIT (type);
+	  call = gimple_build_call (fn, 2, build_fold_addr_expr (decl),
+				    element_size);
+	}
+      /* Add CTOR call.  */
+      gimplify_seq_add_stmt (seq_p, call);
+    }
+}
+
 /* Gimplify a DECL_EXPR node *STMT_P by making any necessary allocation
    and initialization explicit.  */
 
@@ -1690,6 +1842,36 @@ gimplify_decl_expr (tree *stmt_p, gimple_seq *seq_p)
       && !TYPE_SIZES_GIMPLIFIED (DECL_ORIGINAL_TYPE (decl)))
     {
       gimplify_type_sizes (DECL_ORIGINAL_TYPE (decl), seq_p);
+
+      /* If this DECL corresponds to a view, don't gimplify as it will be
+	 removed.  We just need the sizes to be updated.  */
+      if (DECL_STREAMING_FLAG_1 (decl))
+	{
+	  gimplify_one_sizepos (&DECL_SIZE (decl), seq_p);
+	  gimplify_one_sizepos (&DECL_SIZE_UNIT (decl), seq_p);
+
+	  return GS_ALL_DONE;
+	}
+
+#if 0
+      if (TREE_CODE (decl) == VAR_DECL
+	  && TREE_CODE (TREE_TYPE (decl)) == RECORD_TYPE)
+	{
+	  tree field;
+	  for (field = TYPE_FIELDS (TREE_TYPE (decl)); field; field = DECL_CHAIN (field))
+	    if (TREE_CODE (field) == FIELD_DECL && DECL_STREAMING_FLAG_0 (field))
+	      {
+		tree type = DECL_INITIAL_TYPE (field);
+		gimplify_stream_decl (field, seq_p, decl);
+	      }
+	}
+#endif
+
+      /* Build stream constructors if this decl is a stream, but not a
+	 stream ref.  */
+      if (DECL_STREAMING_FLAG_0 (decl))
+	gimplify_stream_decl (decl, seq_p, NULL_TREE);
+
       if (TREE_CODE (DECL_ORIGINAL_TYPE (decl)) == REFERENCE_TYPE)
 	gimplify_type_sizes (TREE_TYPE (DECL_ORIGINAL_TYPE (decl)), seq_p);
     }
@@ -2866,6 +3048,91 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
       /* Fold INDIRECT_REFs now to turn them into ARRAY_REFs.  */
       if (TREE_CODE (*p) == INDIRECT_REF)
 	*p = fold_indirect_ref_loc (loc, *p);
+
+      if (TREE_CODE (*p) == ARRAY_REF)
+	{
+	  tree *array = &TREE_OPERAND (*p, 0);
+	  tree *sub = &TREE_OPERAND (*p, 1);
+
+	  /* If this is an array of streams, replace the access.  */
+	  if (TREE_CODE (*array) == VAR_DECL &&
+	      DECL_STREAMING_FLAG_0 (*array) &&
+	      !DECL_STREAMING_FLAG_3 (*array))
+	    {
+	      /* FIXME-apop: */
+	      tree stream = *array;
+	      tree vss_type = build_pointer_type (ptr_type_node);
+	      tree offset = fold_build2 (MULT_EXPR, size_type_node,
+					 TYPE_SIZE_UNIT (vss_type),
+					 *sub);
+	      stream = fold_build2 (POINTER_PLUS_EXPR, vss_type,
+				    stream, offset);
+	      stream = build_fold_indirect_ref (stream);
+	      *p = unshare_expr (stream);
+	      return GS_OK;
+	    }
+
+	  /* We're only interested in the case of arrays of views
+	     here.  */
+	  if (TREE_CODE (*array) == ARRAY_REF)
+	    {
+	      tree view = TREE_OPERAND (*array, 0);
+	      tree sub2 = TREE_OPERAND (*array, 1);
+
+	      if (TREE_CODE (view) == VAR_DECL &&
+		  DECL_STREAMING_FLAG_1 (view) &&
+		  DECL_HAS_VALUE_EXPR_P (view))
+		{
+		  tree view_array_base = DECL_VALUE_EXPR (view);
+		  tree view_struct_size, t1, t2, offset;
+		  tree data_ptr, data;
+
+		  gcc_assert (TREE_CODE (view) == VAR_DECL);
+
+		  /* A view struct currently contains 7 integers and 9
+		     pointers.  This ugly size evaluation should be
+		     replaced with something less fragile.  */
+		  t1 = fold_build2 (MULT_EXPR, size_type_node,
+				    TYPE_SIZE_UNIT (size_type_node),
+				    size_int (7));
+		  t2 = fold_build2 (MULT_EXPR, size_type_node,
+				    TYPE_SIZE_UNIT (ptr_type_node),
+				    size_int (9));
+		  view_struct_size = fold_build2 (PLUS_EXPR, size_type_node,
+						  t1, t2);
+		  offset = fold_build2 (MULT_EXPR, size_type_node,
+					view_struct_size, fold_convert (size_type_node, sub2));
+
+		  /* Add a shift by one pointer's size to the offset
+		     to allow accessing the "data" field in the
+		     corresponding view.  */
+		  offset = fold_build2 (PLUS_EXPR, size_type_node,
+					offset, TYPE_SIZE_UNIT (ptr_type_node));
+
+		  data_ptr = fold_build2 (POINTER_PLUS_EXPR, ptr_type_node,
+					  view_array_base, offset);
+
+		  data_ptr = fold_convert (build_pointer_type (build_pointer_type (TREE_TYPE (*p))), data_ptr);
+
+		  data_ptr = build_fold_indirect_ref (data_ptr);
+
+		  offset = fold_build2 (MULT_EXPR, size_type_node,
+					TYPE_SIZE_UNIT (TREE_TYPE (*p)), *sub);
+
+		  data = fold_build2 (POINTER_PLUS_EXPR, build_pointer_type (TREE_TYPE (*p)),
+				      data_ptr, offset);
+		  data = build_fold_indirect_ref (data);
+
+		  /* The view we should be accessing through the
+		     current expression is located through the
+		     indirection of the data field of the view
+		     instance found.  */
+
+		  *p = unshare_expr (data);
+		  return GS_OK;
+		}
+	    }
+	}
 
       if (handled_component_p (*p))
 	;
@@ -6006,6 +6273,7 @@ gimplify_addr_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
   tree op0 = TREE_OPERAND (expr, 0);
   enum gimplify_status ret;
   location_t loc = EXPR_LOCATION (*expr_p);
+  bool is_array_of_streams = false;
 
   switch (TREE_CODE (op0))
     {
@@ -6071,11 +6339,27 @@ gimplify_addr_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	 gcc.dg/c99-array-lval-1.c.  The gimplifier will correctly make
 	 the implied temporary explicit.  */
 
+      /* In the case of arrays of streams, our own expansion of array
+	 references makes the address expression wrong.  If this is
+	 the gimplification of an array of streams, remove the address
+	 exp and exit after allowing gimplification of the expression,
+	 which substitutes the alias.  */
+      if (TREE_CODE (TREE_OPERAND (expr, 0)) == VAR_DECL &&
+	  DECL_STREAMING_FLAG_0 (TREE_OPERAND (expr, 0)) &&
+	  !DECL_STREAMING_FLAG_3 (TREE_OPERAND (expr, 0)))
+	is_array_of_streams = true;
+
       /* Make the operand addressable.  */
       ret = gimplify_expr (&TREE_OPERAND (expr, 0), pre_p, post_p,
 			   is_gimple_addressable, fb_either);
       if (ret == GS_ERROR)
 	break;
+
+      if (is_array_of_streams == true)
+	{
+	  *expr_p = TREE_OPERAND (expr, 0);
+	  return (ret > GS_OK) ? ret : GS_OK;
+	}
 
       /* Then mark it.  Beware that it may not be possible to do so directly
 	 if a temporary has been created by the gimplification.  */
@@ -6856,10 +7140,31 @@ omp_add_variable (struct gimplify_omp_ctx *ctx, tree decl, unsigned int flags)
       return;
     }
 
+  if (DECL_STREAMING_FLAG_0 (decl))
+    {
+      tree type = DECL_INITIAL_TYPE (decl);
+
+      if (TREE_CODE (type) == ARRAY_TYPE && TYPE_SIZE (type)
+	  && TREE_CODE (TYPE_SIZE (type)) != INTEGER_CST)
+	{
+	  splay_tree_node sz_n;
+	  tree size;
+
+	  omp_firstprivatize_type_sizes (ctx, type);
+
+	  /* Make sure that the size at least is kept (marked as seen)
+	     as it will be used during code generation.  */
+	  size = TYPE_MAX_VALUE (TYPE_DOMAIN (type));
+	  sz_n = splay_tree_lookup (ctx->variables, (splay_tree_key)size);
+	  sz_n->value |= GOVD_SEEN;
+	}
+    }
+
   /* When adding a variable-sized variable, we have to handle all sorts
      of additional bits of data: the pointer replacement variable, and
      the parameters of the type.  */
-  if (DECL_SIZE (decl) && TREE_CODE (DECL_SIZE (decl)) != INTEGER_CST)
+  if (DECL_SIZE (decl) && TREE_CODE (DECL_SIZE (decl)) != INTEGER_CST
+      && !DECL_STREAMING_FLAG_1 (decl) && !DECL_STREAMING_FLAG_0 (decl))
     {
       /* Add the pointer replacement variable as PRIVATE if the variable
 	 replacement is private, else FIRSTPRIVATE since we'll need the
@@ -7417,7 +7722,8 @@ omp_notice_variable (struct gimplify_omp_ctx *ctx, tree decl, bool in_code)
 
   if ((n->value & (GOVD_SEEN | GOVD_LOCAL)) == 0
       && (flags & (GOVD_SEEN | GOVD_LOCAL)) == GOVD_SEEN
-      && DECL_SIZE (decl))
+      && DECL_SIZE (decl)
+      && !DECL_STREAMING_FLAG_1 (decl) && !DECL_STREAMING_FLAG_0 (decl))
     {
       if (TREE_CODE (DECL_SIZE (decl)) != INTEGER_CST)
 	{
@@ -8921,6 +9227,18 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	  flags = GOVD_FIRSTPRIVATE | GOVD_EXPLICIT;
 	  goto do_add;
 
+	case OMP_CLAUSE_INPUT:
+	case OMP_CLAUSE_OUTPUT:
+	case OMP_CLAUSE_INOUT_REUSE:
+	case OMP_CLAUSE_TASK_NAME:
+	  break;
+
+	case OMP_CLAUSE_PEEK:
+	  error ("[internal] Peek clause %qE should not be seen in gimple",
+		 DECL_NAME (OMP_CLAUSE_DECL (c)));
+	  gcc_unreachable ();
+	  break;
+
 	do_add:
 	  decl = OMP_CLAUSE_DECL (c);
 	do_add_decl:
@@ -9993,6 +10311,15 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	    OMP_CLAUSE_SIZE (c) = DECL_SIZE_UNIT (decl);
 	  break;
 
+	case OMP_CLAUSE_PEEK:
+	  error ("[internal] Peek clause %qE should not be seen in gimple",
+		 DECL_NAME (decl));
+	  gcc_unreachable ();
+	  break;
+
+	case OMP_CLAUSE_INPUT:
+	case OMP_CLAUSE_OUTPUT:
+	case OMP_CLAUSE_INOUT_REUSE:
 	case OMP_CLAUSE_REDUCTION:
 	case OMP_CLAUSE_IN_REDUCTION:
 	case OMP_CLAUSE_TASK_REDUCTION:
@@ -10047,6 +10374,7 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	case OMP_CLAUSE_COLLAPSE:
 	case OMP_CLAUSE_FINAL:
 	case OMP_CLAUSE_MERGEABLE:
+	case OMP_CLAUSE_TASK_NAME:
 	case OMP_CLAUSE_PROC_BIND:
 	case OMP_CLAUSE_SAFELEN:
 	case OMP_CLAUSE_SIMDLEN:
@@ -10270,6 +10598,7 @@ static void
 gimplify_omp_task (tree *expr_p, gimple_seq *pre_p)
 {
   tree expr = *expr_p;
+  tree clauses;
   gimple *g;
   gimple_seq body = NULL;
 
@@ -10283,6 +10612,57 @@ gimplify_omp_task (tree *expr_p, gimple_seq *pre_p)
 		    "%<taskwait%> construct");
 	  break;
 	}
+
+  for (clauses = OMP_TASK_CLAUSES (expr);
+       clauses; clauses = OMP_CLAUSE_CHAIN (clauses))
+    {
+      if (OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_INPUT
+	  || OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_OUTPUT
+	  || OMP_CLAUSE_CODE (clauses) == OMP_CLAUSE_INOUT_REUSE)
+	{
+	  tree decl = OMP_CLAUSE_VIEW_ID (clauses);
+	  tree view_type;
+
+	  /* If the view is implicit on a clause, the stream variable
+	     is used as an implicit view, with unitary burst and
+	     horizon.  We already adjusted during parsing, so just a
+	     sanity check.  We only need to adjust the view size.  */
+	  gcc_assert (decl != NULL_TREE);
+
+	  /* WARNING: we rely on a restriction for Wstream_Df (burst ==
+	     horizon) to simplify the evaluation of bursts and
+	     horizons  */
+	  /* FIXME-apop: restriction of dataflow semantics.  */
+
+	  /* In the unrestricted case it needs to be computed.  Here we
+	     use a size in bytes, while the above is in elements and
+	     needs to be converted later.  */
+	  /* Has to be computed if it's an array of views (drop the
+	     first dim, sizeof (base elem) * second dimension's
+	     size.  */
+	  view_type = TREE_TYPE (decl);
+
+	  /* If this decl is an array of views.  */
+	  if (TREE_CODE (view_type) == ARRAY_TYPE
+	      && TREE_CODE (TREE_TYPE (view_type)) == ARRAY_TYPE)
+	    {
+	      tree view_array_type = TREE_TYPE (view_type);
+	      tree base_type = TREE_TYPE (view_array_type);
+	      tree horizon_domain = TYPE_MAX_VALUE (TYPE_DOMAIN (view_array_type));
+
+	      horizon_domain = fold_build2 (PLUS_EXPR, size_type_node,
+					    horizon_domain, size_one_node);
+	      horizon_domain = fold_build2 (MULT_EXPR, size_type_node,
+					    horizon_domain, TYPE_SIZE_UNIT (base_type));
+	      OMP_CLAUSE_VIEW_SIZE (clauses) = horizon_domain;
+	    }
+	  else
+	    {
+	      OMP_CLAUSE_VIEW_SIZE (clauses)
+		= TYPE_SIZE_UNIT (TREE_TYPE (OMP_CLAUSE_VIEW_ID (clauses)));
+	    }
+	}
+    }
 
   gimplify_scan_omp_clauses (&OMP_TASK_CLAUSES (expr), pre_p,
 			     omp_find_clause (OMP_TASK_CLAUSES (expr),

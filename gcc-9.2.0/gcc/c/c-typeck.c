@@ -12737,6 +12737,7 @@ c_finish_omp_task (location_t loc, tree clauses, tree block)
   OMP_TASK_CLAUSES (stmt) = clauses;
   OMP_TASK_BODY (stmt) = block;
   SET_EXPR_LOCATION (stmt, loc);
+  TREE_SIDE_EFFECTS (stmt) = 1;
 
   return add_stmt (stmt);
 }
@@ -14609,6 +14610,30 @@ c_finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 	  pc = &OMP_CLAUSE_CHAIN (c);
 	  continue;
 
+	case OMP_CLAUSE_INPUT:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_OUTPUT:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_PEEK:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
+	case OMP_CLAUSE_INOUT_REUSE:
+	  t = OMP_CLAUSE_DECL (c);
+	  need_complete = true;
+	  need_implicitly_determined = true;
+	  break;
+
 	case OMP_CLAUSE_IF:
 	case OMP_CLAUSE_NUM_THREADS:
 	case OMP_CLAUSE_NUM_TEAMS:
@@ -14643,6 +14668,7 @@ c_finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 	case OMP_CLAUSE_GANG:
 	case OMP_CLAUSE_WORKER:
 	case OMP_CLAUSE_VECTOR:
+	case OMP_CLAUSE_TASK_NAME:
 	case OMP_CLAUSE_TILE:
 	case OMP_CLAUSE_IF_PRESENT:
 	case OMP_CLAUSE_FINALIZE:
