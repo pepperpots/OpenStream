@@ -50,7 +50,7 @@ $(INST_DIR)/lib64/libwstream_df.so: $(INST_DIR)/bin/gcc libnuma hwloc
 	$(MAKE) -C libworkstream_df
 	$(MAKE) -C libworkstream_df install
 
-$(INST_DIR)/bin/gcc: $(GCC_BUILD_DIR)/configdep
+$(INST_DIR)/bin/gcc: $(GCC_BUILD_DIR)/configdep $(BASE_DIR)/libworkstream_df/config.h
 	$(MAKE) -C $(GCC_BUILD_DIR)
 	$(MAKE) -C $(GCC_BUILD_DIR) install
 

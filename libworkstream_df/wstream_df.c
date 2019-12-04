@@ -200,39 +200,39 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
   trace_tcreate(cthread, NULL);
 
-#if ALLOW_WQEVENT_SAMPLING
-  int curr_idx = cthread->num_events-1;
-#endif
   frame_pointer = slab_alloc(cthread, cthread->slab_cache, size);
 
   //  printf("F+ Allocating %p\n", frame_pointer);
 
   frame_pointer->synchronization_counter = sc+1;
   frame_pointer->size = size;
-  frame_pointer->last_owner = cthread->worker_id;
-  frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
   frame_pointer->work_fn = (void (*) (void *)) wfn;
+  frame_pointer->refcount = 1;
+  frame_pointer->input_view_chain = NULL;
+  frame_pointer->output_view_chain = NULL;
+
+#if ALLOW_WQEVENT_SAMPLING
+  frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
+  frame_pointer->last_owner = cthread->worker_id;
   frame_pointer->creation_timestamp = rdtsc() - cthread->tsc_offset;
   frame_pointer->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
   frame_pointer->dominant_input_data_node_id = -1;
   frame_pointer->dominant_input_data_size = 0;
   frame_pointer->dominant_prematch_data_node_id = -1;
   frame_pointer->dominant_prematch_data_size = 0;
-  frame_pointer->refcount = 1;
-  frame_pointer->input_view_chain = NULL;
-  frame_pointer->output_view_chain = NULL;
 
-#if ALLOW_WQEVENT_SAMPLING
+  int curr_idx = cthread->num_events-1;
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
-#endif
 
-  inc_wqueue_counter(&cthread->tasks_created, 1);
-
+  // TODO SLAB ALLOC THIS
   memset(frame_pointer->bytes_prematch_nodes, 0, sizeof(frame_pointer->bytes_prematch_nodes));
   memset(frame_pointer->bytes_cpu_in, 0, sizeof(frame_pointer->bytes_cpu_in));
   memset(frame_pointer->bytes_cpu_ts, 0, sizeof(frame_pointer->bytes_cpu_ts));
   memset(frame_pointer->cache_misses, 0, sizeof(frame_pointer->cache_misses));
   memset(frame_pointer->bytes_reuse_nodes, 0, sizeof(frame_pointer->bytes_reuse_nodes));
+  inc_wqueue_counter(&cthread->tasks_created, 1);
+
+#endif
 
   if (has_lp)
     {
@@ -324,8 +324,10 @@ tdecrease_n (void *data, size_t n, bool is_write)
     inc_wqueue_counter(&fp->bytes_cpu_in[cthread->cpu], n);
     set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->cpu], rdtsc() - cthread->tsc_offset);
 
+#if ALLOW_WQEVENT_SAMPLING
     if (fp->cache_misses[cthread->cpu->os_index] == 0)
       fp->cache_misses[cthread->cpu->os_index] = mem_cache_misses(cthread);
+#endif
   }
 
   int sc = 0;
@@ -348,9 +350,11 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
       update_numa_nodes_of_views(cthread, fp);
 
+#if ALLOW_WQEVENT_SAMPLING
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
+#endif
 
 #if ALLOW_PUSHES
       int target_worker;
@@ -487,6 +491,7 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 
 	view->data = slab_alloc(cthread, slab_cache, size);
 
+#if ALLOW_WQEVENT_SAMPLING
 	/* Update data statistics of the frame */
 	if(!slab_is_fresh(view->data)) {
 		int node_id = slab_numa_node_of(view->data);
@@ -494,6 +499,7 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 		if(node_id >= 0)
 			fp->bytes_prematch_nodes[node_id] += size;
 	}
+#endif
 }
 
 void __built_in_wstream_df_alloc_view_data(void* v, size_t size)

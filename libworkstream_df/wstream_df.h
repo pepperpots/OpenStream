@@ -115,27 +115,34 @@ typedef struct wstream_df_frame
   int size;
   void (*work_fn) (void *);
   struct barrier *own_barrier;
+  size_t refcount;
+  wstream_df_view_p input_view_chain;
+  wstream_df_view_p output_view_chain;
+
+#if ALLOW_WQEVENT_SAMPLING
 
   int steal_type;
   int last_owner;
-  int bytes_prematch_nodes[MAX_NUMA_NODES];
-  int bytes_cpu_in[MAX_CPUS];
-  long long bytes_cpu_ts[MAX_CPUS];
-  long long cache_misses[MAX_CPUS];
+  // int bytes_prematch_nodes[MAX_NUMA_NODES];
+  int *bytes_prematch_nodes;
+  // int bytes_cpu_in[MAX_CPUS];
+  // long long *bytes_cpu_ts[MAX_CPUS];
+  // long long cache_misses[MAX_CPUS];
+  int *bytes_cpu_in;
+  long long *bytes_cpu_ts;
+  long long *cache_misses;
   int64_t creation_timestamp;
   int64_t ready_timestamp;
 
-  int bytes_reuse_nodes[MAX_NUMA_NODES];
+  //int bytes_reuse_nodes[MAX_NUMA_NODES];
+  int *bytes_reuse_nodes;
   int dominant_input_data_node_id;
   size_t dominant_input_data_size;
   int dominant_prematch_data_node_id;
   size_t dominant_prematch_data_size;
 
-  size_t refcount;
-  wstream_df_view_p input_view_chain;
-  wstream_df_view_p output_view_chain;
-  /* Variable size struct */
-  //char buf [];
+#endif
+
 } wstream_df_frame_t, *wstream_df_frame_p;
 
 typedef struct barrier

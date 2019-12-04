@@ -654,13 +654,15 @@ work_steal(wstream_df_thread_p cthread,
       inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
       trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size,
                   fp);
+#if ALLOW_WQEVENT_SAMPLING
       fp->steal_type = STEAL_TYPE_STEAL;
+      fp->last_owner = steal_from;
+#endif
 
 #if CACHE_LAST_STEAL_VICTIM
       cthread->last_steal_from = steal_from;
 #endif
 
-      fp->last_owner = steal_from;
     }
   }
   return fp;
@@ -716,6 +718,7 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
   if (fp == NULL)
     fp = work_steal(cthread, wstream_df_worker_threads);
 
+#if ALLOW_WQEVENT_SAMPLING
   /* A frame pointer could be obtained (locally or via a steal) */
   if (fp != NULL) {
     /* Update memory transfer statistics */
@@ -728,6 +731,7 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
       }
     }
   }
+#endif // ALLOW_WQEVENT_SAMPLING
 
   return fp;
 }
