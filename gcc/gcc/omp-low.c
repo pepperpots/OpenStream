@@ -11713,7 +11713,8 @@ create_wstream_df_work_function (omp_context *ctx)
     }
   else
     {
-      name = clone_function_name (current_function_decl, "_wstream_df_workfn");
+      static int number = 0;
+      name = clone_function_name (current_function_decl, "_wstream_df_workfn", number++);
     }
 
   type = build_function_type_list (void_type_node, ptr_type_node, NULL_TREE);

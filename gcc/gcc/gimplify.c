@@ -1842,39 +1842,38 @@ gimplify_decl_expr (tree *stmt_p, gimple_seq *seq_p)
       && !TYPE_SIZES_GIMPLIFIED (DECL_ORIGINAL_TYPE (decl)))
     {
       gimplify_type_sizes (DECL_ORIGINAL_TYPE (decl), seq_p);
-
-      /* If this DECL corresponds to a view, don't gimplify as it will be
-	 removed.  We just need the sizes to be updated.  */
-      if (DECL_STREAMING_FLAG_1 (decl))
-	{
-	  gimplify_one_sizepos (&DECL_SIZE (decl), seq_p);
-	  gimplify_one_sizepos (&DECL_SIZE_UNIT (decl), seq_p);
-
-	  return GS_ALL_DONE;
-	}
-
-#if 0
-      if (TREE_CODE (decl) == VAR_DECL
-	  && TREE_CODE (TREE_TYPE (decl)) == RECORD_TYPE)
-	{
-	  tree field;
-	  for (field = TYPE_FIELDS (TREE_TYPE (decl)); field; field = DECL_CHAIN (field))
-	    if (TREE_CODE (field) == FIELD_DECL && DECL_STREAMING_FLAG_0 (field))
-	      {
-		tree type = DECL_INITIAL_TYPE (field);
-		gimplify_stream_decl (field, seq_p, decl);
-	      }
-	}
-#endif
-
-      /* Build stream constructors if this decl is a stream, but not a
-	 stream ref.  */
-      if (DECL_STREAMING_FLAG_0 (decl))
-	gimplify_stream_decl (decl, seq_p, NULL_TREE);
-
       if (TREE_CODE (DECL_ORIGINAL_TYPE (decl)) == REFERENCE_TYPE)
 	gimplify_type_sizes (TREE_TYPE (DECL_ORIGINAL_TYPE (decl)), seq_p);
     }
+
+  /* If this DECL corresponds to a view, don't gimplify as it will be
+     removed.  We just need the sizes to be updated.  */
+  if (DECL_STREAMING_FLAG_1 (decl))
+    {
+      gimplify_one_sizepos (&DECL_SIZE (decl), seq_p);
+      gimplify_one_sizepos (&DECL_SIZE_UNIT (decl), seq_p);
+
+      return GS_ALL_DONE;
+    }
+
+#if 0
+  if (TREE_CODE (decl) == VAR_DECL
+      && TREE_CODE (TREE_TYPE (decl)) == RECORD_TYPE)
+    {
+      tree field;
+      for (field = TYPE_FIELDS (TREE_TYPE (decl)); field; field = DECL_CHAIN (field))
+	if (TREE_CODE (field) == FIELD_DECL && DECL_STREAMING_FLAG_0 (field))
+	  {
+	    tree type = DECL_INITIAL_TYPE (field);
+	    gimplify_stream_decl (field, seq_p, decl);
+	  }
+    }
+#endif
+
+  /* Build stream constructors if this decl is a stream, but not a
+     stream ref.  */
+  if (DECL_STREAMING_FLAG_0 (decl))
+    gimplify_stream_decl (decl, seq_p, NULL_TREE);
 
   if (VAR_P (decl) && !DECL_EXTERNAL (decl))
     {
