@@ -1,5 +1,5 @@
 ;; Scheduling description for cell processor.
-;; Copyright (C) 2001-2015 Free Software Foundation, Inc.
+;; Copyright (C) 2001-2019 Free Software Foundation, Inc.
 ;; Contributed by Sony Computer Entertainment, Inc.,
 
 
@@ -288,7 +288,7 @@
 ;; page 90, special cases for CR hazard, only one instr can access cr per cycle
 ;; if insn reads CR following a stwcx, pipeline stall till stwcx finish
 (define_insn_reservation "cell-crlogical" 1
-  (and (eq_attr "type" "cr_logical,delayed_cr")
+  (and (eq_attr "type" "cr_logical")
        (eq_attr "cpu" "cell"))
   "bru_cell+slot01")
 
@@ -306,7 +306,7 @@
 
 ; Basic FP latency is 10 cycles, thoughput is 1/cycle
 (define_insn_reservation "cell-fp" 10
-  (and (eq_attr "type" "fp,dmul")
+  (and (eq_attr "type" "fp,fpsimple,dmul")
        (eq_attr "cpu" "cell"))
   "slot01,vsu1_cell,vsu1_cell*8")
 
@@ -329,7 +329,7 @@
 
 ; VMX
 (define_insn_reservation "cell-vecsimple" 4
-  (and (eq_attr "type" "vecsimple")
+  (and (eq_attr "type" "vecsimple,veclogical,vecmove")
        (eq_attr "cpu" "cell"))
   "slot01,vsu1_cell,vsu1_cell*2")
 
@@ -341,7 +341,7 @@
 
 ;; TODO: add support for recording instructions
 (define_insn_reservation "cell-veccmp" 4
-  (and (eq_attr "type" "veccmp")
+  (and (eq_attr "type" "veccmp,veccmpfx")
        (eq_attr "cpu" "cell"))
   "slot01,vsu1_cell,vsu1_cell*2")
 

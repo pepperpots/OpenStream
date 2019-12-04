@@ -1,6 +1,6 @@
 /* Function declarations for libiberty.
 
-   Copyright (C) 1997-2015 Free Software Foundation, Inc.
+   Copyright (C) 1997-2019 Free Software Foundation, Inc.
    
    Note - certain prototypes declared in this header file are for
    functions whoes implementation copyright does not belong to the
@@ -80,7 +80,7 @@ extern void freeargv (char **);
 /* Duplicate an argument vector. Allocates memory using malloc.  Use
    freeargv to free the vector.  */
 
-extern char **dupargv (char **) ATTRIBUTE_MALLOC;
+extern char **dupargv (char * const *) ATTRIBUTE_MALLOC;
 
 /* Expand "@file" arguments in argv.  */
 
@@ -88,11 +88,11 @@ extern void expandargv (int *, char ***);
 
 /* Write argv to an @-file, inserting necessary quoting.  */
 
-extern int writeargv (char **, FILE *);
+extern int writeargv (char * const *, FILE *);
 
 /* Return the number of elements in argv.  */
 
-extern int countargv (char**);
+extern int countargv (char * const *);
 
 /* Return the last component of a path name.  Note that we can't use a
    prototype here because the parameter is declared inconsistently
@@ -238,6 +238,11 @@ extern char *choose_temp_base (void) ATTRIBUTE_MALLOC ATTRIBUTE_RETURNS_NONNULL;
 /* Return a temporary file name or NULL if unable to create one.  */
 
 extern char *make_temp_file (const char *) ATTRIBUTE_MALLOC;
+
+/* Return a temporary file name with given PREFIX and SUFFIX
+   or NULL if unable to create one.  */
+
+extern char *make_temp_file_with_prefix (const char *, const char *) ATTRIBUTE_MALLOC;
 
 /* Remove a link to a file unless it is special. */
 
@@ -397,6 +402,17 @@ extern void hex_init (void);
 /* Save files used for communication between processes.  */
 #define PEX_SAVE_TEMPS		0x4
 
+/* Max number of alloca bytes per call before we must switch to malloc.
+
+   ?? Swiped from gnulib's regex_internal.h header.  Is this actually
+   the case?  This number seems arbitrary, though sane.
+
+   The OS usually guarantees only one guard page at the bottom of the stack,
+   and a page size can be as small as 4096 bytes.  So we cannot safely
+   allocate anything larger than 4096 bytes.  Also care for the possibility
+   of a few compiler-allocated temporary stack slots.  */
+#define MAX_ALLOCA_SIZE	4032
+
 /* Prepare to execute one or more programs, with standard output of
    each program fed to standard input of the next.
    FLAGS	As above.
@@ -542,7 +558,7 @@ extern FILE *pex_input_file (struct pex_obj *obj, int flags,
 extern FILE *pex_input_pipe (struct pex_obj *obj, int binary);
 
 /* Read the standard output of the last program to be executed.
-   pex_run can not be called after this.  BINARY should be non-zero if
+   pex_run cannot be called after this.  BINARY should be non-zero if
    the file should be opened in binary mode; this is ignored on Unix.
    Returns NULL on error.  Don't call fclose on the returned FILE; it
    will be closed by pex_free.  */
@@ -550,7 +566,7 @@ extern FILE *pex_input_pipe (struct pex_obj *obj, int binary);
 extern FILE *pex_read_output (struct pex_obj *, int binary);
 
 /* Read the standard error of the last program to be executed.
-   pex_run can not be called after this.  BINARY should be non-zero if
+   pex_run cannot be called after this.  BINARY should be non-zero if
    the file should be opened in binary mode; this is ignored on Unix.
    Returns NULL on error.  Don't call fclose on the returned FILE; it
    will be closed by pex_free.  */
@@ -621,7 +637,7 @@ extern int pexecute (const char *, char * const *, const char *,
 
 extern int pwait (int, int *, int);
 
-#if !HAVE_DECL_ASPRINTF
+#if defined(HAVE_DECL_ASPRINTF) && !HAVE_DECL_ASPRINTF
 /* Like sprintf but provides a pointer to malloc'd storage, which must
    be freed by the caller.  */
 
@@ -713,7 +729,7 @@ extern void *C_alloca (size_t) ATTRIBUTE_MALLOC;
 # define ASTRDUP(X) \
   (__extension__ ({ const char *const libiberty_optr = (X); \
    const unsigned long libiberty_len = strlen (libiberty_optr) + 1; \
-   char *const libiberty_nptr = (char *const) alloca (libiberty_len); \
+   char *const libiberty_nptr = (char *) alloca (libiberty_len); \
    (char *) memcpy (libiberty_nptr, libiberty_optr, libiberty_len); }))
 #else
 # define alloca(x) C_alloca(x)

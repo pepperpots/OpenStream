@@ -1,5 +1,5 @@
 /* Allocation for dataflow support routines.
-   Copyright (C) 1999-2015 Free Software Foundation, Inc.
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
    Originally contributed by Michael P. Hayes
              (m.hayes@elec.canterbury.ac.nz, mhayes@redhat.com)
    Major rewrite contributed by Danny Berlin (dberlin@dberlin.org)
@@ -298,12 +298,12 @@ There are 4 ways to obtain access to refs:
 
    Artificial defs and uses occur both at the beginning and ends of blocks.
 
-     For blocks that area at the destination of eh edges, the
+     For blocks that are at the destination of eh edges, the
      artificial uses and defs occur at the beginning.  The defs relate
      to the registers specified in EH_RETURN_DATA_REGNO and the uses
-     relate to the registers specified in ED_USES.  Logically these
+     relate to the registers specified in EH_USES.  Logically these
      defs and uses should really occur along the eh edge, but there is
-     no convenient way to do this.  Artificial edges that occur at the
+     no convenient way to do this.  Artificial defs that occur at the
      beginning of the block have the DF_REF_AT_TOP flag set.
 
      Artificial uses occur at the end of all blocks.  These arise from
@@ -377,31 +377,13 @@ are write-only operations.
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
 #include "rtl.h"
-#include "tm_p.h"
-#include "insn-config.h"
-#include "recog.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "vec.h"
-#include "machmode.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "regs.h"
-#include "alloc-pool.h"
-#include "flags.h"
-#include "predict.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfganal.h"
-#include "basic-block.h"
-#include "sbitmap.h"
-#include "bitmap.h"
 #include "df.h"
+#include "memmodel.h"
+#include "emit-rtl.h"
+#include "cfganal.h"
 #include "tree-pass.h"
-#include "params.h"
 #include "cfgloop.h"
 
 static void *df_get_bb_info (struct dataflow *, unsigned int);
@@ -430,7 +412,7 @@ struct df_d *df;
 /* Add PROBLEM (and any dependent problems) to the DF instance.  */
 
 void
-df_add_problem (struct df_problem *problem)
+df_add_problem (const struct df_problem *problem)
 {
   struct dataflow *dflow;
   int i;
@@ -515,9 +497,8 @@ df_set_blocks (bitmap blocks)
 	  /* This block is called to change the focus from one subset
 	     to another.  */
 	  int p;
-	  bitmap_head diff;
-	  bitmap_initialize (&diff, &df_bitmap_obstack);
-	  bitmap_and_compl (&diff, df->blocks_to_analyze, blocks);
+	  auto_bitmap diff (&df_bitmap_obstack);
+	  bitmap_and_compl (diff, df->blocks_to_analyze, blocks);
 	  for (p = 0; p < df->num_problems_defined; p++)
 	    {
 	      struct dataflow *dflow = df->problems_in_order[p];
@@ -528,7 +509,7 @@ df_set_blocks (bitmap blocks)
 		  bitmap_iterator bi;
 		  unsigned int bb_index;
 
-		  EXECUTE_IF_SET_IN_BITMAP (&diff, 0, bb_index, bi)
+		  EXECUTE_IF_SET_IN_BITMAP (diff, 0, bb_index, bi)
 		    {
 		      basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
 		      if (bb)
@@ -540,8 +521,6 @@ df_set_blocks (bitmap blocks)
 		    }
 		}
 	    }
-
-	   bitmap_clear (&diff);
 	}
       else
 	{
@@ -603,7 +582,7 @@ df_set_blocks (bitmap blocks)
 void
 df_remove_problem (struct dataflow *dflow)
 {
-  struct df_problem *problem;
+  const struct df_problem *problem;
   int i;
 
   if (!dflow)
@@ -642,7 +621,6 @@ void
 df_finish_pass (bool verify ATTRIBUTE_UNUSED)
 {
   int i;
-  int removed = 0;
 
 #ifdef ENABLE_DF_CHECKING
   int saved_flags;
@@ -658,21 +636,15 @@ df_finish_pass (bool verify ATTRIBUTE_UNUSED)
   saved_flags = df->changeable_flags;
 #endif
 
-  for (i = 0; i < df->num_problems_defined; i++)
+  /* We iterate over problems by index as each problem removed will
+     lead to problems_in_order to be reordered.  */
+  for (i = 0; i < DF_LAST_PROBLEM_PLUS1; i++)
     {
-      struct dataflow *dflow = df->problems_in_order[i];
-      struct df_problem *problem = dflow->problem;
+      struct dataflow *dflow = df->problems_by_index[i];
 
-      if (dflow->optional_p)
-	{
-	  gcc_assert (problem->remove_problem_fun);
-	  (problem->remove_problem_fun) ();
-	  df->problems_in_order[i] = NULL;
-	  df->problems_by_index[problem->id] = NULL;
-	  removed++;
-	}
+      if (dflow && dflow->optional_p)
+	df_remove_problem (dflow);
     }
-  df->num_problems_defined -= removed;
 
   /* Clear all of the flags.  */
   df->changeable_flags = 0;
@@ -701,10 +673,8 @@ df_finish_pass (bool verify ATTRIBUTE_UNUSED)
 #endif
 #endif
 
-#ifdef ENABLE_CHECKING
-  if (verify)
+  if (flag_checking && verify)
     df->changeable_flags |= DF_VERIFY_SCHEDULED;
-#endif
 }
 
 
@@ -732,10 +702,9 @@ rest_of_handle_df_initialize (void)
     df_live_add_problem ();
 
   df->postorder = XNEWVEC (int, last_basic_block_for_fn (cfun));
-  df->postorder_inverted = XNEWVEC (int, last_basic_block_for_fn (cfun));
   df->n_blocks = post_order_compute (df->postorder, true, true);
-  df->n_blocks_inverted = inverted_post_order_compute (df->postorder_inverted);
-  gcc_assert (df->n_blocks == df->n_blocks_inverted);
+  inverted_post_order_compute (&df->postorder_inverted);
+  gcc_assert ((unsigned) df->n_blocks == df->postorder_inverted.length ());
 
   df->hard_regs_live_count = XCNEWVEC (unsigned int, FIRST_PSEUDO_REGISTER);
 
@@ -846,7 +815,7 @@ rest_of_handle_df_finish (void)
     }
 
   free (df->postorder);
-  free (df->postorder_inverted);
+  df->postorder_inverted.release ();
   free (df->hard_regs_live_count);
   free (df);
   df = NULL;
@@ -1054,10 +1023,7 @@ df_worklist_dataflow_doublequeue (struct dataflow *dataflow,
       bitmap_iterator bi;
       unsigned int index;
 
-      /* Swap pending and worklist. */
-      bitmap temp = worklist;
-      worklist = pending;
-      pending = temp;
+      std::swap (pending, worklist);
 
       EXECUTE_IF_SET_IN_BITMAP (worklist, 0, index, bi)
 	{
@@ -1094,7 +1060,7 @@ df_worklist_dataflow_doublequeue (struct dataflow *dataflow,
   /* Dump statistics. */
   if (dump_file)
     fprintf (dump_file, "df_worklist_dataflow_doublequeue:"
-	     "n_basic_blocks %d n_edges %d"
+	     " n_basic_blocks %d n_edges %d"
 	     " count %d (%5.2g)\n",
 	     n_basic_blocks_for_fn (cfun), n_edges_for_fn (cfun),
 	     dcount, dcount / (float)n_basic_blocks_for_fn (cfun));
@@ -1114,7 +1080,6 @@ df_worklist_dataflow (struct dataflow *dataflow,
                       int n_blocks)
 {
   bitmap pending = BITMAP_ALLOC (&df_bitmap_obstack);
-  sbitmap considered = sbitmap_alloc (last_basic_block_for_fn (cfun));
   bitmap_iterator bi;
   unsigned int *bbindex_to_postorder;
   int i;
@@ -1132,6 +1097,7 @@ df_worklist_dataflow (struct dataflow *dataflow,
     bbindex_to_postorder[i] = last_basic_block_for_fn (cfun);
 
   /* Initialize the considered map.  */
+  auto_sbitmap considered (last_basic_block_for_fn (cfun));
   bitmap_clear (considered);
   EXECUTE_IF_SET_IN_BITMAP (blocks_to_consider, 0, index, bi)
     {
@@ -1155,7 +1121,6 @@ df_worklist_dataflow (struct dataflow *dataflow,
 				    blocks_in_postorder,
 				    bbindex_to_postorder,
 				    n_blocks);
-  sbitmap_free (considered);
   free (bbindex_to_postorder);
 }
 
@@ -1232,7 +1197,7 @@ df_analyze_1 (void)
   int i;
 
   /* These should be the same.  */
-  gcc_assert (df->n_blocks == df->n_blocks_inverted);
+  gcc_assert ((unsigned) df->n_blocks == df->postorder_inverted.length ());
 
   /* We need to do this before the df_verify_all because this is
      not kept incrementally up to date.  */
@@ -1256,8 +1221,8 @@ df_analyze_1 (void)
           if (dflow->problem->dir == DF_FORWARD)
             df_analyze_problem (dflow,
                                 df->blocks_to_analyze,
-                                df->postorder_inverted,
-                                df->n_blocks_inverted);
+				df->postorder_inverted.address (),
+				df->postorder_inverted.length ());
           else
             df_analyze_problem (dflow,
                                 df->blocks_to_analyze,
@@ -1283,24 +1248,24 @@ void
 df_analyze (void)
 {
   bitmap current_all_blocks = BITMAP_ALLOC (&df_bitmap_obstack);
-  int i;
 
   free (df->postorder);
-  free (df->postorder_inverted);
   df->postorder = XNEWVEC (int, last_basic_block_for_fn (cfun));
-  df->postorder_inverted = XNEWVEC (int, last_basic_block_for_fn (cfun));
   df->n_blocks = post_order_compute (df->postorder, true, true);
-  df->n_blocks_inverted = inverted_post_order_compute (df->postorder_inverted);
+  df->postorder_inverted.truncate (0);
+  inverted_post_order_compute (&df->postorder_inverted);
 
-  for (i = 0; i < df->n_blocks; i++)
+  for (int i = 0; i < df->n_blocks; i++)
     bitmap_set_bit (current_all_blocks, df->postorder[i]);
 
-#ifdef ENABLE_CHECKING
-  /* Verify that POSTORDER_INVERTED only contains blocks reachable from
-     the ENTRY block.  */
-  for (i = 0; i < df->n_blocks_inverted; i++)
-    gcc_assert (bitmap_bit_p (current_all_blocks, df->postorder_inverted[i]));
-#endif
+  if (flag_checking)
+    {
+      /* Verify that POSTORDER_INVERTED only contains blocks reachable from
+	 the ENTRY block.  */
+      for (unsigned int i = 0; i < df->postorder_inverted.length (); i++)
+	gcc_assert (bitmap_bit_p (current_all_blocks,
+				  df->postorder_inverted[i]));
+    }
 
   /* Make sure that we have pruned any unreachable blocks from these
      sets.  */
@@ -1309,9 +1274,10 @@ df_analyze (void)
       bitmap_and_into (df->blocks_to_analyze, current_all_blocks);
       df->n_blocks = df_prune_to_subcfg (df->postorder,
 					 df->n_blocks, df->blocks_to_analyze);
-      df->n_blocks_inverted = df_prune_to_subcfg (df->postorder_inverted,
-						  df->n_blocks_inverted,
+      unsigned int newlen = df_prune_to_subcfg (df->postorder_inverted.address (),
+						df->postorder_inverted.length (),
 						  df->blocks_to_analyze);
+      df->postorder_inverted.truncate (newlen);
       BITMAP_FREE (current_all_blocks);
     }
   else
@@ -1332,14 +1298,13 @@ loop_post_order_compute (int *post_order, struct loop *loop)
   edge_iterator *stack;
   int sp;
   int post_order_num = 0;
-  bitmap visited;
 
   /* Allocate stack for back-tracking up CFG.  */
   stack = XNEWVEC (edge_iterator, loop->num_nodes + 1);
   sp = 0;
 
   /* Allocate bitmap to track nodes that have been visited.  */
-  visited = BITMAP_ALLOC (NULL);
+  auto_bitmap visited;
 
   /* Push the first edge on to the stack.  */
   stack[sp++] = ei_start (loop_preheader_edge (loop)->src->succs);
@@ -1381,7 +1346,6 @@ loop_post_order_compute (int *post_order, struct loop *loop)
     }
 
   free (stack);
-  BITMAP_FREE (visited);
 
   return post_order_num;
 }
@@ -1389,21 +1353,21 @@ loop_post_order_compute (int *post_order, struct loop *loop)
 /* Compute the reverse top sort order of the inverted sub-CFG specified
    by LOOP.  Returns the number of blocks which is always loop->num_nodes.  */
 
-static int
-loop_inverted_post_order_compute (int *post_order, struct loop *loop)
+static void
+loop_inverted_post_order_compute (vec<int> *post_order, struct loop *loop)
 {
   basic_block bb;
   edge_iterator *stack;
   int sp;
-  int post_order_num = 0;
-  bitmap visited;
+
+  post_order->reserve_exact (loop->num_nodes);
 
   /* Allocate stack for back-tracking up CFG.  */
   stack = XNEWVEC (edge_iterator, loop->num_nodes + 1);
   sp = 0;
 
   /* Allocate bitmap to track nodes that have been visited.  */
-  visited = BITMAP_ALLOC (NULL);
+  auto_bitmap visited;
 
   /* Put all latches into the initial work list.  In theory we'd want
      to start from loop exits but then we'd have the special case of
@@ -1433,13 +1397,13 @@ loop_inverted_post_order_compute (int *post_order, struct loop *loop)
 	       time, check its predecessors.  */
 	    stack[sp++] = ei_start (pred->preds);
 	  else
-	    post_order[post_order_num++] = pred->index;
+	    post_order->quick_push (pred->index);
 	}
       else
 	{
 	  if (flow_bb_inside_loop_p (loop, bb)
 	      && ei_one_before_end_p (ei))
-	    post_order[post_order_num++] = bb->index;
+	    post_order->quick_push (bb->index);
 
 	  if (!ei_one_before_end_p (ei))
 	    ei_next (&stack[sp - 1]);
@@ -1449,8 +1413,6 @@ loop_inverted_post_order_compute (int *post_order, struct loop *loop)
     }
 
   free (stack);
-  BITMAP_FREE (visited);
-  return post_order_num;
 }
 
 
@@ -1460,15 +1422,13 @@ void
 df_analyze_loop (struct loop *loop)
 {
   free (df->postorder);
-  free (df->postorder_inverted);
 
   df->postorder = XNEWVEC (int, loop->num_nodes);
-  df->postorder_inverted = XNEWVEC (int, loop->num_nodes);
+  df->postorder_inverted.truncate (0);
   df->n_blocks = loop_post_order_compute (df->postorder, loop);
-  df->n_blocks_inverted
-    = loop_inverted_post_order_compute (df->postorder_inverted, loop);
+    loop_inverted_post_order_compute (&df->postorder_inverted, loop);
   gcc_assert ((unsigned) df->n_blocks == loop->num_nodes);
-  gcc_assert ((unsigned) df->n_blocks_inverted == loop->num_nodes);
+  gcc_assert (df->postorder_inverted.length () == loop->num_nodes);
 
   bitmap blocks = BITMAP_ALLOC (&df_bitmap_obstack);
   for (int i = 0; i < df->n_blocks; ++i)
@@ -1489,8 +1449,8 @@ df_get_n_blocks (enum df_flow_dir dir)
 
   if (dir == DF_FORWARD)
     {
-      gcc_assert (df->postorder_inverted);
-      return df->n_blocks_inverted;
+      gcc_assert (df->postorder_inverted.length ());
+      return df->postorder_inverted.length ();
     }
 
   gcc_assert (df->postorder);
@@ -1509,8 +1469,8 @@ df_get_postorder (enum df_flow_dir dir)
 
   if (dir == DF_FORWARD)
     {
-      gcc_assert (df->postorder_inverted);
-      return df->postorder_inverted;
+      gcc_assert (df->postorder_inverted.length ());
+      return df->postorder_inverted.address ();
     }
   gcc_assert (df->postorder);
   return df->postorder;
@@ -1685,9 +1645,8 @@ df_compact_blocks (void)
   int i, p;
   basic_block bb;
   void *problem_temps;
-  bitmap_head tmp;
 
-  bitmap_initialize (&tmp, &df_bitmap_obstack);
+  auto_bitmap tmp (&df_bitmap_obstack);
   for (p = 0; p < df->num_problems_defined; p++)
     {
       struct dataflow *dflow = df->problems_in_order[p];
@@ -1696,17 +1655,17 @@ df_compact_blocks (void)
 	 dflow problem.  */
       if (dflow->out_of_date_transfer_functions)
 	{
-	  bitmap_copy (&tmp, dflow->out_of_date_transfer_functions);
+	  bitmap_copy (tmp, dflow->out_of_date_transfer_functions);
 	  bitmap_clear (dflow->out_of_date_transfer_functions);
-	  if (bitmap_bit_p (&tmp, ENTRY_BLOCK))
+	  if (bitmap_bit_p (tmp, ENTRY_BLOCK))
 	    bitmap_set_bit (dflow->out_of_date_transfer_functions, ENTRY_BLOCK);
-	  if (bitmap_bit_p (&tmp, EXIT_BLOCK))
+	  if (bitmap_bit_p (tmp, EXIT_BLOCK))
 	    bitmap_set_bit (dflow->out_of_date_transfer_functions, EXIT_BLOCK);
 
 	  i = NUM_FIXED_BLOCKS;
 	  FOR_EACH_BB_FN (bb, cfun)
 	    {
-	      if (bitmap_bit_p (&tmp, bb->index))
+	      if (bitmap_bit_p (tmp, bb->index))
 		bitmap_set_bit (dflow->out_of_date_transfer_functions, i);
 	      i++;
 	    }
@@ -1744,22 +1703,20 @@ df_compact_blocks (void)
 
   if (df->blocks_to_analyze)
     {
-      if (bitmap_bit_p (&tmp, ENTRY_BLOCK))
+      if (bitmap_bit_p (tmp, ENTRY_BLOCK))
 	bitmap_set_bit (df->blocks_to_analyze, ENTRY_BLOCK);
-      if (bitmap_bit_p (&tmp, EXIT_BLOCK))
+      if (bitmap_bit_p (tmp, EXIT_BLOCK))
 	bitmap_set_bit (df->blocks_to_analyze, EXIT_BLOCK);
-      bitmap_copy (&tmp, df->blocks_to_analyze);
+      bitmap_copy (tmp, df->blocks_to_analyze);
       bitmap_clear (df->blocks_to_analyze);
       i = NUM_FIXED_BLOCKS;
       FOR_EACH_BB_FN (bb, cfun)
 	{
-	  if (bitmap_bit_p (&tmp, bb->index))
+	  if (bitmap_bit_p (tmp, bb->index))
 	    bitmap_set_bit (df->blocks_to_analyze, i);
 	  i++;
 	}
     }
-
-  bitmap_clear (&tmp);
 
   i = NUM_FIXED_BLOCKS;
   FOR_EACH_BB_FN (bb, cfun)
@@ -1863,6 +1820,7 @@ df_verify (void)
   if (df_live)
     df_live_verify_transfer_functions ();
 #endif
+  df->changeable_flags &= ~DF_VERIFY_SCHEDULED;
 }
 
 #ifdef DF_DEBUG_CFG

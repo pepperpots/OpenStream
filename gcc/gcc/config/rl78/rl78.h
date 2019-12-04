@@ -1,5 +1,5 @@
 /* GCC backend definitions for the Renesas RL78 processor.
-   Copyright (C) 2011-2015 Free Software Foundation, Inc.
+   Copyright (C) 2011-2019 Free Software Foundation, Inc.
    Contributed by Red Hat.
 
    This file is part of GCC.
@@ -20,20 +20,32 @@
 
 
 #define RL78_MUL_NONE	(rl78_mul_type == MUL_NONE)
-#define RL78_MUL_RL78	(rl78_mul_type == MUL_RL78)
 #define RL78_MUL_G13	(rl78_mul_type == MUL_G13)
+#define RL78_MUL_G14	(rl78_mul_type == MUL_G14)
+
+#define TARGET_G10	(rl78_cpu_type == CPU_G10)
+#define TARGET_G13	(rl78_cpu_type == CPU_G13)
+#define TARGET_G14	(rl78_cpu_type == CPU_G14)
 
 #define TARGET_CPU_CPP_BUILTINS()               \
   do                                            \
     {                                           \
       builtin_define ("__RL78__"); 		\
       builtin_assert ("cpu=RL78"); 		\
-      if (RL78_MUL_RL78)			\
-	builtin_define ("__RL78_MUL_RL78__"); 	\
-      if (RL78_MUL_G13)				\
+      						\
+      if (RL78_MUL_NONE)			\
+	builtin_define ("__RL78_MUL_NONE__"); 	\
+      else if (RL78_MUL_G13)			\
 	builtin_define ("__RL78_MUL_G13__"); 	\
+      else if (RL78_MUL_G14)			\
+	builtin_define ("__RL78_MUL_G14__"); 	\
+      						\
       if (TARGET_G10)				\
 	builtin_define ("__RL78_G10__"); 	\
+      else if (TARGET_G13)			\
+	builtin_define ("__RL78_G13__"); 	\
+      else if (TARGET_G14)			\
+	builtin_define ("__RL78_G14__"); 	\
     }                                           \
   while (0)
 
@@ -46,7 +58,14 @@
 #undef  ASM_SPEC
 #define ASM_SPEC "\
 %{mrelax:-relax} \
-%{mg10} \
+%{mg10:--mg10} \
+%{mg13:--mg13} \
+%{mg14:--mg14} \
+%{mrl78:--mg14} \
+%{mcpu=g10:--mg10} \
+%{mcpu=g13:--mg13} \
+%{mcpu=g14:--mg14} \
+%{mcpu=rl78:--mg14} \
 "
 
 #undef  LINK_SPEC
@@ -125,14 +144,11 @@
 #define POINTERS_EXTEND_UNSIGNED	1
 #define FUNCTION_MODE 			HImode
 #define CASE_VECTOR_MODE		Pmode
-#define WORD_REGISTER_OPERATIONS	0
+#define WORD_REGISTER_OPERATIONS	1
 #define HAS_LONG_COND_BRANCH		0
 #define HAS_LONG_UNCOND_BRANCH		0
 
 #define MOVE_MAX 			2
-#define STARTING_FRAME_OFFSET		0
-
-#define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC)   1
 
 #define ADDR_SPACE_NEAR			1
 #define ADDR_SPACE_FAR			2
@@ -160,11 +176,11 @@
 */
 #define REGISTER_NAMES						\
   {								\
-    "x", "a", "c", "b", "e", "d", "l", "h", 			\
-    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",	\
+    "x",   "a",   "c",   "b",   "e",   "d",   "l",   "h", 	\
+    "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15",	\
     "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",	\
     "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31",	\
-      "sp", "ap", "psw", "es", "cs"				\
+    "sp",  "ap",  "psw", "es",  "cs"				\
   }
 
 #define ADDITIONAL_REGISTER_NAMES	\
@@ -386,19 +402,6 @@ typedef unsigned int CUMULATIVE_ARGS;
 
 #define FUNCTION_PROFILER(FILE, LABELNO)	\
     fprintf (FILE, "\tbsr\t__mcount\n");
-
-
-#define HARD_REGNO_NREGS(REGNO, MODE)            \
-  rl78_hard_regno_nregs (REGNO, MODE)
-
-#define HARD_REGNO_MODE_OK(REGNO, MODE) 			\
-  rl78_hard_regno_mode_ok (REGNO, MODE)
-
-#define MODES_TIEABLE_P(MODE1, MODE2)				\
-  (   (   GET_MODE_CLASS (MODE1) == MODE_FLOAT			\
-       || GET_MODE_CLASS (MODE1) == MODE_COMPLEX_FLOAT)		\
-   == (   GET_MODE_CLASS (MODE2) == MODE_FLOAT			\
-       || GET_MODE_CLASS (MODE2) == MODE_COMPLEX_FLOAT))
 
 
 #define TEXT_SECTION_ASM_OP ".text"

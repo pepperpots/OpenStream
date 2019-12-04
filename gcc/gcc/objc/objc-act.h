@@ -1,5 +1,5 @@
 /* Declarations for objc-act.c.
-   Copyright (C) 1990-2015 Free Software Foundation, Inc.
+   Copyright (C) 1990-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -95,11 +95,11 @@ void objc_common_init_ts (void);
 #define PROPERTY_NONATOMIC(DECL) \
    DECL_LANG_FLAG_1 (PROPERTY_DECL_CHECK (DECL))
 
-typedef enum objc_property_assign_semantics {
+enum objc_property_assign_semantics {
   OBJC_PROPERTY_ASSIGN = 1,
   OBJC_PROPERTY_RETAIN = 2,
   OBJC_PROPERTY_COPY = 3
-} objc_property_assign_semantics;
+};
 
 /* PROPERTY_ASSIGN_SEMANTICS can be OBJC_PROPERTY_ASSIGN,
    OBJC_PROPERTY_RETAIN or OBJC_PROPERTY_COPY.  We need an integer to
@@ -179,8 +179,8 @@ typedef enum objc_property_assign_semantics {
 #define CLASS_SUPER_NAME(CLASS) (TYPE_CONTEXT (CLASS))
 #define CLASS_IVARS(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 0)
 #define CLASS_RAW_IVARS(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 1)
-#define CLASS_NST_METHODS(CLASS) (TYPE_MINVAL (CLASS))
-#define CLASS_CLS_METHODS(CLASS) (TYPE_MAXVAL (CLASS))
+#define CLASS_NST_METHODS(CLASS) (TYPE_MIN_VALUE_RAW (CLASS))
+#define CLASS_CLS_METHODS(CLASS) (TYPE_MAX_VALUE_RAW (CLASS))
 #define CLASS_STATIC_TEMPLATE(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 2)
 #define CLASS_CATEGORY_LIST(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 3)
 #define CLASS_PROTOCOL_LIST(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 4)
@@ -189,8 +189,8 @@ typedef enum objc_property_assign_semantics {
 
 #define PROTOCOL_NAME(CLASS) (TYPE_NAME (CLASS))
 #define PROTOCOL_LIST(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 0)
-#define PROTOCOL_NST_METHODS(CLASS) (TYPE_MINVAL (CLASS))
-#define PROTOCOL_CLS_METHODS(CLASS) (TYPE_MAXVAL (CLASS))
+#define PROTOCOL_NST_METHODS(CLASS) (TYPE_MIN_VALUE_RAW (CLASS))
+#define PROTOCOL_CLS_METHODS(CLASS) (TYPE_MAX_VALUE_RAW (CLASS))
 #define PROTOCOL_FORWARD_DECL(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 1)
 #define PROTOCOL_DEFINED(CLASS) TREE_USED (CLASS)
 #define PROTOCOL_OPTIONAL_CLS_METHODS(CLASS) TREE_VEC_ELT (TYPE_LANG_SLOT_1 (CLASS), 2)
@@ -291,7 +291,7 @@ extern GTY(()) struct imp_entry *imp_list;
 extern GTY(()) int imp_count;	/* `@implementation' */
 extern GTY(()) int cat_count;	/* `@category' */
 
-extern GTY(()) objc_ivar_visibility_kind objc_ivar_visibility;
+extern GTY(()) enum objc_ivar_visibility_kind objc_ivar_visibility;
 
 /* Objective-C/Objective-C++ global tree enumeration.  */
 
@@ -313,6 +313,7 @@ enum objc_tree_index
     OCTI_SUPER_TYPE,
     OCTI_SEL_TYPE,
     OCTI_ID_TYPE,
+    OCTI_INSTANCE_TYPE,
     OCTI_CLS_TYPE,
     OCTI_NST_TYPE,
     OCTI_PROTO_TYPE,
@@ -368,6 +369,7 @@ enum objc_tree_index
     OCTI_OBJ_ID,
     OCTI_CLS_ID,
     OCTI_ID_NAME,
+    OCTI_INSTANCETYPE_NAME,
     OCTI_CLASS_NAME,
     OCTI_CNST_STR_ID,
     OCTI_CNST_STR_TYPE,
@@ -443,6 +445,7 @@ extern GTY(()) tree objc_global_trees[OCTI_MAX];
 #define objc_super_type		objc_global_trees[OCTI_SUPER_TYPE]
 #define objc_selector_type		objc_global_trees[OCTI_SEL_TYPE]
 #define objc_object_type	objc_global_trees[OCTI_ID_TYPE]
+#define objc_instancetype_type	objc_global_trees[OCTI_INSTANCE_TYPE]
 #define objc_class_type		objc_global_trees[OCTI_CLS_TYPE]
 #define objc_instance_type	objc_global_trees[OCTI_NST_TYPE]
 #define objc_protocol_type	objc_global_trees[OCTI_PROTO_TYPE]
@@ -570,7 +573,8 @@ extern GTY(()) tree objc_global_trees[OCTI_MAX];
 
 #define objc_object_id		objc_global_trees[OCTI_OBJ_ID]
 #define objc_class_id		objc_global_trees[OCTI_CLS_ID]
-#define objc_object_name		objc_global_trees[OCTI_ID_NAME]
+#define objc_object_name        objc_global_trees[OCTI_ID_NAME]
+#define objc_instancetype_name	objc_global_trees[OCTI_INSTANCETYPE_NAME]
 #define objc_class_name		objc_global_trees[OCTI_CLASS_NAME]
 
 /* Constant string classes.  */
@@ -608,6 +612,7 @@ extern GTY(()) tree objc_global_trees[OCTI_MAX];
 /* Reserved tag definitions.  */
 
 #define OBJECT_TYPEDEF_NAME		"id"
+#define INSTANCE_TYPEDEF_NAME		"instancetype"
 #define CLASS_TYPEDEF_NAME		"Class"
 
 #define TAG_OBJECT			"objc_object"
@@ -645,13 +650,13 @@ extern GTY(()) tree objc_global_trees[OCTI_MAX];
 #define TAG_ENUMERATION_MUTATION        "objc_enumerationMutation"
 #define TAG_FAST_ENUMERATION_STATE      "__objcFastEnumerationState"
 
-typedef enum string_section
+enum string_section
 {
   class_names,		/* class, category, protocol, module names */
   meth_var_names,	/* method and variable names */
   meth_var_types,	/* method and variable type descriptors */
   prop_names_attr	/* property names and their attributes. */
-} string_section;
+};
 
 #define METHOD_DEF			0
 #define METHOD_REF			1

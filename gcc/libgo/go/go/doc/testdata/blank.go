@@ -6,13 +6,43 @@
 // See issue 5397.
 package blank
 
+import "os"
+
 type T int
 
-// T constants.
+// T constants counting from a blank constant.
 const (
 	_ T = iota
 	T1
 	T2
+)
+
+// T constants counting from unexported constants.
+const (
+	tweedledee T = iota
+	tweedledum
+	C1
+	C2
+	alice
+	C3
+	redQueen int = iota
+	C4
+)
+
+// Constants with a single type that is not propagated.
+const (
+	zero     os.FileMode = 0
+	Default              = 0644
+	Useless              = 0312
+	WideOpen             = 0777
+)
+
+// Constants with an imported type that is propagated.
+const (
+	zero os.FileMode = 0
+	M1
+	M2
+	M3
 )
 
 // Package constants.
@@ -20,6 +50,13 @@ const (
 	_ int = iota
 	I1
 	I2
+)
+
+// Unexported constants counting from blank iota.
+// See issue 9615.
+const (
+	_   = iota
+	one = iota + 1
 )
 
 // Blanks not in doc output:

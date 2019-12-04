@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2015 Free Software Foundation, Inc.
+/* Copyright (C) 2009-2019 Free Software Foundation, Inc.
    Contributed by Anatoly Sokolov (aesok@post.ru)
 
    This file is part of GCC.
@@ -19,27 +19,17 @@
 
 /* Not included in avr.c since this requires C front end.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "tm_p.h"
-#include "cpplib.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
-#include "stor-layout.h"
 #include "target.h"
 #include "c-family/c-common.h"
+#include "stor-layout.h"
 #include "langhooks.h"
-
+#include "memmodel.h"
+#include "tm_p.h"
 
 /* IDs for all the AVR builtins.  */
 
@@ -91,24 +81,24 @@ avr_resolve_overloaded_builtin (unsigned int iloc, tree fndecl, void *vargs)
 
       switch (TYPE_MODE (type0))
         {
-        case QQmode: id = AVR_BUILTIN_ABSHR; break;
-        case HQmode: id = AVR_BUILTIN_ABSR; break;
-        case SQmode: id = AVR_BUILTIN_ABSLR; break;
-        case DQmode: id = AVR_BUILTIN_ABSLLR; break;
+        case E_QQmode: id = AVR_BUILTIN_ABSHR; break;
+        case E_HQmode: id = AVR_BUILTIN_ABSR; break;
+        case E_SQmode: id = AVR_BUILTIN_ABSLR; break;
+        case E_DQmode: id = AVR_BUILTIN_ABSLLR; break;
 
-        case HAmode: id = AVR_BUILTIN_ABSHK; break;
-        case SAmode: id = AVR_BUILTIN_ABSK; break;
-        case DAmode: id = AVR_BUILTIN_ABSLK; break;
-        case TAmode: id = AVR_BUILTIN_ABSLLK; break;
+        case E_HAmode: id = AVR_BUILTIN_ABSHK; break;
+        case E_SAmode: id = AVR_BUILTIN_ABSK; break;
+        case E_DAmode: id = AVR_BUILTIN_ABSLK; break;
+        case E_TAmode: id = AVR_BUILTIN_ABSLLK; break;
 
-        case UQQmode:
-        case UHQmode:
-        case USQmode:
-        case UDQmode:
-        case UHAmode:
-        case USAmode:
-        case UDAmode:
-        case UTAmode:
+        case E_UQQmode:
+        case E_UHQmode:
+        case E_USQmode:
+        case E_UDQmode:
+        case E_UHAmode:
+        case E_USAmode:
+        case E_UDAmode:
+        case E_UTAmode:
           warning_at (loc, 0, "using %qs with unsigned type has no effect",
                       "absfx");
           return args[0];
@@ -159,25 +149,25 @@ avr_resolve_overloaded_builtin (unsigned int iloc, tree fndecl, void *vargs)
 
       switch (TYPE_MODE (type0))
         {
-        case QQmode: id = AVR_BUILTIN_ROUNDHR; break;
-        case HQmode: id = AVR_BUILTIN_ROUNDR; break;
-        case SQmode: id = AVR_BUILTIN_ROUNDLR; break;
-        case DQmode: id = AVR_BUILTIN_ROUNDLLR; break;
+        case E_QQmode: id = AVR_BUILTIN_ROUNDHR; break;
+        case E_HQmode: id = AVR_BUILTIN_ROUNDR; break;
+        case E_SQmode: id = AVR_BUILTIN_ROUNDLR; break;
+        case E_DQmode: id = AVR_BUILTIN_ROUNDLLR; break;
 
-        case UQQmode: id = AVR_BUILTIN_ROUNDUHR; break;
-        case UHQmode: id = AVR_BUILTIN_ROUNDUR; break;
-        case USQmode: id = AVR_BUILTIN_ROUNDULR; break;
-        case UDQmode: id = AVR_BUILTIN_ROUNDULLR; break;
+        case E_UQQmode: id = AVR_BUILTIN_ROUNDUHR; break;
+        case E_UHQmode: id = AVR_BUILTIN_ROUNDUR; break;
+        case E_USQmode: id = AVR_BUILTIN_ROUNDULR; break;
+        case E_UDQmode: id = AVR_BUILTIN_ROUNDULLR; break;
 
-        case HAmode: id = AVR_BUILTIN_ROUNDHK; break;
-        case SAmode: id = AVR_BUILTIN_ROUNDK; break;
-        case DAmode: id = AVR_BUILTIN_ROUNDLK; break;
-        case TAmode: id = AVR_BUILTIN_ROUNDLLK; break;
+        case E_HAmode: id = AVR_BUILTIN_ROUNDHK; break;
+        case E_SAmode: id = AVR_BUILTIN_ROUNDK; break;
+        case E_DAmode: id = AVR_BUILTIN_ROUNDLK; break;
+        case E_TAmode: id = AVR_BUILTIN_ROUNDLLK; break;
 
-        case UHAmode: id = AVR_BUILTIN_ROUNDUHK; break;
-        case USAmode: id = AVR_BUILTIN_ROUNDUK; break;
-        case UDAmode: id = AVR_BUILTIN_ROUNDULK; break;
-        case UTAmode: id = AVR_BUILTIN_ROUNDULLK; break;
+        case E_UHAmode: id = AVR_BUILTIN_ROUNDUHK; break;
+        case E_USAmode: id = AVR_BUILTIN_ROUNDUK; break;
+        case E_UDAmode: id = AVR_BUILTIN_ROUNDULK; break;
+        case E_UTAmode: id = AVR_BUILTIN_ROUNDULLK; break;
 
         default:
           error_at (loc, "no matching fixed-point overload found for %qs",
@@ -216,25 +206,25 @@ avr_resolve_overloaded_builtin (unsigned int iloc, tree fndecl, void *vargs)
 
       switch (TYPE_MODE (type0))
         {
-        case QQmode: id = AVR_BUILTIN_COUNTLSHR; break;
-        case HQmode: id = AVR_BUILTIN_COUNTLSR; break;
-        case SQmode: id = AVR_BUILTIN_COUNTLSLR; break;
-        case DQmode: id = AVR_BUILTIN_COUNTLSLLR; break;
+        case E_QQmode: id = AVR_BUILTIN_COUNTLSHR; break;
+        case E_HQmode: id = AVR_BUILTIN_COUNTLSR; break;
+        case E_SQmode: id = AVR_BUILTIN_COUNTLSLR; break;
+        case E_DQmode: id = AVR_BUILTIN_COUNTLSLLR; break;
 
-        case UQQmode: id = AVR_BUILTIN_COUNTLSUHR; break;
-        case UHQmode: id = AVR_BUILTIN_COUNTLSUR; break;
-        case USQmode: id = AVR_BUILTIN_COUNTLSULR; break;
-        case UDQmode: id = AVR_BUILTIN_COUNTLSULLR; break;
+        case E_UQQmode: id = AVR_BUILTIN_COUNTLSUHR; break;
+        case E_UHQmode: id = AVR_BUILTIN_COUNTLSUR; break;
+        case E_USQmode: id = AVR_BUILTIN_COUNTLSULR; break;
+        case E_UDQmode: id = AVR_BUILTIN_COUNTLSULLR; break;
 
-        case HAmode: id = AVR_BUILTIN_COUNTLSHK; break;
-        case SAmode: id = AVR_BUILTIN_COUNTLSK; break;
-        case DAmode: id = AVR_BUILTIN_COUNTLSLK; break;
-        case TAmode: id = AVR_BUILTIN_COUNTLSLLK; break;
+        case E_HAmode: id = AVR_BUILTIN_COUNTLSHK; break;
+        case E_SAmode: id = AVR_BUILTIN_COUNTLSK; break;
+        case E_DAmode: id = AVR_BUILTIN_COUNTLSLK; break;
+        case E_TAmode: id = AVR_BUILTIN_COUNTLSLLK; break;
 
-        case UHAmode: id = AVR_BUILTIN_COUNTLSUHK; break;
-        case USAmode: id = AVR_BUILTIN_COUNTLSUK; break;
-        case UDAmode: id = AVR_BUILTIN_COUNTLSULK; break;
-        case UTAmode: id = AVR_BUILTIN_COUNTLSULLK; break;
+        case E_UHAmode: id = AVR_BUILTIN_COUNTLSUHK; break;
+        case E_USAmode: id = AVR_BUILTIN_COUNTLSUK; break;
+        case E_UDAmode: id = AVR_BUILTIN_COUNTLSULK; break;
+        case E_UTAmode: id = AVR_BUILTIN_COUNTLSULLK; break;
 
         default:
           error_at (loc, "no matching fixed-point overload found for %qs",
@@ -261,14 +251,15 @@ avr_resolve_overloaded_builtin (unsigned int iloc, tree fndecl, void *vargs)
 void
 avr_register_target_pragmas (void)
 {
-  int i;
-
   gcc_assert (ADDR_SPACE_GENERIC == ADDR_SPACE_RAM);
 
   /* Register address spaces.  The order must be the same as in the respective
-     enum from avr.h (or designated initializers must be used in avr.c).  */
+     enum from avr.h (or designated initializers must be used in avr.c).
+     We always register all address spaces even if some of them make no
+     sense for some targets.  Diagnose for non-supported spaces will be
+     emit by TARGET_ADDR_SPACE_DIAGNOSE_USAGE.  */
 
-  for (i = 0; i < ADDR_SPACE_COUNT; i++)
+  for (int i = 0; i < ADDR_SPACE_COUNT; i++)
     {
       gcc_assert (i == avr_addrspace[i].id);
 
@@ -301,12 +292,10 @@ avr_toupper (char *up, const char *lo)
 void
 avr_cpu_cpp_builtins (struct cpp_reader *pfile)
 {
-  int i;
-
   builtin_define_std ("AVR");
 
   /* __AVR_DEVICE_NAME__ and  avr_mcu_types[].macro like __AVR_ATmega8__
-	 are defined by -D command option, see device-specs file.  */
+     are defined by -D command option, see device-specs file.  */
 
   if (avr_arch->macro)
     cpp_define_formatted (pfile, "__AVR_ARCH__=%s", avr_arch->macro);
@@ -326,11 +315,16 @@ avr_cpu_cpp_builtins (struct cpp_reader *pfile)
       cpp_define (pfile, "__AVR_ENHANCED__");
       cpp_define (pfile, "__AVR_HAVE_MUL__");
     }
+
+  if (AVR_HAVE_JMP_CALL)
+    cpp_define (pfile, "__AVR_HAVE_JMP_CALL__");
+
   if (avr_arch->have_jmp_call)
-    {
-      cpp_define (pfile, "__AVR_MEGA__");
-      cpp_define (pfile, "__AVR_HAVE_JMP_CALL__");
-    }
+    cpp_define (pfile, "__AVR_MEGA__");
+
+  if (AVR_SHORT_CALLS)
+    cpp_define (pfile, "__AVR_SHORT_CALLS__");
+
   if (AVR_XMEGA)
     cpp_define (pfile, "__AVR_XMEGA__");
 
@@ -347,8 +341,13 @@ avr_cpu_cpp_builtins (struct cpp_reader *pfile)
          it has been mapped to the data memory.  For AVR_TINY devices
          (ATtiny4/5/9/10/20 and 40) mapped program memory starts at 0x4000. */
 
-      cpp_define (pfile, "__AVR_TINY_PM_BASE_ADDRESS__=0x4000");
+      cpp_define_formatted (pfile, "__AVR_TINY_PM_BASE_ADDRESS__=0x%x",
+                            avr_arch->flash_pm_offset);
     }
+
+  if (avr_arch->flash_pm_offset)
+    cpp_define_formatted (pfile, "__AVR_PM_BASE_ADDRESS__=0x%x",
+                          avr_arch->flash_pm_offset);
 
   if (AVR_HAVE_EIJMP_EICALL)
     {
@@ -399,15 +398,12 @@ avr_cpu_cpp_builtins (struct cpp_reader *pfile)
 
   if (lang_GNU_C ())
     {
-      for (i = 0; i < ADDR_SPACE_COUNT; i++)
+      for (int i = 0; i < ADDR_SPACE_COUNT; i++)
         if (!ADDR_SPACE_GENERIC_P (i)
             /* Only supply __FLASH<n> macro if the address space is reasonable
                for this target.  The address space qualifier itself is still
                supported, but using it will throw an error.  */
-            && avr_addrspace[i].segment < avr_n_flash
-	    /* Only support __MEMX macro if we have LPM.  */
-	    && (AVR_HAVE_LPM || avr_addrspace[i].pointer_size <= 2))
-
+            && avr_addr_space_supported_p ((addr_space_t) i))
           {
             const char *name = avr_addrspace[i].name;
             char *Name = (char*) alloca (1 + strlen (name));

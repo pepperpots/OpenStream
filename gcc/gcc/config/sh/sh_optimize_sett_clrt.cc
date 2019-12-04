@@ -1,5 +1,5 @@
 /* An SH specific RTL pass that tries to optimize clrt and sett insns.
-   Copyright (C) 2013-2015 Free Software Foundation, Inc.
+   Copyright (C) 2013-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -17,34 +17,19 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
+#define INCLUDE_ALGORITHM
+#define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
-#include "machmode.h"
-#include "predict.h"
-#include "vec.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "tm.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "basic-block.h"
-#include "df.h"
-#include "rtl.h"
-#include "insn-config.h"
-#include "tree-pass.h"
+#include "backend.h"
 #include "target.h"
-
-#include <vector>
-#include <algorithm>
+#include "rtl.h"
+#include "df.h"
+#include "cfgrtl.h"
+#include "tree-pass.h"
 
 /*
 This pass tries to eliminate unnecessary sett or clrt instructions in cases

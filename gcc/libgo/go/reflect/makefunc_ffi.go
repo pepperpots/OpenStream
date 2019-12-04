@@ -10,7 +10,10 @@ import (
 
 // The makeFuncFFI function, written in C, fills in an FFI closure.
 // It arranges for ffiCall to be invoked directly from FFI.
-func makeFuncFFI(ftyp *funcType, impl unsafe.Pointer)
+func makeFuncFFI(cif unsafe.Pointer, impl unsafe.Pointer)
+
+// The makeCIF function, implemented in the runtime package, allocates a CIF.
+func makeCIF(ft *funcType) unsafe.Pointer
 
 // FFICallbackGo implements the Go side of the libffi callback.
 // It is exported so that C code can call it.
@@ -30,7 +33,7 @@ func FFICallbackGo(results unsafe.Pointer, params unsafe.Pointer, impl *makeFunc
 	ap := params
 	for _, rt := range ftyp.in {
 		p := unsafe_New(rt)
-		memmove(p, *(*unsafe.Pointer)(ap), rt.size)
+		typedmemmove(rt, p, *(*unsafe.Pointer)(ap))
 		v := Value{rt, p, flag(rt.Kind()) | flagIndir}
 		in = append(in, v)
 		ap = (unsafe.Pointer)(uintptr(ap) + ptrSize)
@@ -56,7 +59,7 @@ func FFICallbackGo(results unsafe.Pointer, params unsafe.Pointer, impl *makeFunc
 		if v.flag&flagIndir == 0 && (v.kind() == Ptr || v.kind() == UnsafePointer) {
 			*(*unsafe.Pointer)(addr) = v.ptr
 		} else {
-			memmove(addr, v.ptr, typ.size)
+			typedmemmove(typ, addr, v.ptr)
 		}
 		off += typ.size
 	}

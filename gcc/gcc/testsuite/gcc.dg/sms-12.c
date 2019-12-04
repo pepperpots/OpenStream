@@ -1,5 +1,5 @@
 /* { dg-do run } */
-/* { dg-skip-if "" { ! { aarch64*-*-* } } { "*" } { "" } } */
+/* { dg-skip-if "" { ! { aarch64*-*-* } } } */
 /* { dg-options "-O2 -fmodulo-sched -funroll-loops -fdump-rtl-sms --param sms-min-sc=1 -fmodulo-sched-allow-regmoves -fPIC" } */
 
 extern void abort (void);
@@ -39,5 +39,4 @@ main ()
   return 0;
 }
 
-/* { dg-final { cleanup-rtl-dump "sms" } } */
 

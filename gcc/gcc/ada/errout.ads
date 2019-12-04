@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -68,6 +68,10 @@ package Errout is
    --  error message tag. The -gnatw.d switch sets this flag True, -gnatw.D
    --  sets this flag False.
 
+   Current_Node : Node_Id := Empty;
+   --  Used by Error_Msg as a default Node_Id.
+   --  Relevant only when Opt.Include_Subprogram_In_Messages is set.
+
    -----------------------------------
    -- Suppression of Error Messages --
    -----------------------------------
@@ -110,9 +114,6 @@ package Errout is
 
    --  This normal suppression action may be overridden in cases 2-5 (but not
    --  in case 1 or 7 by setting All_Errors mode, or by setting the special
-   --  unconditional message insertion character (!) as described below.
-   --  This normal suppression action may be overridden in cases 2-5 (but
-   --  not in case 1) by setting All_Errors mode, or by setting the special
    --  unconditional message insertion character (!) as described below.
 
    ---------------------------------------------------------
@@ -157,8 +158,8 @@ package Errout is
    --      obtained from the Unit_Name_Type value in Error_Msg_Unit_1 and
    --      Error_Msg_Unit_2, as provided by Get_Unit_Name_String in package
    --      Uname. Note that this name includes the postfix (spec) or (body)
-   --      strings. If this postfix is not required, use the normal %
-   --      insertion for the unit name.
+   --      strings. If this postfix is not required, use the normal % insertion
+   --      for the unit name.
 
    --    Insertion character { (Left brace: insert file name from names table)
    --      The character { is treated similarly to %, except that the input
@@ -168,7 +169,7 @@ package Errout is
    --      insertion is the exact string stored in the names table without
    --      adjusting the casing.
 
-   --    Insertion character * (Asterisk, insert reserved word name)
+   --    Insertion character * (Asterisk: insert reserved word name)
    --      The insertion character * is treated exactly like % except that the
    --      resulting name is cased according to the default conventions for
    --      reserved words (see package Scans).
@@ -217,11 +218,11 @@ package Errout is
    --    Insertion character } (Right brace: insert type reference)
    --      The character } is replaced by a string describing the type
    --      referenced by the entity whose Id is stored in Error_Msg_Node_1.
-   --      the string gives the name or description of the type, and also
+   --      The string gives the name or description of the type, and also
    --      where appropriate the location of its declaration. Special cases
    --      like "some integer type" are handled appropriately. Only one } is
    --      allowed in a message, since there is not enough room for two (the
-   --      insertion can be quite long, including a file name) In addition, if
+   --      insertion can be quite long, including a file name). In addition, if
    --      the special global variable Error_Msg_Qual_Level is non-zero, then
    --      the reference will include up to the given number of levels of
    --      qualification, using the scope chain.
@@ -240,7 +241,7 @@ package Errout is
    --      A second ^ may occur in the message, in which case it is replaced
    --      by the decimal conversion of the Uint value in Error_Msg_Uint_2.
 
-   --    Insertion character > (Greater Than, run time name)
+   --    Insertion character > (Greater Than: run time name)
    --      The character > is replaced by a string of the form (name) if
    --      Targparm scanned out a Run_Time_Name (see package Targparm for
    --      details). The name is enclosed in parentheses and output in mixed
@@ -304,7 +305,9 @@ package Errout is
    --      Note: this usage is obsolete, use ?? ?*? ?$? ?x? ?X? to specify
    --      the string to be added when Warn_Doc_Switch is set to True. If this
    --      switch is True, then for simple ? messages it has no effect. This
-   --      simple form is to ease transition and will be removed later.
+   --      simple form is to ease transition and may be removed later except
+   --      for GNATprove-specific messages (info and warnings) which are not
+   --      subject to the same GNAT warning switches.
 
    --    Insertion character ?? (Two question marks: default warning)
    --      Like ?, but if the flag Warn_Doc_Switch is True, adds the string
@@ -327,7 +330,7 @@ package Errout is
    --      "[restriction warning]" at the end of the warning message. For
    --      continuations, use this on each continuation message.
 
-   --    Insertion character ?$? (elaboration information messages)
+   --    Insertion character ?$? (elaboration informational messages)
    --      Like ?, but if the flag Warn_Doc_Switch is True, adds the string
    --      "[-gnatel]" at the end of the info message. This is used for the
    --      messages generated by the switch -gnatel. For continuations, use
@@ -372,7 +375,7 @@ package Errout is
    --      messages are treated as a unit. The \ character must be the first
    --      character of the message text.
 
-   --    Insertion character \\ (Two backslashes, continuation with new line)
+   --    Insertion character \\ (Two backslashes: continuation with new line)
    --      This differs from \ only in -gnatjnn mode (Error_Message_Line_Length
    --      set non-zero). This sequence forces a new line to start even when
    --      continuations are being gathered into a single message.
@@ -422,12 +425,13 @@ package Errout is
    --      message. Style messages are also considered to be warnings, but
    --      they do not get a tag.
 
-   --    Insertion sequence "info: " (information message)
+   --    Insertion sequence "info: " (informational message)
    --      This appears only at the start of the message (and not any of its
    --      continuations, if any), and indicates that the message is an info
    --      message. The message will be output with this prefix, and if there
    --      are continuations that are not printed using the -gnatj switch they
-   --      will also have this prefix.
+   --      will also have this prefix. Informational messages are usually also
+   --      warnings, but they don't have to be.
 
    --    Insertion sequence "low: " or "medium: " or "high: " (check message)
    --      This appears only at the start of the message (and not any of its
@@ -477,10 +481,10 @@ package Errout is
    Error_Msg_Node_2 : Node_Id renames Err_Vars.Error_Msg_Node_2;
    --  Node_Id values for & insertion characters in message
 
-   Error_Msg_Qual_Level : Int renames Err_Vars.Error_Msg_Qual_Level;
+   Error_Msg_Qual_Level : Nat renames Err_Vars.Error_Msg_Qual_Level;
    --  Number of levels of qualification required for type name (see the
    --  description of the } insertion character). Note that this value does
-   --  note get reset by any Error_Msg call, so the caller is responsible
+   --  not get reset by any Error_Msg call, so the caller is responsible
    --  for resetting it.
 
    Error_Msg_Warn : Boolean renames Err_Vars.Error_Msg_Warn;
@@ -688,9 +692,13 @@ package Errout is
    --  Output list of messages, including messages giving number of detected
    --  errors and warnings.
 
-   procedure Error_Msg (Msg : String; Flag_Location : Source_Ptr);
+   procedure Error_Msg
+     (Msg : String; Flag_Location : Source_Ptr);
+   procedure Error_Msg
+     (Msg : String; Flag_Location : Source_Ptr; N : Node_Id);
    --  Output a message at specified location. Can be called from the parser
-   --  or the semantic analyzer.
+   --  or the semantic analyzer. If N is set, points to the relevant node for
+   --  this message.
 
    procedure Error_Msg_S (Msg : String);
    --  Output a message at current scan pointer location. This routine can be
@@ -796,7 +804,7 @@ package Errout is
 
    procedure Remove_Warning_Messages (N : Node_Id);
    --  Remove any warning messages corresponding to the Sloc of N or any
-   --  of its descendent nodes. No effect if no such warnings. Note that
+   --  of its descendant nodes. No effect if no such warnings. Note that
    --  style messages (identified by the fact that they start with "(style)")
    --  are not removed by this call. Basically the idea behind this procedure
    --  is to remove warnings about execution conditions from known dead code.
@@ -804,6 +812,11 @@ package Errout is
    procedure Remove_Warning_Messages (L : List_Id);
    --  Remove warnings on all elements of a list (Calls Remove_Warning_Messages
    --  on each element of the list, see above).
+
+   procedure Reset_Warnings;
+   --  Reset the counts related to warnings. This is used both to initialize
+   --  these counts and to reset them after each phase of analysis for a given
+   --  value of Opt.Warning_Mode in gnat2why.
 
    procedure Set_Ignore_Errors (To : Boolean);
    --  Following a call to this procedure with To=True, all error calls are
@@ -837,7 +850,7 @@ package Errout is
    --  pragma, or the null string if no reason is given. Config is True for the
    --  configuration pragma case (where there is no requirement for a matching
    --  OFF pragma). Used is set True to disable the check that the warning
-   --  actually has has the effect of suppressing a warning.
+   --  actually has the effect of suppressing a warning.
 
    procedure Set_Specific_Warning_On
      (Loc : Source_Ptr;
@@ -854,9 +867,9 @@ package Errout is
    function Compilation_Errors return Boolean;
    --  Returns True if errors have been detected, or warnings in -gnatwe (treat
    --  warnings as errors) mode. Note that it is mandatory to call Finalize
-   --  before calling this routine. Always returns False in formal verification
-   --  mode, because errors issued when analyzing code are not compilation
-   --  errors, and should not result in exiting with an error status.
+   --  before calling this routine. To account for changes to Warning_Mode in
+   --  gnat2why between phases, the past or current presence of an error is
+   --  recorded in a global variable at each call.
 
    procedure Error_Msg_CRT (Feature : String; N : Node_Id);
    --  Posts a non-fatal message on node N saying that the feature identified
@@ -907,11 +920,17 @@ package Errout is
    -- Utility Interface for Casing Control --
    ------------------------------------------
 
+   procedure Adjust_Name_Case
+     (Buf : in out Bounded_String;
+      Loc : Source_Ptr);
+   --  Given a name stored in Buf, set proper casing. Loc is an associated
+   --  source position, and if we can find a match between the name in Buf and
+   --  the name at that source location, we copy the casing from the source,
+   --  otherwise we set appropriate default casing.
+
    procedure Adjust_Name_Case (Loc : Source_Ptr);
-   --  Given a name stored in Name_Buffer (1 .. Name_Len), set proper casing.
-   --  Loc is an associated source position, if we can find a match between
-   --  the name in Name_Buffer and the name at that source location, we copy
-   --  the casing from the source, otherwise we set appropriate default casing.
+   --  Uses Buf => Global_Name_Buffer. There are no calls to this in the
+   --  compiler, but it is called in SPARK 2014.
 
    procedure Set_Identifier_Casing
      (Identifier_Name : System.Address;

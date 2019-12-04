@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -34,13 +34,14 @@ with Casing;   use Casing;
 with Csets;    use Csets;
 with Debug;    use Debug;
 with Err_Vars; use Err_Vars;
+with Fname;    use Fname;
 with Namet;    use Namet;
 with Opt;      use Opt;
 with Output;   use Output;
 with Sinput;   use Sinput;
 with Snames;   use Snames;
 with Stringt;  use Stringt;
-with Targparm; use Targparm;
+with Targparm;
 with Uintp;    use Uintp;
 with Widechar; use Widechar;
 
@@ -65,7 +66,7 @@ package body Erroutc is
          Class_Flag := False;
          Set_Msg_Char (''');
          Get_Name_String (Name_Class);
-         Set_Casing (Identifier_Casing (Flag_Source), Mixed_Case);
+         Set_Casing (Identifier_Casing (Flag_Source));
          Set_Msg_Name_Buffer;
       end if;
    end Add_Class;
@@ -138,12 +139,17 @@ package body Erroutc is
 
             --  Adjust error message count
 
-            if Errors.Table (D).Warn or else Errors.Table (D).Style then
-               Warnings_Detected := Warnings_Detected - 1;
+            if Errors.Table (D).Info then
 
-               if Errors.Table (D).Info then
-                  Info_Messages := Info_Messages - 1;
+               if Errors.Table (D).Warn then
+                  Warning_Info_Messages := Warning_Info_Messages - 1;
+                  Warnings_Detected := Warnings_Detected - 1;
+               else
+                  Report_Info_Messages := Report_Info_Messages - 1;
                end if;
+
+            elsif Errors.Table (D).Warn or else Errors.Table (D).Style then
+               Warnings_Detected := Warnings_Detected - 1;
 
                --  Note: we do not need to decrement Warnings_Treated_As_Errors
                --  because this only gets incremented if we actually output the
@@ -238,10 +244,11 @@ package body Erroutc is
 
    function Compilation_Errors return Boolean is
    begin
-      return Total_Errors_Detected /= 0
-        or else (Warnings_Detected - Info_Messages /= 0
-                  and then Warning_Mode = Treat_As_Error)
-        or else Warnings_Treated_As_Errors /= 0;
+      return
+        Total_Errors_Detected /= 0
+          or else (Warnings_Detected - Warning_Info_Messages /= 0
+                    and then Warning_Mode = Treat_As_Error)
+          or else Warnings_Treated_As_Errors /= 0;
    end Compilation_Errors;
 
    ------------------
@@ -292,6 +299,7 @@ package body Erroutc is
       w ("  Uncond   = ", E.Uncond);
       w ("  Msg_Cont = ", E.Msg_Cont);
       w ("  Deleted  = ", E.Deleted);
+      w ("  Node     = ", Int (E.Node));
 
       Write_Eol;
    end dmsg;
@@ -625,14 +633,29 @@ package body Erroutc is
          --  Postfix warning tag to message if needed
 
          if Tag /= "" and then Warning_Doc_Switch then
-            Txt := new String'(Text.all & ' ' & Tag);
+            if Include_Subprogram_In_Messages then
+               Txt :=
+                 new String'
+                   (Subprogram_Name_Ptr (Errors.Table (E).Node) &
+                    ": " & Text.all & ' ' & Tag);
+            else
+               Txt := new String'(Text.all & ' ' & Tag);
+            end if;
+
+         elsif Include_Subprogram_In_Messages
+           and then (Errors.Table (E).Warn or else Errors.Table (E).Style)
+         then
+            Txt :=
+              new String'
+                (Subprogram_Name_Ptr (Errors.Table (E).Node) &
+                 ": " & Text.all);
          else
             Txt := Text;
          end if;
 
          --  Deal with warning case
 
-         if Errors.Table (E).Warn then
+         if Errors.Table (E).Warn or else Errors.Table (E).Info then
 
             --  For info messages, prefix message with "info: "
 
@@ -854,7 +877,7 @@ package body Erroutc is
          end if;
       end loop;
 
-      if Is_Warning_Msg or Is_Style_Msg or Is_Check_Msg then
+      if Is_Info_Msg or Is_Warning_Msg or Is_Style_Msg or Is_Check_Msg then
          Is_Serious_Error := False;
       end if;
    end Prescan_Message;
@@ -1035,6 +1058,8 @@ package body Erroutc is
    procedure Set_Msg_Insertion_Line_Number (Loc, Flag : Source_Ptr) is
       Sindex_Loc  : Source_File_Index;
       Sindex_Flag : Source_File_Index;
+      Fname       : File_Name_Type;
+      Int_File    : Boolean;
 
       procedure Set_At;
       --  Outputs "at " unless last characters in buffer are " from ". Certain
@@ -1083,21 +1108,24 @@ package body Erroutc is
 
          if Full_File_Name (Sindex_Loc) /= Full_File_Name (Sindex_Flag) then
             Set_At;
-            Get_Name_String
-              (Reference_Name (Get_Source_File_Index (Loc)));
+            Fname := Reference_Name (Get_Source_File_Index (Loc));
+            Int_File := Is_Internal_File_Name (Fname);
+            Get_Name_String (Fname);
             Set_Msg_Name_Buffer;
-            Set_Msg_Char (':');
+
+            if not (Int_File and Debug_Flag_Dot_K) then
+               Set_Msg_Char (':');
+               Set_Msg_Int (Int (Get_Logical_Line_Number (Loc)));
+            end if;
 
          --  If in current file, add text "at line "
 
          else
             Set_At;
             Set_Msg_Str ("line ");
+            Int_File := False;
+            Set_Msg_Int (Int (Get_Logical_Line_Number (Loc)));
          end if;
-
-         --  Output line number for reference
-
-         Set_Msg_Int (Int (Get_Logical_Line_Number (Loc)));
 
          --  Deal with the instantiation case. We may have a reference to,
          --  e.g. a type, that is declared within a generic template, and
@@ -1181,7 +1209,7 @@ package body Erroutc is
          --  Else output with surrounding quotes in proper casing mode
 
          else
-            Set_Casing (Identifier_Casing (Flag_Source), Mixed_Case);
+            Set_Casing (Identifier_Casing (Flag_Source));
             Set_Msg_Quote;
             Set_Msg_Name_Buffer;
             Set_Msg_Quote;
@@ -1438,7 +1466,7 @@ package body Erroutc is
       Specific_Warnings.Append
         ((Start      => Loc,
           Msg        => new String'(Msg),
-          Stop       => Source_Last (Current_Source_File),
+          Stop       => Source_Last (Get_Source_File_Index (Loc)),
           Reason     => Reason,
           Open       => True,
           Used       => Used,
@@ -1522,7 +1550,7 @@ package body Erroutc is
 
       Warnings.Append
         ((Start  => Loc,
-          Stop   => Source_Last (Current_Source_File),
+          Stop   => Source_Last (Get_Source_File_Index (Loc)),
           Reason => Reason));
    end Set_Warnings_Mode_Off;
 

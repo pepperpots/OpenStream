@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -57,21 +57,21 @@ with Tbuild;   use Tbuild;
 
 function Par (Configuration_Pragmas : Boolean) return List_Id is
 
-   Num_Library_Units : Natural := 0;
-   --  Count number of units parsed (relevant only in syntax check only mode,
-   --  since in semantics check mode only a single unit is permitted anyway).
-
-   Save_Config_Switches : Config_Switches_Type;
-   --  Variable used to save values of config switches while we parse the
-   --  new unit, to be restored on exit for proper recursive behavior.
+   Inside_Record_Definition : Boolean := False;
+   --  True within a record definition. Used to control warning for
+   --  redefinition of standard entities (not issued for field names).
 
    Loop_Block_Count : Nat := 0;
    --  Counter used for constructing loop/block names (see the routine
    --  Par.Ch5.Get_Loop_Block_Name).
 
-   Inside_Record_Definition : Boolean := False;
-   --  Flag set True within a record definition. Used to control warning
-   --  for redefinition of standard entities (not issued for field names).
+   Num_Library_Units : Natural := 0;
+   --  Count number of units parsed (relevant only in syntax check only mode,
+   --  since in semantics check mode only a single unit is permitted anyway).
+
+   Save_Config_Attrs : Config_Switches_Type;
+   --  Variable used to save values of config switches while we parse the
+   --  new unit, to be restored on exit for proper recursive behavior.
 
    --------------------
    -- Error Recovery --
@@ -476,8 +476,8 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
       --  subprogram specifications and bodies the field holds the correponding
       --  program unit name. For task declarations and bodies, protected types
       --  and bodies, and accept statements the field hold the name of the type
-      --  or operation. For if-statements, case-statements, and selects, the
-      --  field is initialized to Error.
+      --  or operation. For if-statements, case-statements, return statements,
+      --  and selects, the field is initialized to Error.
 
       --  Note: this is a bit of an odd (mis)use of Error, since there is no
       --  Error, but we use this value as a place holder to indicate that it
@@ -594,6 +594,12 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
    --  Note: we actually have enough information to patch up the tree, but
    --  this may not be worth the effort. Also we could deal with the same
    --  situation for EXIT with a label, but for now don't bother with that.
+
+   Current_Assign_Node : Node_Id := Empty;
+   --  This is the node of the current assignment statement being compiled.
+   --  It is used to record the presence of target_names on its RHS. This
+   --  context-dependent trick simplifies the analysis of such nodes, where
+   --  the RHS must first be analyzed with expansion disabled.
 
    ---------------------------------
    -- Parsing Routines by Chapter --
@@ -861,7 +867,7 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
    -------------
 
    package Ch8 is
-      function P_Use_Clause                           return Node_Id;
+      procedure P_Use_Clause (Item_List : List_Id);
    end Ch8;
 
    -------------
@@ -967,7 +973,7 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
       --  to either a WITH keyword starting an aspect specification, or an
       --  instance of what shpould be a terminator token. In the former case,
       --  the aspect specifications are scanned out including the terminator
-      --  token if it it is a semicolon, and the Has_Aspect_Specifications
+      --  token if it is a semicolon, and the Has_Aspect_Specifications
       --  flag is set in the given declaration node. A list of aspects
       --  is built and stored for this declaration node using a call to
       --  Set_Aspect_Specifications. If no WITH keyword is present, then this
@@ -1451,6 +1457,8 @@ function Par (Configuration_Pragmas : Boolean) return List_Id is
    procedure Labl is separate;
    procedure Load is separate;
 
+   Result : List_Id := Empty_List;
+
 --  Start of processing for Par
 
 begin
@@ -1466,13 +1474,13 @@ begin
       begin
          loop
             if Token = Tok_EOF then
-               Compiler_State := Analyzing;
-               return Pragmas;
+               Result := Pragmas;
+               exit;
 
             elsif Token /= Tok_Pragma then
                Error_Msg_SC ("only pragmas allowed in configuration file");
-               Compiler_State := Analyzing;
-               return Error_List;
+               Result := Error_List;
+               exit;
 
             else
                P_Node := P_Pragma;
@@ -1481,10 +1489,12 @@ begin
 
                   --  Give error if bad pragma
 
-                  if not Is_Configuration_Pragma_Name (Pragma_Name (P_Node))
-                    and then Pragma_Name (P_Node) /= Name_Source_Reference
+                  if not Is_Configuration_Pragma_Name
+                           (Pragma_Name_Unmapped (P_Node))
+                    and then
+                      Pragma_Name_Unmapped (P_Node) /= Name_Source_Reference
                   then
-                     if Is_Pragma_Name (Pragma_Name (P_Node)) then
+                     if Is_Pragma_Name (Pragma_Name_Unmapped (P_Node)) then
                         Error_Msg_N
                           ("only configuration pragmas allowed " &
                            "in configuration file", P_Node);
@@ -1507,7 +1517,7 @@ begin
    --  Normal case of compilation unit
 
    else
-      Save_Opt_Config_Switches (Save_Config_Switches);
+      Save_Config_Attrs := Save_Config_Switches;
 
       --  The following loop runs more than once in syntax check mode
       --  where we allow multiple compilation units in the same file
@@ -1515,9 +1525,9 @@ begin
       --  we get to the unit we want.
 
       for Ucount in Pos loop
-         Set_Opt_Config_Switches
-           (Is_Internal_File_Name (File_Name (Current_Source_File)),
-            Current_Source_Unit = Main_Unit);
+         Set_Config_Switches
+           (Is_Internal_Unit (Current_Source_Unit),
+            Main_Unit => Current_Source_Unit = Main_Unit);
 
          --  Initialize scope table and other parser control variables
 
@@ -1577,11 +1587,14 @@ begin
                --  versions of these files. Another exception is System.RPC
                --  and its children. This allows a user to supply their own
                --  communication layer.
+               --  Similarly, we do not generate an error in CodePeer mode,
+               --  to allow users to analyze third-party compiler packages.
 
                if Comp_Unit_Node /= Error
                  and then Operating_Mode = Generate_Code
                  and then Current_Source_Unit = Main_Unit
                  and then not GNAT_Mode
+                 and then not CodePeer_Mode
                then
                   declare
                      Uname : constant String :=
@@ -1608,7 +1621,7 @@ begin
                          Name (Name'First .. Name'First + 3) = "ada."
                      then
                         Error_Msg
-                          ("user-defined descendents of package Ada " &
+                          ("user-defined descendants of package Ada " &
                              "are not allowed",
                            Sloc (Unit (Comp_Unit_Node)));
 
@@ -1617,7 +1630,7 @@ begin
                          Name (Name'First .. Name'First + 10) = "interfaces."
                      then
                         Error_Msg
-                          ("user-defined descendents of package Interfaces " &
+                          ("user-defined descendants of package Interfaces " &
                              "are not allowed",
                            Sloc (Unit (Comp_Unit_Node)));
 
@@ -1630,7 +1643,7 @@ begin
                                                                  "system.rpc.")
                      then
                         Error_Msg
-                          ("user-defined descendents of package System " &
+                          ("user-defined descendants of package System " &
                              "are not allowed",
                            Sloc (Unit (Comp_Unit_Node)));
                      end if;
@@ -1648,7 +1661,7 @@ begin
 
          end if;
 
-         Restore_Opt_Config_Switches (Save_Config_Switches);
+         Restore_Config_Switches (Save_Config_Attrs);
       end loop;
 
       --  Now that we have completely parsed the source file, we can complete
@@ -1677,9 +1690,11 @@ begin
 
       --  Restore settings of switches saved on entry
 
-      Restore_Opt_Config_Switches (Save_Config_Switches);
+      Restore_Config_Switches (Save_Config_Attrs);
       Set_Comes_From_Source_Default (False);
-      Compiler_State := Analyzing;
-      return Empty_List;
    end if;
+
+   Compiler_State      := Analyzing;
+   Current_Source_File := No_Source_File;
+   return Result;
 end Par;

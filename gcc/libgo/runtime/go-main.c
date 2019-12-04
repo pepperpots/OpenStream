@@ -15,10 +15,8 @@
 #endif
 
 #include "runtime.h"
-#include "go-alloc.h"
 #include "array.h"
 #include "arch.h"
-#include "malloc.h"
 
 #undef int
 #undef char
@@ -30,6 +28,11 @@
 
 extern char **environ;
 
+/* A copy of _end that a shared library can reasonably refer to.  */
+uintptr __go_end;
+
+extern byte _end[];
+
 /* The main function.  */
 
 int
@@ -38,14 +41,21 @@ main (int argc, char **argv)
   runtime_isarchive = false;
 
   if (runtime_isstarted)
-    return NULL;
+    return 0;
   runtime_isstarted = true;
 
+  if (runtime_iscgo)
+    setIsCgo ();
+
+  __go_end = (uintptr)_end;
+  runtime_cpuinit ();
   runtime_check ();
   runtime_args (argc, (byte **) argv);
-  runtime_osinit ();
+  setncpu (getproccount ());
+  setpagesize (getpagesize ());
+  runtime_sched = runtime_getsched();
   runtime_schedinit ();
-  __go_go (runtime_main, NULL);
+  __go_go ((uintptr)(runtime_main), NULL);
   runtime_mstart (runtime_m ());
   abort ();
 }

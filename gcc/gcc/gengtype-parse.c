@@ -1,5 +1,5 @@
 /* Process source files and output type information.
-   Copyright (C) 2006-2015 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -274,15 +274,11 @@ require_template_declaration (const char *tmpl_name)
 	  str = concat (str, "enum ", (char *) 0);
 	  continue;
 	}
-      if (token () == NUM)
+      if (token () == NUM
+	  || token () == ':'
+	  || token () == '+')
 	{
 	  str = concat (str, advance (), (char *) 0);
-	  continue;
-	}
-      if (token () == ':')
-	{
-	  advance ();
-	  str = concat (str, ":", (char *) 0);
 	  continue;
 	}
       if (token () == '<')
@@ -952,9 +948,9 @@ type (options_p *optsp, bool nested)
 		advance ();
 		const char *basename = require (ID);
 		/* This may be either an access specifier, or the base name.  */
-		if (0 == strcmp (basename, "public")
-		    || 0 == strcmp (basename, "protected")
-		    || 0 == strcmp (basename, "private"))
+		if (strcmp (basename, "public") == 0
+		    || strcmp (basename, "protected") == 0
+		    || strcmp (basename, "private") == 0)
 		  basename = require (ID);
 		base_class = find_structure (basename, TYPE_STRUCT);
 		if (!base_class)

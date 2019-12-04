@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *          Copyright (C) 1992-2015, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2019, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -37,6 +37,14 @@
 /* Ensure access to errno is thread safe.  */
 #define _REENTRANT
 #define _THREAD_SAFE
+
+/* Use 64 bit Large File API */
+#if defined (__QNX__)
+#define _LARGEFILE64_SOURCE 1
+#elif !defined(_LARGEFILE_SOURCE)
+#define _LARGEFILE_SOURCE
+#endif
+#define _FILE_OFFSET_BITS 64
 
 #ifdef __vxworks
 
@@ -75,6 +83,10 @@
 #define __BSD_VISIBLE 1
 #endif
 
+#ifdef __QNX__
+#include <sys/syspage.h>
+#endif
+
 #ifdef IN_RTS
 #include "tconfig.h"
 #include "tsystem.h"
@@ -106,13 +118,24 @@
 extern "C" {
 #endif
 
-#if defined (__MINGW32__) || defined (__CYGWIN__)
+#if defined (__DJGPP__)
+
+/* For isalpha-like tests in the compiler, we're expected to resort to
+   safe-ctype.h/ISALPHA.  This isn't available for the runtime library
+   build, so we fallback on ctype.h/isalpha there.  */
+
+#ifdef IN_RTS
+#include <ctype.h>
+#define ISALPHA isalpha
+#endif
+
+#elif defined (__MINGW32__) || defined (__CYGWIN__)
 
 #include "mingw32.h"
 
 /* Current code page and CCS encoding to use, set in initialize.c.  */
-UINT CurrentCodePage;
-UINT CurrentCCSEncoding;
+UINT __gnat_current_codepage;
+UINT __gnat_current_ccs_encoding;
 
 #include <sys/utime.h>
 
@@ -159,13 +182,21 @@ UINT CurrentCCSEncoding;
 #include <sys/wait.h>
 #endif
 
-#if defined (_WIN32)
-
+#if defined (__DJGPP__)
 #include <process.h>
+#include <signal.h>
 #include <dir.h>
+#include <utime.h>
+#undef DIR_SEPARATOR
+#define DIR_SEPARATOR '\\'
+
+#elif defined (_WIN32)
+
 #include <windows.h>
 #include <accctrl.h>
 #include <aclapi.h>
+#include <tlhelp32.h>
+#include <signal.h>
 #undef DIR_SEPARATOR
 #define DIR_SEPARATOR '\\'
 
@@ -546,7 +577,8 @@ __gnat_get_file_names_case_sensitive (void)
 	{
 	  /* By default, we suppose filesystems aren't case sensitive on
 	     Windows and Darwin (but they are on arm-darwin).  */
-#if defined (WINNT) || (defined (__APPLE__) && !defined (__arm__))
+#if defined (WINNT) || defined (__DJGPP__) \
+  || (defined (__APPLE__) && !(defined (__arm__) || defined (__arm64__)))
 	  file_names_case_sensitive_cache = 0;
 #else
 	  file_names_case_sensitive_cache = 1;
@@ -561,7 +593,7 @@ __gnat_get_file_names_case_sensitive (void)
 int
 __gnat_get_env_vars_case_sensitive (void)
 {
-#if defined (WINNT)
+#if defined (WINNT) || defined (__DJGPP__)
  return 0;
 #else
  return 1;
@@ -587,7 +619,16 @@ __gnat_get_current_dir (char *dir, int *length)
   WS2SC (dir, wdir, GNAT_MAX_PATH_LEN);
 
 #else
-   getcwd (dir, *length);
+   char* result = getcwd (dir, *length);
+   /* If the current directory does not exist, set length = 0
+      to indicate error. That can't happen on windows, where
+      you can't delete a directory if it is the current
+      directory of some process. */
+   if (!result)
+     {
+       *length = 0;
+       return;
+     }
 #endif
 
    *length = strlen (dir);
@@ -621,6 +662,7 @@ void
 __gnat_get_executable_suffix_ptr (int *len, const char **value)
 {
   *value = HOST_EXECUTABLE_SUFFIX;
+
   if (!*value)
     *len = 0;
   else
@@ -737,8 +779,8 @@ __gnat_rmdir (char *path)
 #endif
 }
 
-#if defined (_WIN32) || defined (linux) || defined (sun) \
-  || defined (__FreeBSD__)
+#if defined (_WIN32) || defined (__linux__) || defined (__sun__) \
+  || defined (__FreeBSD__) || defined(__DragonFly__) || defined (__QNX__)
 #define HAS_TARGET_WCHAR_T
 #endif
 
@@ -976,7 +1018,8 @@ __gnat_open_new_temp (char *path, int fmode)
   strcpy (path, "GNAT-XXXXXX");
 
 #if (defined (__FreeBSD__) || defined (__NetBSD__) || defined (__OpenBSD__) \
-  || defined (linux) || defined(__GLIBC__)) && !defined (__vxworks)
+  || defined (__linux__) || defined (__GLIBC__) || defined (__ANDROID__) \
+  || defined (__DragonFly__) || defined (__QNX__)) && !defined (__vxworks)
   return mkstemp (path);
 #elif defined (__Lynx__)
   mktemp (path);
@@ -1147,8 +1190,9 @@ __gnat_tmp_name (char *tmp_filename)
     free (pname);
   }
 
-#elif defined (linux) || defined (__FreeBSD__) || defined (__NetBSD__) \
-  || defined (__OpenBSD__) || defined(__GLIBC__) || defined (__ANDROID__)
+#elif defined (__linux__) || defined (__FreeBSD__) || defined (__NetBSD__) \
+  || defined (__OpenBSD__) || defined (__GLIBC__) || defined (__ANDROID__) \
+  || defined (__DragonFly__) || defined (__QNX__)
 #define MAX_SAFE_PATH 1000
   char *tmpdir = getenv ("TMPDIR");
 
@@ -1164,23 +1208,37 @@ __gnat_tmp_name (char *tmp_filename)
     sprintf (tmp_filename, "%s/gnat-XXXXXX", tmpdir);
 
   close (mkstemp(tmp_filename));
-#elif defined (__vxworks) && !(defined (__RTP__) || defined (VTHREADS))
-  int             index;
-  char *          pos;
-  ushort_t        t;
+#elif defined (__vxworks) && !defined (VTHREADS)
+  int index;
+  char *pos;
+  char *savepos;
   static ushort_t seed = 0; /* used to generate unique name */
 
-  /* generate unique name */
+  /* Generate a unique name.  */
   strcpy (tmp_filename, "tmp");
 
-  /* fill up the name buffer from the last position */
   index = 5;
-  pos = tmp_filename + strlen (tmp_filename) + index;
+  savepos = pos = tmp_filename + strlen (tmp_filename) + index;
   *pos = '\0';
 
-  seed++;
-  for (t = seed; 0 <= --index; t >>= 3)
-      *--pos = '0' + (t & 07);
+  while (1)
+    {
+      FILE *f;
+      ushort_t t;
+
+      /* Fill up the name buffer from the last position.  */
+      seed++;
+      for (t = seed; --index >= 0; t >>= 3)
+        *--pos = '0' + (t & 07);
+
+      /* Check to see if its unique, if not bump the seed and try again.  */
+      f = fopen (tmp_filename, "r");
+      if (f == NULL)
+        break;
+      fclose (f);
+      pos = savepos;
+      index = 5;
+    }
 #else
   tmpnam (tmp_filename);
 #endif
@@ -1204,7 +1262,7 @@ DIR* __gnat_opendir (char *name)
 /* Read the next entry in a directory.  The returned string points somewhere
    in the buffer.  */
 
-#if defined (sun) && defined (__SVR4)
+#if defined (__sun__)
 /* For Solaris, be sure to use the 64-bit version, otherwise NFS reads may
    fail with EOVERFLOW if the server uses 64-bit cookies.  */
 #define dirent dirent64
@@ -1418,7 +1476,7 @@ __gnat_set_file_time_name (char *name, time_t time_stamp)
   utimbuf.modtime = time_stamp;
 
   /* Set access time to now in local time.  */
-  t = time ((time_t) 0);
+  t = time (NULL);
   utimbuf.actime = mktime (localtime (&t));
 
   utime (name, &utimbuf);
@@ -1615,7 +1673,7 @@ __gnat_is_absolute_path (char *name, int length)
 #else
   return (length != 0) &&
      (*name == '/' || *name == DIR_SEPARATOR
-#if defined (WINNT)
+#if defined (WINNT) || defined(__DJGPP__)
       || (length > 1 && ISALPHA (name[0]) && name[1] == ':')
 #endif
 	  );
@@ -1887,6 +1945,29 @@ __gnat_is_readable_file_attr (char* name, struct file_attributes* attr)
 }
 
 int
+__gnat_is_read_accessible_file (char *name)
+{
+#if defined (_WIN32)
+   TCHAR wname [GNAT_MAX_PATH_LEN + 2];
+
+   S2WSC (wname, name, GNAT_MAX_PATH_LEN + 2);
+
+   return !_waccess (wname, 4);
+
+#elif defined (__vxworks)
+   int fd;
+
+   if ((fd = open (name, O_RDONLY, 0)) < 0)
+     return 0;
+   close (fd);
+   return 1;
+
+#else
+   return !access (name, R_OK);
+#endif
+}
+
+int
 __gnat_is_readable_file (char *name)
 {
    struct file_attributes attr;
@@ -1934,6 +2015,29 @@ __gnat_is_writable_file (char *name)
 
    __gnat_reset_attributes (&attr);
    return __gnat_is_writable_file_attr (name, &attr);
+}
+
+int
+__gnat_is_write_accessible_file (char *name)
+{
+#if defined (_WIN32)
+   TCHAR wname [GNAT_MAX_PATH_LEN + 2];
+
+   S2WSC (wname, name, GNAT_MAX_PATH_LEN + 2);
+
+   return !_waccess (wname, 2);
+
+#elif defined (__vxworks)
+   int fd;
+
+   if ((fd = open (name, O_WRONLY, 0)) < 0)
+     return 0;
+   close (fd);
+   return 1;
+
+#else
+   return !access (name, W_OK);
+#endif
 }
 
 int
@@ -2140,7 +2244,7 @@ __gnat_is_symbolic_link (char *name ATTRIBUTE_UNUSED)
    return __gnat_is_symbolic_link_attr (name, &attr);
 }
 
-#if defined (sun) && defined (__SVR4)
+#if defined (__sun__)
 /* Using fork on Solaris will duplicate all the threads. fork1, which
    duplicates only the active thread, must be used instead, or spawning
    subprocess from a program with tasking will lead into numerous problems.  */
@@ -2157,7 +2261,7 @@ __gnat_portable_spawn (char *args[] ATTRIBUTE_UNUSED)
 #if defined (__vxworks) || defined(__PikeOS__)
   return -1;
 
-#elif defined (_WIN32)
+#elif defined (__DJGPP__) || defined (_WIN32)
   /* args[0] must be quotes as it could contain a full pathname with spaces */
   char *args_0 = args[0];
   args[0] = (char *)xmalloc (strlen (args_0) + 3);
@@ -2227,7 +2331,7 @@ __gnat_dup2 (int oldfd ATTRIBUTE_UNUSED, int newfd ATTRIBUTE_UNUSED)
      RTPs.  */
   return -1;
 #elif defined (__PikeOS__)
-  /* Not supported.  */
+  /* Not supported. */
   return -1;
 #elif defined (_WIN32)
   /* Special case when oldfd and newfd are identical and are the standard
@@ -2247,8 +2351,13 @@ __gnat_number_of_cpus (void)
 {
   int cores = 1;
 
-#if defined (linux) || defined (sun) || defined (AIX) || defined (__APPLE__)
+#if defined (__linux__) || defined (__sun__) || defined (_AIX) \
+  || defined (__APPLE__) || defined (__FreeBSD__) || defined (__OpenBSD__) \
+  || defined (__DragonFly__) || defined (__NetBSD__)
   cores = (int) sysconf (_SC_NPROCESSORS_ONLN);
+
+#elif defined (__QNX__)
+  cores = (int) _syspage_ptr->num_cpu;
 
 #elif defined (__hpux__)
   struct pst_dynamic psd;
@@ -2452,6 +2561,7 @@ win32_wait (int *status)
   DWORD res;
   int hl_len;
   int found;
+  int pos;
 
  START_WAIT:
 
@@ -2464,7 +2574,15 @@ win32_wait (int *status)
   /* -------------------- critical section -------------------- */
   EnterCS();
 
+  /* ??? We can't wait for more than MAXIMUM_WAIT_OBJECTS due to a Win32
+     limitation */
+  if (plist_length < MAXIMUM_WAIT_OBJECTS)
   hl_len = plist_length;
+  else
+    {
+      errno = EINVAL;
+      return -1;
+    }
 
 #ifdef CERT
   hl = (HANDLE *) xmalloc (sizeof (HANDLE) * hl_len);
@@ -2474,10 +2592,10 @@ win32_wait (int *status)
 #else
   /* Note that index 0 contains the event handle that is signaled when the
      process list has changed */
-  hl = (HANDLE *) xmalloc (sizeof (HANDLE) * hl_len + 1);
+  hl = (HANDLE *) xmalloc (sizeof (HANDLE) * (hl_len + 1));
   hl[0] = ProcListEvt;
   memmove (&hl[1], HANDLES_LIST, sizeof (HANDLE) * hl_len);
-  pidl = (int *) xmalloc (sizeof (int) * hl_len + 1);
+  pidl = (int *) xmalloc (sizeof (int) * (hl_len + 1));
   memmove (&pidl[1], PID_LIST, sizeof (int) * hl_len);
   hl_len++;
 #endif
@@ -2486,6 +2604,15 @@ win32_wait (int *status)
   /* -------------------- critical section -------------------- */
 
   res = WaitForMultipleObjects (hl_len, hl, FALSE, INFINITE);
+
+  /* If there was an error, exit now */
+  if (res == WAIT_FAILED)
+    {
+      free (hl);
+      free (pidl);
+      errno = EINVAL;
+      return -1;
+    }
 
   /* if the ProcListEvt has been signaled then the list of processes has been
      updated to add or remove a handle, just loop over */
@@ -2497,9 +2624,17 @@ win32_wait (int *status)
       goto START_WAIT;
     }
 
-  h = hl[res - WAIT_OBJECT_0];
+  /* Handle two distinct groups of return codes: finished waits and abandoned
+     waits */
+
+  if (res < WAIT_ABANDONED_0)
+    pos = res - WAIT_OBJECT_0;
+  else
+    pos = res - WAIT_ABANDONED_0;
+
+  h = hl[pos];
   GetExitCodeProcess (h, &exitcode);
-  pid = pidl [res - WAIT_OBJECT_0];
+  pid = pidl [pos];
 
   found = __gnat_win32_remove_handle (h, -1);
 
@@ -2526,6 +2661,12 @@ __gnat_portable_no_block_spawn (char *args[] ATTRIBUTE_UNUSED)
 #if defined (__vxworks) || defined (__PikeOS__)
   /* Not supported.  */
   return -1;
+
+#elif defined(__DJGPP__)
+  if (spawnvp (P_WAIT, args[0], args) != 0)
+    return -1;
+  else
+    return 0;
 
 #elif defined (_WIN32)
 
@@ -2570,9 +2711,32 @@ __gnat_portable_wait (int *process_status)
 
   pid = win32_wait (&status);
 
+#elif defined (__DJGPP__)
+  /* Child process has already ended in case of DJGPP.
+     No need to do anything. Just return success. */
 #else
 
   pid = waitpid (-1, &status, 0);
+  status = status & 0xffff;
+#endif
+
+  *process_status = status;
+  return pid;
+}
+
+int
+__gnat_portable_no_block_wait (int *process_status)
+{
+  int status = 0;
+  int pid = 0;
+
+#if defined (__vxworks) || defined (__PikeOS__) || defined (_WIN32)
+  /* Not supported. */
+  status = -1;
+
+#else
+
+  pid = waitpid (-1, &status, WNOHANG);
   status = status & 0xffff;
 #endif
 
@@ -2584,6 +2748,22 @@ void
 __gnat_os_exit (int status)
 {
   exit (status);
+}
+
+int
+__gnat_current_process_id (void)
+{
+#if defined (__vxworks) || defined (__PikeOS__)
+  return -1;
+
+#elif defined (_WIN32)
+
+  return (int)GetCurrentProcessId();
+
+#else
+
+  return (int)getpid();
+#endif
 }
 
 /* Locate file on path, that matches a predicate */
@@ -2714,12 +2894,12 @@ __gnat_locate_regular_file (char *file_name, char *path_val)
 char *
 __gnat_locate_exec (char *exec_name, char *path_val)
 {
+  const unsigned int len = strlen (HOST_EXECUTABLE_SUFFIX);
   char *ptr;
-  if (!strstr (exec_name, HOST_EXECUTABLE_SUFFIX))
+
+  if (len > 0 && !strstr (exec_name, HOST_EXECUTABLE_SUFFIX))
     {
-      char *full_exec_name =
-        (char *) alloca
-	  (strlen (exec_name) + strlen (HOST_EXECUTABLE_SUFFIX) + 1);
+      char *full_exec_name = (char *) alloca (strlen (exec_name) + len + 1);
 
       strcpy (full_exec_name, exec_name);
       strcat (full_exec_name, HOST_EXECUTABLE_SUFFIX);
@@ -2762,16 +2942,19 @@ __gnat_locate_exec_on_path (char *exec_name)
   apath_val = (char *) alloca (EXPAND_BUFFER_SIZE);
 
   WS2SC (apath_val, wapath_val, EXPAND_BUFFER_SIZE);
-  return __gnat_locate_exec (exec_name, apath_val);
 
 #else
-  char *path_val = getenv ("PATH");
+  const char *path_val = getenv ("PATH");
 
-  if (path_val == NULL) return NULL;
+  /* If PATH is not defined, proceed with __gnat_locate_exec anyway, so we can
+     find files that contain directory names.  */
+
+  if (path_val == NULL) path_val = "";
   apath_val = (char *) alloca (strlen (path_val) + 1);
   strcpy (apath_val, path_val);
-  return __gnat_locate_exec (exec_name, apath_val);
 #endif
+
+  return __gnat_locate_exec (exec_name, apath_val);
 }
 
 /* Dummy functions for Osint import for non-VMS systems.
@@ -2873,6 +3056,8 @@ char __gnat_environment_char = '$';
    mode = 1  : In this mode, time stamps and read/write/execute attributes are
                copied.
 
+   mode = 2  : In this mode, only read/write/execute attributes are copied
+
    Returns 0 if operation was successful and -1 in case of error. */
 
 int
@@ -2892,39 +3077,46 @@ __gnat_copy_attribs (char *from ATTRIBUTE_UNUSED, char *to ATTRIBUTE_UNUSED,
   S2WSC (wfrom, from, GNAT_MAX_PATH_LEN + 2);
   S2WSC (wto, to, GNAT_MAX_PATH_LEN + 2);
 
-  /* retrieve from times */
+  /*  Do we need to copy the timestamp ? */
 
-  hfrom = CreateFile
-    (wfrom, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (mode != 2) {
+     /* retrieve from times */
 
-  if (hfrom == INVALID_HANDLE_VALUE)
-    return -1;
+     hfrom = CreateFile
+       (wfrom, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, NULL);
 
-  res = GetFileTime (hfrom, &fct, &flat, &flwt);
+     if (hfrom == INVALID_HANDLE_VALUE)
+       return -1;
 
-  CloseHandle (hfrom);
+     res = GetFileTime (hfrom, &fct, &flat, &flwt);
 
-  if (res == 0)
-    return -1;
+     CloseHandle (hfrom);
 
-  /* retrieve from times */
+     if (res == 0)
+       return -1;
 
-  hto = CreateFile
-    (wto, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+     /* retrieve from times */
 
-  if (hto == INVALID_HANDLE_VALUE)
-    return -1;
+     hto = CreateFile
+       (wto, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, NULL);
 
-  res = SetFileTime (hto, NULL, &flat, &flwt);
+     if (hto == INVALID_HANDLE_VALUE)
+       return -1;
 
-  CloseHandle (hto);
+     res = SetFileTime (hto, NULL, &flat, &flwt);
 
-  if (res == 0)
-    return -1;
+     CloseHandle (hto);
 
+     if (res == 0)
+       return -1;
+  }
+
+  /* Do we need to copy the permissions ? */
   /* Set file attributes in full mode. */
 
-  if (mode == 1)
+  if (mode != 0)
     {
       DWORD attribs = GetFileAttributes (wfrom);
 
@@ -2942,26 +3134,24 @@ __gnat_copy_attribs (char *from ATTRIBUTE_UNUSED, char *to ATTRIBUTE_UNUSED,
   GNAT_STRUCT_STAT fbuf;
   struct utimbuf tbuf;
 
-  if (GNAT_STAT (from, &fbuf) == -1)
-    {
-      return -1;
-    }
+  if (GNAT_STAT (from, &fbuf) == -1) {
+     return -1;
+  }
 
-  tbuf.actime = fbuf.st_atime;
-  tbuf.modtime = fbuf.st_mtime;
+  /* Do we need to copy timestamp ? */
+  if (mode != 2) {
+     tbuf.actime = fbuf.st_atime;
+     tbuf.modtime = fbuf.st_mtime;
 
-  if (utime (to, &tbuf) == -1)
-    {
-      return -1;
-    }
+     if (utime (to, &tbuf) == -1) {
+        return -1;
+     }
+  }
 
-  if (mode == 1)
-    {
-      if (chmod (to, fbuf.st_mode) == -1)
-	{
+  /* Do we need to copy file permissions ? */
+  if (mode != 0 && (chmod (to, fbuf.st_mode) == -1)) {
 	  return -1;
-	}
-    }
+  }
 
   return 0;
 #endif
@@ -3036,17 +3226,7 @@ __gnat_sals_init_using_constructors (void)
 #endif
 }
 
-#if defined (__ANDROID__)
-
-#include <pthread.h>
-
-void *
-__gnat_lwp_self (void)
-{
-   return (void *) pthread_self ();
-}
-
-#elif defined (linux)
+#if defined (__linux__) || defined (__ANDROID__)
 /* There is no function in the glibc to retrieve the LWP of the current
    thread. We need to do a system call in order to retrieve this
    information. */
@@ -3056,7 +3236,41 @@ __gnat_lwp_self (void)
 {
    return (void *) syscall (__NR_gettid);
 }
+#endif
 
+#if defined (__APPLE__)
+# if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
+#  include <mach/thread_info.h>
+#  include <mach/mach_init.h>
+#  include <mach/thread_act.h>
+# else
+#  include <pthread.h>
+# endif
+
+/* System-wide thread identifier.  Note it could be truncated on 32 bit
+   hosts.
+   Previously was: pthread_mach_thread_np (pthread_self ()).  */
+void *
+__gnat_lwp_self (void)
+{
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
+  thread_identifier_info_data_t data;
+  mach_msg_type_number_t count = THREAD_IDENTIFIER_INFO_COUNT;
+  kern_return_t kret;
+
+  kret = thread_info (mach_thread_self (), THREAD_IDENTIFIER_INFO,
+		      (thread_info_t) &data, &count);
+  if (kret == KERN_SUCCESS)
+    return (void *)(uintptr_t)data.thread_id;
+  else
+    return 0;
+#else
+  return (void *)pthread_mach_thread_np (pthread_self ());
+#endif
+}
+#endif
+
+#if defined (__linux__)
 #include <sched.h>
 
 /* glibc versions earlier than 2.7 do not define the routines to handle
@@ -3135,7 +3349,7 @@ __gnat_cpu_set (int cpu, size_t count ATTRIBUTE_UNUSED, cpu_set_t *set)
   CPU_SET (cpu - 1, set);
 }
 #endif /* !CPU_ALLOC */
-#endif /* linux */
+#endif /* __linux__ */
 
 /* Return the load address of the executable, or 0 if not known.  In the
    specific case of error, (void *)-1 can be returned. Beware: this unit may
@@ -3144,8 +3358,6 @@ __gnat_cpu_set (int cpu, size_t count ATTRIBUTE_UNUSED, cpu_set_t *set)
 
 #if defined (__APPLE__)
 #include <mach-o/dyld.h>
-#elif 0 && defined (__linux__)
-#include <link.h>
 #endif
 
 const void *
@@ -3163,6 +3375,136 @@ __gnat_get_executable_load_address (void)
 #else
   return NULL;
 #endif
+}
+
+void
+__gnat_kill (int pid, int sig, int close ATTRIBUTE_UNUSED)
+{
+#if defined(_WIN32)
+  HANDLE h = OpenProcess (PROCESS_ALL_ACCESS, FALSE, pid);
+  if (h == NULL)
+    return;
+  if (sig == 9)
+    {
+      TerminateProcess (h, 1);
+    }
+  else if (sig == SIGINT)
+    GenerateConsoleCtrlEvent (CTRL_C_EVENT, pid);
+  else if (sig == SIGBREAK)
+    GenerateConsoleCtrlEvent (CTRL_BREAK_EVENT, pid);
+  /* ??? The last two alternatives don't really work. SIGBREAK requires setting
+     up process groups at start time which we don't do; treating SIGINT is just
+     not possible apparently. So we really only support signal 9. Fortunately
+     that's all we use in GNAT.Expect */
+
+  CloseHandle (h);
+#elif defined (__vxworks)
+  /* Not implemented */
+#else
+  kill (pid, sig);
+#endif
+}
+
+void __gnat_killprocesstree (int pid, int sig_num)
+{
+#if defined(_WIN32)
+  PROCESSENTRY32 pe;
+
+  memset(&pe, 0, sizeof(PROCESSENTRY32));
+  pe.dwSize = sizeof(PROCESSENTRY32);
+
+  HANDLE hSnap = CreateToolhelp32Snapshot (TH32CS_SNAPPROCESS, 0);
+
+  /*  cannot take snapshot, just kill the parent process */
+
+  if (hSnap == INVALID_HANDLE_VALUE)
+    {
+      __gnat_kill (pid, sig_num, 1);
+      return;
+    }
+
+  if (Process32First(hSnap, &pe))
+    {
+      BOOL bContinue = TRUE;
+
+      /* kill child processes first */
+
+      while (bContinue)
+        {
+          if (pe.th32ParentProcessID == (DWORD)pid)
+            __gnat_killprocesstree (pe.th32ProcessID, sig_num);
+
+          bContinue = Process32Next (hSnap, &pe);
+        }
+    }
+
+  CloseHandle (hSnap);
+
+  /* kill process */
+
+  __gnat_kill (pid, sig_num, 1);
+
+#elif defined (__vxworks)
+  /* not implemented */
+
+#elif defined (__linux__)
+  DIR *dir;
+  struct dirent *d;
+
+  /*  read all processes' pid and ppid */
+
+  dir = opendir ("/proc");
+
+  /*  cannot open proc, just kill the parent process */
+
+  if (!dir)
+    {
+      __gnat_kill (pid, sig_num, 1);
+      return;
+    }
+
+  /* kill child processes first */
+
+  while ((d = readdir (dir)) != NULL)
+    {
+      if ((d->d_type & DT_DIR) == DT_DIR)
+        {
+          char statfile[64];
+          int _pid, _ppid;
+
+          /* read /proc/<PID>/stat */
+
+          if (strlen (d->d_name) >= sizeof (statfile) - strlen ("/proc//stat"))
+            continue;
+          strcpy (statfile, "/proc/");
+          strcat (statfile, d->d_name);
+          strcat (statfile, "/stat");
+
+          FILE *fd = fopen (statfile, "r");
+
+          if (fd)
+            {
+              const int match = fscanf (fd, "%d %*s %*s %d", &_pid, &_ppid);
+              fclose (fd);
+
+              if (match == 2 && _ppid == pid)
+                __gnat_killprocesstree (_pid, sig_num);
+            }
+        }
+    }
+
+  closedir (dir);
+
+  /* kill process */
+
+  __gnat_kill (pid, sig_num, 1);
+#else
+  __gnat_kill (pid, sig_num, 1);
+#endif
+  /* Note on Solaris it is possible to read /proc/<PID>/status.
+     The 5th and 6th words are the pid and the 7th and 8th the ppid.
+     See: /usr/include/sys/procfs.h (struct pstatus).
+  */
 }
 
 #ifdef __cplusplus

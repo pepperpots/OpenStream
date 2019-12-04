@@ -1,5 +1,5 @@
 /* AddressSanitizer, a fast memory error detector.
-   Copyright (C) 2012-2015 Free Software Foundation, Inc.
+   Copyright (C) 2012-2019 Free Software Foundation, Inc.
    Contributed by Kostya Serebryany <kcc@google.com>
 
 This file is part of GCC.
@@ -22,72 +22,47 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
+#include "target.h"
+#include "rtl.h"
 #include "tree.h"
-#include "fold-const.h"
-#include "hash-table.h"
-#include "predict.h"
-#include "tm.h"
-#include "hard-reg-set.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfganal.h"
-#include "basic-block.h"
-#include "tree-ssa-alias.h"
-#include "internal-fn.h"
-#include "gimple-expr.h"
-#include "is-a.h"
 #include "gimple.h"
+#include "cfghooks.h"
+#include "alloc-pool.h"
+#include "tree-pass.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "ssa.h"
+#include "stringpool.h"
+#include "tree-ssanames.h"
+#include "optabs.h"
+#include "emit-rtl.h"
+#include "cgraph.h"
+#include "gimple-pretty-print.h"
+#include "alias.h"
+#include "fold-const.h"
+#include "cfganal.h"
 #include "gimplify.h"
 #include "gimple-iterator.h"
-#include "calls.h"
 #include "varasm.h"
 #include "stor-layout.h"
 #include "tree-iterator.h"
-#include "hash-map.h"
-#include "plugin-api.h"
-#include "ipa-ref.h"
-#include "cgraph.h"
 #include "stringpool.h"
-#include "tree-ssanames.h"
-#include "tree-pass.h"
+#include "attribs.h"
 #include "asan.h"
-#include "gimple-pretty-print.h"
-#include "target.h"
-#include "hashtab.h"
-#include "rtl.h"
-#include "flags.h"
-#include "statistics.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "insn-config.h"
-#include "expmed.h"
 #include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
-#include "stmt.h"
 #include "expr.h"
-#include "insn-codes.h"
-#include "optabs.h"
 #include "output.h"
-#include "tm_p.h"
 #include "langhooks.h"
-#include "alloc-pool.h"
 #include "cfgloop.h"
 #include "gimple-builder.h"
+#include "gimple-fold.h"
 #include "ubsan.h"
 #include "params.h"
 #include "builtins.h"
+#include "fnmatch.h"
+#include "tree-inline.h"
 
 /* AddressSanitizer finds out-of-bounds and use-after-free bugs
    with <2x slowdown on average.
@@ -175,7 +150,7 @@ along with GCC; see the file COPYING3.  If not see
 
 	where '(...){n}' means the content inside the parenthesis occurs 'n'
 	times, with 'n' being the number of variables on the stack.
-     
+
      3/ The following 8 bytes contain the PC of the current function which
      will be used by the run-time library to print an error message.
 
@@ -272,6 +247,15 @@ along with GCC; see the file COPYING3.  If not see
 
 static unsigned HOST_WIDE_INT asan_shadow_offset_value;
 static bool asan_shadow_offset_computed;
+static vec<char *> sanitized_sections;
+static tree last_alloca_addr;
+
+/* Set of variable declarations that are going to be guarded by
+   use-after-scope sanitizer.  */
+
+hash_set<tree> *asan_handled_variables = NULL;
+
+hash_set <tree> *asan_used_labels = NULL;
 
 /* Sets shadow offset to value in string VAL.  */
 
@@ -279,7 +263,7 @@ bool
 set_asan_shadow_offset (const char *val)
 {
   char *endp;
-  
+
   errno = 0;
 #ifdef HAVE_LONG_LONG
   asan_shadow_offset_value = strtoull (val, &endp, 0);
@@ -292,6 +276,59 @@ set_asan_shadow_offset (const char *val)
   asan_shadow_offset_computed = true;
 
   return true;
+}
+
+/* Set list of user-defined sections that need to be sanitized.  */
+
+void
+set_sanitized_sections (const char *sections)
+{
+  char *pat;
+  unsigned i;
+  FOR_EACH_VEC_ELT (sanitized_sections, i, pat)
+    free (pat);
+  sanitized_sections.truncate (0);
+
+  for (const char *s = sections; *s; )
+    {
+      const char *end;
+      for (end = s; *end && *end != ','; ++end);
+      size_t len = end - s;
+      sanitized_sections.safe_push (xstrndup (s, len));
+      s = *end ? end + 1 : end;
+    }
+}
+
+bool
+asan_mark_p (gimple *stmt, enum asan_mark_flags flag)
+{
+  return (gimple_call_internal_p (stmt, IFN_ASAN_MARK)
+	  && tree_to_uhwi (gimple_call_arg (stmt, 0)) == flag);
+}
+
+bool
+asan_sanitize_stack_p (void)
+{
+  return (sanitize_flags_p (SANITIZE_ADDRESS) && ASAN_STACK);
+}
+
+bool
+asan_sanitize_allocas_p (void)
+{
+  return (asan_sanitize_stack_p () && ASAN_PROTECT_ALLOCAS);
+}
+
+/* Checks whether section SEC should be sanitized.  */
+
+static bool
+section_sanitized_p (const char *sec)
+{
+  char *pat;
+  unsigned i;
+  FOR_EACH_VEC_ELT (sanitized_sections, i, pat)
+    if (fnmatch (pat, sec, FNM_PERIOD) == 0)
+      return true;
+  return false;
 }
 
 /* Returns Asan shadow offset.  */
@@ -309,21 +346,12 @@ asan_shadow_offset ()
 
 alias_set_type asan_shadow_set = -1;
 
-/* Pointer types to 1 resp. 2 byte integers in shadow memory.  A separate
+/* Pointer types to 1, 2 or 4 byte integers in shadow memory.  A separate
    alias set is used for all shadow memory accesses.  */
-static GTY(()) tree shadow_ptr_types[2];
+static GTY(()) tree shadow_ptr_types[3];
 
 /* Decl for __asan_option_detect_stack_use_after_return.  */
 static GTY(()) tree asan_detect_stack_use_after_return;
-
-/* Various flags for Asan builtins.  */
-enum asan_check_flags
-{
-  ASAN_CHECK_STORE = 1 << 0,
-  ASAN_CHECK_SCALAR_ACCESS = 1 << 1,
-  ASAN_CHECK_NON_ZERO_LEN = 1 << 2,
-  ASAN_CHECK_LAST = 1 << 3
-};
 
 /* Hashtable support for memory references used by gimple
    statements.  */
@@ -338,21 +366,7 @@ struct asan_mem_ref
   HOST_WIDE_INT access_size;
 };
 
-static alloc_pool asan_mem_ref_alloc_pool;
-
-/* This creates the alloc pool used to store the instances of
-   asan_mem_ref that are stored in the hash table asan_mem_ref_ht.  */
-
-static alloc_pool
-asan_mem_ref_get_alloc_pool ()
-{
-  if (asan_mem_ref_alloc_pool == NULL)
-    asan_mem_ref_alloc_pool = create_alloc_pool ("asan_mem_ref",
-						 sizeof (asan_mem_ref),
-						 10);
-  return asan_mem_ref_alloc_pool;
-    
-}
+object_allocator <asan_mem_ref> asan_mem_ref_pool ("asan_mem_ref");
 
 /* Initializes an instance of asan_mem_ref.  */
 
@@ -372,8 +386,7 @@ asan_mem_ref_init (asan_mem_ref *ref, tree start, HOST_WIDE_INT access_size)
 static asan_mem_ref*
 asan_mem_ref_new (tree start, HOST_WIDE_INT access_size)
 {
-  asan_mem_ref *ref =
-    (asan_mem_ref *) pool_alloc (asan_mem_ref_get_alloc_pool ());
+  asan_mem_ref *ref = asan_mem_ref_pool.allocate ();
 
   asan_mem_ref_init (ref, start, access_size);
   return ref;
@@ -404,14 +417,10 @@ asan_mem_ref_get_end (const asan_mem_ref *ref, tree len)
   return asan_mem_ref_get_end (ref->start, len);
 }
 
-struct asan_mem_ref_hasher
-  : typed_noop_remove <asan_mem_ref>
+struct asan_mem_ref_hasher : nofree_ptr_hash <asan_mem_ref>
 {
-  typedef asan_mem_ref value_type;
-  typedef asan_mem_ref compare_type;
-
-  static inline hashval_t hash (const value_type *);
-  static inline bool equal (const value_type *, const compare_type *);
+  static inline hashval_t hash (const asan_mem_ref *);
+  static inline bool equal (const asan_mem_ref *, const asan_mem_ref *);
 };
 
 /* Hash a memory reference.  */
@@ -465,11 +474,7 @@ free_mem_ref_resources ()
   delete asan_mem_ref_ht;
   asan_mem_ref_ht = NULL;
 
-  if (asan_mem_ref_alloc_pool)
-    {
-      free_alloc_pool (asan_mem_ref_alloc_pool);
-      asan_mem_ref_alloc_pool = NULL;
-    }
+  asan_mem_ref_pool.release ();
 }
 
 /* Return true iff the memory reference REF has been instrumented.  */
@@ -534,11 +539,184 @@ get_mem_ref_of_assignment (const gassign *assignment,
   return true;
 }
 
+/* Return address of last allocated dynamic alloca.  */
+
+static tree
+get_last_alloca_addr ()
+{
+  if (last_alloca_addr)
+    return last_alloca_addr;
+
+  last_alloca_addr = create_tmp_reg (ptr_type_node, "last_alloca_addr");
+  gassign *g = gimple_build_assign (last_alloca_addr, null_pointer_node);
+  edge e = single_succ_edge (ENTRY_BLOCK_PTR_FOR_FN (cfun));
+  gsi_insert_on_edge_immediate (e, g);
+  return last_alloca_addr;
+}
+
+/* Insert __asan_allocas_unpoison (top, bottom) call before
+   __builtin_stack_restore (new_sp) call.
+   The pseudocode of this routine should look like this:
+     top = last_alloca_addr;
+     bot = new_sp;
+     __asan_allocas_unpoison (top, bot);
+     last_alloca_addr = new_sp;
+     __builtin_stack_restore (new_sp);
+   In general, we can't use new_sp as bot parameter because on some
+   architectures SP has non zero offset from dynamic stack area.  Moreover, on
+   some architectures this offset (STACK_DYNAMIC_OFFSET) becomes known for each
+   particular function only after all callees were expanded to rtl.
+   The most noticeable example is PowerPC{,64}, see
+   http://refspecs.linuxfoundation.org/ELF/ppc64/PPC-elf64abi.html#DYNAM-STACK.
+   To overcome the issue we use following trick: pass new_sp as a second
+   parameter to __asan_allocas_unpoison and rewrite it during expansion with
+   new_sp + (virtual_dynamic_stack_rtx - sp) later in
+   expand_asan_emit_allocas_unpoison function.  */
+
+static void
+handle_builtin_stack_restore (gcall *call, gimple_stmt_iterator *iter)
+{
+  if (!iter || !asan_sanitize_allocas_p ())
+    return;
+
+  tree last_alloca = get_last_alloca_addr ();
+  tree restored_stack = gimple_call_arg (call, 0);
+  tree fn = builtin_decl_implicit (BUILT_IN_ASAN_ALLOCAS_UNPOISON);
+  gimple *g = gimple_build_call (fn, 2, last_alloca, restored_stack);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+  g = gimple_build_assign (last_alloca, restored_stack);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+}
+
+/* Deploy and poison redzones around __builtin_alloca call.  To do this, we
+   should replace this call with another one with changed parameters and
+   replace all its uses with new address, so
+       addr = __builtin_alloca (old_size, align);
+   is replaced by
+       left_redzone_size = max (align, ASAN_RED_ZONE_SIZE);
+   Following two statements are optimized out if we know that
+   old_size & (ASAN_RED_ZONE_SIZE - 1) == 0, i.e. alloca doesn't need partial
+   redzone.
+       misalign = old_size & (ASAN_RED_ZONE_SIZE - 1);
+       partial_redzone_size = ASAN_RED_ZONE_SIZE - misalign;
+       right_redzone_size = ASAN_RED_ZONE_SIZE;
+       additional_size = left_redzone_size + partial_redzone_size +
+                         right_redzone_size;
+       new_size = old_size + additional_size;
+       new_alloca = __builtin_alloca (new_size, max (align, 32))
+       __asan_alloca_poison (new_alloca, old_size)
+       addr = new_alloca + max (align, ASAN_RED_ZONE_SIZE);
+       last_alloca_addr = new_alloca;
+   ADDITIONAL_SIZE is added to make new memory allocation contain not only
+   requested memory, but also left, partial and right redzones as well as some
+   additional space, required by alignment.  */
+
+static void
+handle_builtin_alloca (gcall *call, gimple_stmt_iterator *iter)
+{
+  if (!iter || !asan_sanitize_allocas_p ())
+    return;
+
+  gassign *g;
+  gcall *gg;
+  const HOST_WIDE_INT redzone_mask = ASAN_RED_ZONE_SIZE - 1;
+
+  tree last_alloca = get_last_alloca_addr ();
+  tree callee = gimple_call_fndecl (call);
+  tree old_size = gimple_call_arg (call, 0);
+  tree ptr_type = gimple_call_lhs (call) ? TREE_TYPE (gimple_call_lhs (call))
+					 : ptr_type_node;
+  tree partial_size = NULL_TREE;
+  unsigned int align
+    = DECL_FUNCTION_CODE (callee) == BUILT_IN_ALLOCA
+      ? 0 : tree_to_uhwi (gimple_call_arg (call, 1));
+
+  /* If ALIGN > ASAN_RED_ZONE_SIZE, we embed left redzone into first ALIGN
+     bytes of allocated space.  Otherwise, align alloca to ASAN_RED_ZONE_SIZE
+     manually.  */
+  align = MAX (align, ASAN_RED_ZONE_SIZE * BITS_PER_UNIT);
+
+  tree alloca_rz_mask = build_int_cst (size_type_node, redzone_mask);
+  tree redzone_size = build_int_cst (size_type_node, ASAN_RED_ZONE_SIZE);
+
+  /* Extract lower bits from old_size.  */
+  wide_int size_nonzero_bits = get_nonzero_bits (old_size);
+  wide_int rz_mask
+    = wi::uhwi (redzone_mask, wi::get_precision (size_nonzero_bits));
+  wide_int old_size_lower_bits = wi::bit_and (size_nonzero_bits, rz_mask);
+
+  /* If alloca size is aligned to ASAN_RED_ZONE_SIZE, we don't need partial
+     redzone.  Otherwise, compute its size here.  */
+  if (wi::ne_p (old_size_lower_bits, 0))
+    {
+      /* misalign = size & (ASAN_RED_ZONE_SIZE - 1)
+         partial_size = ASAN_RED_ZONE_SIZE - misalign.  */
+      g = gimple_build_assign (make_ssa_name (size_type_node, NULL),
+			       BIT_AND_EXPR, old_size, alloca_rz_mask);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      tree misalign = gimple_assign_lhs (g);
+      g = gimple_build_assign (make_ssa_name (size_type_node, NULL), MINUS_EXPR,
+			       redzone_size, misalign);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      partial_size = gimple_assign_lhs (g);
+    }
+
+  /* additional_size = align + ASAN_RED_ZONE_SIZE.  */
+  tree additional_size = build_int_cst (size_type_node, align / BITS_PER_UNIT
+							+ ASAN_RED_ZONE_SIZE);
+  /* If alloca has partial redzone, include it to additional_size too.  */
+  if (partial_size)
+    {
+      /* additional_size += partial_size.  */
+      g = gimple_build_assign (make_ssa_name (size_type_node), PLUS_EXPR,
+			       partial_size, additional_size);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      additional_size = gimple_assign_lhs (g);
+    }
+
+  /* new_size = old_size + additional_size.  */
+  g = gimple_build_assign (make_ssa_name (size_type_node), PLUS_EXPR, old_size,
+			   additional_size);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+  tree new_size = gimple_assign_lhs (g);
+
+  /* Build new __builtin_alloca call:
+       new_alloca_with_rz = __builtin_alloca (new_size, align).  */
+  tree fn = builtin_decl_implicit (BUILT_IN_ALLOCA_WITH_ALIGN);
+  gg = gimple_build_call (fn, 2, new_size,
+			  build_int_cst (size_type_node, align));
+  tree new_alloca_with_rz = make_ssa_name (ptr_type, gg);
+  gimple_call_set_lhs (gg, new_alloca_with_rz);
+  gsi_insert_before (iter, gg, GSI_SAME_STMT);
+
+  /* new_alloca = new_alloca_with_rz + align.  */
+  g = gimple_build_assign (make_ssa_name (ptr_type), POINTER_PLUS_EXPR,
+			   new_alloca_with_rz,
+			   build_int_cst (size_type_node,
+					  align / BITS_PER_UNIT));
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+  tree new_alloca = gimple_assign_lhs (g);
+
+  /* Poison newly created alloca redzones:
+      __asan_alloca_poison (new_alloca, old_size).  */
+  fn = builtin_decl_implicit (BUILT_IN_ASAN_ALLOCA_POISON);
+  gg = gimple_build_call (fn, 2, new_alloca, old_size);
+  gsi_insert_before (iter, gg, GSI_SAME_STMT);
+
+  /* Save new_alloca_with_rz value into last_alloca to use it during
+     allocas unpoisoning.  */
+  g = gimple_build_assign (last_alloca, new_alloca_with_rz);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+
+  /* Finally, replace old alloca ptr with NEW_ALLOCA.  */
+  replace_call_with_value (iter, new_alloca);
+}
+
 /* Return the memory references contained in a gimple statement
    representing a builtin call that has to do with memory access.  */
 
 static bool
-get_mem_refs_of_builtin_call (const gcall *call,
+get_mem_refs_of_builtin_call (gcall *call,
 			      asan_mem_ref *src0,
 			      tree *src0_len,
 			      bool *src0_is_store,
@@ -549,7 +727,8 @@ get_mem_refs_of_builtin_call (const gcall *call,
 			      tree *dst_len,
 			      bool *dst_is_store,
 			      bool *dest_is_deref,
-			      bool *intercepted_p)
+			      bool *intercepted_p,
+			      gimple_stmt_iterator *iter = NULL)
 {
   gcc_checking_assert (gimple_call_builtin_p (call, BUILT_IN_NORMAL));
 
@@ -606,218 +785,215 @@ get_mem_refs_of_builtin_call (const gcall *call,
     case BUILT_IN_STRLEN:
       source0 = gimple_call_arg (call, 0);
       len = gimple_call_lhs (call);
-      break ;
+      break;
 
+    case BUILT_IN_STACK_RESTORE:
+      handle_builtin_stack_restore (call, iter);
+      break;
+
+    CASE_BUILT_IN_ALLOCA:
+      handle_builtin_alloca (call, iter);
+      break;
     /* And now the __atomic* and __sync builtins.
        These are handled differently from the classical memory memory
        access builtins above.  */
 
     case BUILT_IN_ATOMIC_LOAD_1:
+      is_store = false;
+      /* FALLTHRU */
+    case BUILT_IN_SYNC_FETCH_AND_ADD_1:
+    case BUILT_IN_SYNC_FETCH_AND_SUB_1:
+    case BUILT_IN_SYNC_FETCH_AND_OR_1:
+    case BUILT_IN_SYNC_FETCH_AND_AND_1:
+    case BUILT_IN_SYNC_FETCH_AND_XOR_1:
+    case BUILT_IN_SYNC_FETCH_AND_NAND_1:
+    case BUILT_IN_SYNC_ADD_AND_FETCH_1:
+    case BUILT_IN_SYNC_SUB_AND_FETCH_1:
+    case BUILT_IN_SYNC_OR_AND_FETCH_1:
+    case BUILT_IN_SYNC_AND_AND_FETCH_1:
+    case BUILT_IN_SYNC_XOR_AND_FETCH_1:
+    case BUILT_IN_SYNC_NAND_AND_FETCH_1:
+    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_1:
+    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_1:
+    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_1:
+    case BUILT_IN_SYNC_LOCK_RELEASE_1:
+    case BUILT_IN_ATOMIC_EXCHANGE_1:
+    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_1:
+    case BUILT_IN_ATOMIC_STORE_1:
+    case BUILT_IN_ATOMIC_ADD_FETCH_1:
+    case BUILT_IN_ATOMIC_SUB_FETCH_1:
+    case BUILT_IN_ATOMIC_AND_FETCH_1:
+    case BUILT_IN_ATOMIC_NAND_FETCH_1:
+    case BUILT_IN_ATOMIC_XOR_FETCH_1:
+    case BUILT_IN_ATOMIC_OR_FETCH_1:
+    case BUILT_IN_ATOMIC_FETCH_ADD_1:
+    case BUILT_IN_ATOMIC_FETCH_SUB_1:
+    case BUILT_IN_ATOMIC_FETCH_AND_1:
+    case BUILT_IN_ATOMIC_FETCH_NAND_1:
+    case BUILT_IN_ATOMIC_FETCH_XOR_1:
+    case BUILT_IN_ATOMIC_FETCH_OR_1:
+      access_size = 1;
+      goto do_atomic;
+
     case BUILT_IN_ATOMIC_LOAD_2:
+      is_store = false;
+      /* FALLTHRU */
+    case BUILT_IN_SYNC_FETCH_AND_ADD_2:
+    case BUILT_IN_SYNC_FETCH_AND_SUB_2:
+    case BUILT_IN_SYNC_FETCH_AND_OR_2:
+    case BUILT_IN_SYNC_FETCH_AND_AND_2:
+    case BUILT_IN_SYNC_FETCH_AND_XOR_2:
+    case BUILT_IN_SYNC_FETCH_AND_NAND_2:
+    case BUILT_IN_SYNC_ADD_AND_FETCH_2:
+    case BUILT_IN_SYNC_SUB_AND_FETCH_2:
+    case BUILT_IN_SYNC_OR_AND_FETCH_2:
+    case BUILT_IN_SYNC_AND_AND_FETCH_2:
+    case BUILT_IN_SYNC_XOR_AND_FETCH_2:
+    case BUILT_IN_SYNC_NAND_AND_FETCH_2:
+    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_2:
+    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_2:
+    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_2:
+    case BUILT_IN_SYNC_LOCK_RELEASE_2:
+    case BUILT_IN_ATOMIC_EXCHANGE_2:
+    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_2:
+    case BUILT_IN_ATOMIC_STORE_2:
+    case BUILT_IN_ATOMIC_ADD_FETCH_2:
+    case BUILT_IN_ATOMIC_SUB_FETCH_2:
+    case BUILT_IN_ATOMIC_AND_FETCH_2:
+    case BUILT_IN_ATOMIC_NAND_FETCH_2:
+    case BUILT_IN_ATOMIC_XOR_FETCH_2:
+    case BUILT_IN_ATOMIC_OR_FETCH_2:
+    case BUILT_IN_ATOMIC_FETCH_ADD_2:
+    case BUILT_IN_ATOMIC_FETCH_SUB_2:
+    case BUILT_IN_ATOMIC_FETCH_AND_2:
+    case BUILT_IN_ATOMIC_FETCH_NAND_2:
+    case BUILT_IN_ATOMIC_FETCH_XOR_2:
+    case BUILT_IN_ATOMIC_FETCH_OR_2:
+      access_size = 2;
+      goto do_atomic;
+
     case BUILT_IN_ATOMIC_LOAD_4:
+      is_store = false;
+      /* FALLTHRU */
+    case BUILT_IN_SYNC_FETCH_AND_ADD_4:
+    case BUILT_IN_SYNC_FETCH_AND_SUB_4:
+    case BUILT_IN_SYNC_FETCH_AND_OR_4:
+    case BUILT_IN_SYNC_FETCH_AND_AND_4:
+    case BUILT_IN_SYNC_FETCH_AND_XOR_4:
+    case BUILT_IN_SYNC_FETCH_AND_NAND_4:
+    case BUILT_IN_SYNC_ADD_AND_FETCH_4:
+    case BUILT_IN_SYNC_SUB_AND_FETCH_4:
+    case BUILT_IN_SYNC_OR_AND_FETCH_4:
+    case BUILT_IN_SYNC_AND_AND_FETCH_4:
+    case BUILT_IN_SYNC_XOR_AND_FETCH_4:
+    case BUILT_IN_SYNC_NAND_AND_FETCH_4:
+    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_4:
+    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_4:
+    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_4:
+    case BUILT_IN_SYNC_LOCK_RELEASE_4:
+    case BUILT_IN_ATOMIC_EXCHANGE_4:
+    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_4:
+    case BUILT_IN_ATOMIC_STORE_4:
+    case BUILT_IN_ATOMIC_ADD_FETCH_4:
+    case BUILT_IN_ATOMIC_SUB_FETCH_4:
+    case BUILT_IN_ATOMIC_AND_FETCH_4:
+    case BUILT_IN_ATOMIC_NAND_FETCH_4:
+    case BUILT_IN_ATOMIC_XOR_FETCH_4:
+    case BUILT_IN_ATOMIC_OR_FETCH_4:
+    case BUILT_IN_ATOMIC_FETCH_ADD_4:
+    case BUILT_IN_ATOMIC_FETCH_SUB_4:
+    case BUILT_IN_ATOMIC_FETCH_AND_4:
+    case BUILT_IN_ATOMIC_FETCH_NAND_4:
+    case BUILT_IN_ATOMIC_FETCH_XOR_4:
+    case BUILT_IN_ATOMIC_FETCH_OR_4:
+      access_size = 4;
+      goto do_atomic;
+
     case BUILT_IN_ATOMIC_LOAD_8:
+      is_store = false;
+      /* FALLTHRU */
+    case BUILT_IN_SYNC_FETCH_AND_ADD_8:
+    case BUILT_IN_SYNC_FETCH_AND_SUB_8:
+    case BUILT_IN_SYNC_FETCH_AND_OR_8:
+    case BUILT_IN_SYNC_FETCH_AND_AND_8:
+    case BUILT_IN_SYNC_FETCH_AND_XOR_8:
+    case BUILT_IN_SYNC_FETCH_AND_NAND_8:
+    case BUILT_IN_SYNC_ADD_AND_FETCH_8:
+    case BUILT_IN_SYNC_SUB_AND_FETCH_8:
+    case BUILT_IN_SYNC_OR_AND_FETCH_8:
+    case BUILT_IN_SYNC_AND_AND_FETCH_8:
+    case BUILT_IN_SYNC_XOR_AND_FETCH_8:
+    case BUILT_IN_SYNC_NAND_AND_FETCH_8:
+    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_8:
+    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_8:
+    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_8:
+    case BUILT_IN_SYNC_LOCK_RELEASE_8:
+    case BUILT_IN_ATOMIC_EXCHANGE_8:
+    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_8:
+    case BUILT_IN_ATOMIC_STORE_8:
+    case BUILT_IN_ATOMIC_ADD_FETCH_8:
+    case BUILT_IN_ATOMIC_SUB_FETCH_8:
+    case BUILT_IN_ATOMIC_AND_FETCH_8:
+    case BUILT_IN_ATOMIC_NAND_FETCH_8:
+    case BUILT_IN_ATOMIC_XOR_FETCH_8:
+    case BUILT_IN_ATOMIC_OR_FETCH_8:
+    case BUILT_IN_ATOMIC_FETCH_ADD_8:
+    case BUILT_IN_ATOMIC_FETCH_SUB_8:
+    case BUILT_IN_ATOMIC_FETCH_AND_8:
+    case BUILT_IN_ATOMIC_FETCH_NAND_8:
+    case BUILT_IN_ATOMIC_FETCH_XOR_8:
+    case BUILT_IN_ATOMIC_FETCH_OR_8:
+      access_size = 8;
+      goto do_atomic;
+
     case BUILT_IN_ATOMIC_LOAD_16:
       is_store = false;
-      /* fall through.  */
-
-    case BUILT_IN_SYNC_FETCH_AND_ADD_1:
-    case BUILT_IN_SYNC_FETCH_AND_ADD_2:
-    case BUILT_IN_SYNC_FETCH_AND_ADD_4:
-    case BUILT_IN_SYNC_FETCH_AND_ADD_8:
+      /* FALLTHRU */
     case BUILT_IN_SYNC_FETCH_AND_ADD_16:
-
-    case BUILT_IN_SYNC_FETCH_AND_SUB_1:
-    case BUILT_IN_SYNC_FETCH_AND_SUB_2:
-    case BUILT_IN_SYNC_FETCH_AND_SUB_4:
-    case BUILT_IN_SYNC_FETCH_AND_SUB_8:
     case BUILT_IN_SYNC_FETCH_AND_SUB_16:
-
-    case BUILT_IN_SYNC_FETCH_AND_OR_1:
-    case BUILT_IN_SYNC_FETCH_AND_OR_2:
-    case BUILT_IN_SYNC_FETCH_AND_OR_4:
-    case BUILT_IN_SYNC_FETCH_AND_OR_8:
     case BUILT_IN_SYNC_FETCH_AND_OR_16:
-
-    case BUILT_IN_SYNC_FETCH_AND_AND_1:
-    case BUILT_IN_SYNC_FETCH_AND_AND_2:
-    case BUILT_IN_SYNC_FETCH_AND_AND_4:
-    case BUILT_IN_SYNC_FETCH_AND_AND_8:
     case BUILT_IN_SYNC_FETCH_AND_AND_16:
-
-    case BUILT_IN_SYNC_FETCH_AND_XOR_1:
-    case BUILT_IN_SYNC_FETCH_AND_XOR_2:
-    case BUILT_IN_SYNC_FETCH_AND_XOR_4:
-    case BUILT_IN_SYNC_FETCH_AND_XOR_8:
     case BUILT_IN_SYNC_FETCH_AND_XOR_16:
-
-    case BUILT_IN_SYNC_FETCH_AND_NAND_1:
-    case BUILT_IN_SYNC_FETCH_AND_NAND_2:
-    case BUILT_IN_SYNC_FETCH_AND_NAND_4:
-    case BUILT_IN_SYNC_FETCH_AND_NAND_8:
-
-    case BUILT_IN_SYNC_ADD_AND_FETCH_1:
-    case BUILT_IN_SYNC_ADD_AND_FETCH_2:
-    case BUILT_IN_SYNC_ADD_AND_FETCH_4:
-    case BUILT_IN_SYNC_ADD_AND_FETCH_8:
+    case BUILT_IN_SYNC_FETCH_AND_NAND_16:
     case BUILT_IN_SYNC_ADD_AND_FETCH_16:
-
-    case BUILT_IN_SYNC_SUB_AND_FETCH_1:
-    case BUILT_IN_SYNC_SUB_AND_FETCH_2:
-    case BUILT_IN_SYNC_SUB_AND_FETCH_4:
-    case BUILT_IN_SYNC_SUB_AND_FETCH_8:
     case BUILT_IN_SYNC_SUB_AND_FETCH_16:
-
-    case BUILT_IN_SYNC_OR_AND_FETCH_1:
-    case BUILT_IN_SYNC_OR_AND_FETCH_2:
-    case BUILT_IN_SYNC_OR_AND_FETCH_4:
-    case BUILT_IN_SYNC_OR_AND_FETCH_8:
     case BUILT_IN_SYNC_OR_AND_FETCH_16:
-
-    case BUILT_IN_SYNC_AND_AND_FETCH_1:
-    case BUILT_IN_SYNC_AND_AND_FETCH_2:
-    case BUILT_IN_SYNC_AND_AND_FETCH_4:
-    case BUILT_IN_SYNC_AND_AND_FETCH_8:
     case BUILT_IN_SYNC_AND_AND_FETCH_16:
-
-    case BUILT_IN_SYNC_XOR_AND_FETCH_1:
-    case BUILT_IN_SYNC_XOR_AND_FETCH_2:
-    case BUILT_IN_SYNC_XOR_AND_FETCH_4:
-    case BUILT_IN_SYNC_XOR_AND_FETCH_8:
     case BUILT_IN_SYNC_XOR_AND_FETCH_16:
-
-    case BUILT_IN_SYNC_NAND_AND_FETCH_1:
-    case BUILT_IN_SYNC_NAND_AND_FETCH_2:
-    case BUILT_IN_SYNC_NAND_AND_FETCH_4:
-    case BUILT_IN_SYNC_NAND_AND_FETCH_8:
-
-    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_1:
-    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_2:
-    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_4:
-    case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_8:
+    case BUILT_IN_SYNC_NAND_AND_FETCH_16:
     case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_16:
-
-    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_1:
-    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_2:
-    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_4:
-    case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_8:
     case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_16:
-
-    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_1:
-    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_2:
-    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_4:
-    case BUILT_IN_SYNC_LOCK_TEST_AND_SET_8:
     case BUILT_IN_SYNC_LOCK_TEST_AND_SET_16:
-
-    case BUILT_IN_SYNC_LOCK_RELEASE_1:
-    case BUILT_IN_SYNC_LOCK_RELEASE_2:
-    case BUILT_IN_SYNC_LOCK_RELEASE_4:
-    case BUILT_IN_SYNC_LOCK_RELEASE_8:
     case BUILT_IN_SYNC_LOCK_RELEASE_16:
-
-    case BUILT_IN_ATOMIC_EXCHANGE_1:
-    case BUILT_IN_ATOMIC_EXCHANGE_2:
-    case BUILT_IN_ATOMIC_EXCHANGE_4:
-    case BUILT_IN_ATOMIC_EXCHANGE_8:
     case BUILT_IN_ATOMIC_EXCHANGE_16:
-
-    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_1:
-    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_2:
-    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_4:
-    case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_8:
     case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_16:
-
-    case BUILT_IN_ATOMIC_STORE_1:
-    case BUILT_IN_ATOMIC_STORE_2:
-    case BUILT_IN_ATOMIC_STORE_4:
-    case BUILT_IN_ATOMIC_STORE_8:
     case BUILT_IN_ATOMIC_STORE_16:
-
-    case BUILT_IN_ATOMIC_ADD_FETCH_1:
-    case BUILT_IN_ATOMIC_ADD_FETCH_2:
-    case BUILT_IN_ATOMIC_ADD_FETCH_4:
-    case BUILT_IN_ATOMIC_ADD_FETCH_8:
     case BUILT_IN_ATOMIC_ADD_FETCH_16:
-
-    case BUILT_IN_ATOMIC_SUB_FETCH_1:
-    case BUILT_IN_ATOMIC_SUB_FETCH_2:
-    case BUILT_IN_ATOMIC_SUB_FETCH_4:
-    case BUILT_IN_ATOMIC_SUB_FETCH_8:
     case BUILT_IN_ATOMIC_SUB_FETCH_16:
-
-    case BUILT_IN_ATOMIC_AND_FETCH_1:
-    case BUILT_IN_ATOMIC_AND_FETCH_2:
-    case BUILT_IN_ATOMIC_AND_FETCH_4:
-    case BUILT_IN_ATOMIC_AND_FETCH_8:
     case BUILT_IN_ATOMIC_AND_FETCH_16:
-
-    case BUILT_IN_ATOMIC_NAND_FETCH_1:
-    case BUILT_IN_ATOMIC_NAND_FETCH_2:
-    case BUILT_IN_ATOMIC_NAND_FETCH_4:
-    case BUILT_IN_ATOMIC_NAND_FETCH_8:
     case BUILT_IN_ATOMIC_NAND_FETCH_16:
-
-    case BUILT_IN_ATOMIC_XOR_FETCH_1:
-    case BUILT_IN_ATOMIC_XOR_FETCH_2:
-    case BUILT_IN_ATOMIC_XOR_FETCH_4:
-    case BUILT_IN_ATOMIC_XOR_FETCH_8:
     case BUILT_IN_ATOMIC_XOR_FETCH_16:
-
-    case BUILT_IN_ATOMIC_OR_FETCH_1:
-    case BUILT_IN_ATOMIC_OR_FETCH_2:
-    case BUILT_IN_ATOMIC_OR_FETCH_4:
-    case BUILT_IN_ATOMIC_OR_FETCH_8:
     case BUILT_IN_ATOMIC_OR_FETCH_16:
-
-    case BUILT_IN_ATOMIC_FETCH_ADD_1:
-    case BUILT_IN_ATOMIC_FETCH_ADD_2:
-    case BUILT_IN_ATOMIC_FETCH_ADD_4:
-    case BUILT_IN_ATOMIC_FETCH_ADD_8:
     case BUILT_IN_ATOMIC_FETCH_ADD_16:
-
-    case BUILT_IN_ATOMIC_FETCH_SUB_1:
-    case BUILT_IN_ATOMIC_FETCH_SUB_2:
-    case BUILT_IN_ATOMIC_FETCH_SUB_4:
-    case BUILT_IN_ATOMIC_FETCH_SUB_8:
     case BUILT_IN_ATOMIC_FETCH_SUB_16:
-
-    case BUILT_IN_ATOMIC_FETCH_AND_1:
-    case BUILT_IN_ATOMIC_FETCH_AND_2:
-    case BUILT_IN_ATOMIC_FETCH_AND_4:
-    case BUILT_IN_ATOMIC_FETCH_AND_8:
     case BUILT_IN_ATOMIC_FETCH_AND_16:
-
-    case BUILT_IN_ATOMIC_FETCH_NAND_1:
-    case BUILT_IN_ATOMIC_FETCH_NAND_2:
-    case BUILT_IN_ATOMIC_FETCH_NAND_4:
-    case BUILT_IN_ATOMIC_FETCH_NAND_8:
     case BUILT_IN_ATOMIC_FETCH_NAND_16:
-
-    case BUILT_IN_ATOMIC_FETCH_XOR_1:
-    case BUILT_IN_ATOMIC_FETCH_XOR_2:
-    case BUILT_IN_ATOMIC_FETCH_XOR_4:
-    case BUILT_IN_ATOMIC_FETCH_XOR_8:
     case BUILT_IN_ATOMIC_FETCH_XOR_16:
-
-    case BUILT_IN_ATOMIC_FETCH_OR_1:
-    case BUILT_IN_ATOMIC_FETCH_OR_2:
-    case BUILT_IN_ATOMIC_FETCH_OR_4:
-    case BUILT_IN_ATOMIC_FETCH_OR_8:
     case BUILT_IN_ATOMIC_FETCH_OR_16:
+      access_size = 16;
+      /* FALLTHRU */
+    do_atomic:
       {
 	dest = gimple_call_arg (call, 0);
 	/* DEST represents the address of a memory location.
 	   instrument_derefs wants the memory location, so lets
 	   dereference the address DEST before handing it to
 	   instrument_derefs.  */
-	if (TREE_CODE (dest) == ADDR_EXPR)
-	  dest = TREE_OPERAND (dest, 0);
-	else if (TREE_CODE (dest) == SSA_NAME || TREE_CODE (dest) == INTEGER_CST)
-	  dest = build2 (MEM_REF, TREE_TYPE (TREE_TYPE (dest)),
-			 dest, build_int_cst (TREE_TYPE (dest), 0));
-	else
-	  gcc_unreachable ();
-
-	access_size = int_size_in_bytes (TREE_TYPE (dest));
+	tree type = build_nonstandard_integer_type (access_size
+						    * BITS_PER_UNIT, 1);
+	dest = build2 (MEM_REF, type, dest,
+		       build_int_cst (build_pointer_type (char_type_node), 0));
+	break;
       }
 
     default:
@@ -873,7 +1049,7 @@ get_mem_refs_of_builtin_call (const gcall *call,
    contains.  */
 
 static bool
-has_stmt_been_instrumented_p (gimple stmt)
+has_stmt_been_instrumented_p (gimple *stmt)
 {
   if (gimple_assign_single_p (stmt))
     {
@@ -916,6 +1092,16 @@ has_stmt_been_instrumented_p (gimple stmt)
 	  return true;
 	}
     }
+  else if (is_gimple_call (stmt) && gimple_store_p (stmt))
+    {
+      asan_mem_ref r;
+      asan_mem_ref_init (&r, NULL, 1);
+
+      r.start = gimple_call_lhs (stmt);
+      r.access_size = int_size_in_bytes (TREE_TYPE (r.start));
+      return has_mem_ref_been_instrumented (&r);
+    }
+
   return false;
 }
 
@@ -940,12 +1126,16 @@ static void
 asan_init_shadow_ptr_types (void)
 {
   asan_shadow_set = new_alias_set ();
-  shadow_ptr_types[0] = build_distinct_type_copy (signed_char_type_node);
-  TYPE_ALIAS_SET (shadow_ptr_types[0]) = asan_shadow_set;
-  shadow_ptr_types[0] = build_pointer_type (shadow_ptr_types[0]);
-  shadow_ptr_types[1] = build_distinct_type_copy (short_integer_type_node);
-  TYPE_ALIAS_SET (shadow_ptr_types[1]) = asan_shadow_set;
-  shadow_ptr_types[1] = build_pointer_type (shadow_ptr_types[1]);
+  tree types[3] = { signed_char_type_node, short_integer_type_node,
+		    integer_type_node };
+
+  for (unsigned i = 0; i < 3; i++)
+    {
+      shadow_ptr_types[i] = build_distinct_type_copy (types[i]);
+      TYPE_ALIAS_SET (shadow_ptr_types[i]) = asan_shadow_set;
+      shadow_ptr_types[i] = build_pointer_type (shadow_ptr_types[i]);
+    }
+
   initialize_sanitizer_builtins ();
 }
 
@@ -965,20 +1155,6 @@ asan_pp_string (pretty_printer *pp)
   return build1 (ADDR_EXPR, shadow_ptr_types[0], ret);
 }
 
-/* Return a CONST_INT representing 4 subsequent shadow memory bytes.  */
-
-static rtx
-asan_shadow_cst (unsigned char shadow_bytes[4])
-{
-  int i;
-  unsigned HOST_WIDE_INT val = 0;
-  gcc_assert (WORDS_BIG_ENDIAN == BYTES_BIG_ENDIAN);
-  for (i = 0; i < 4; i++)
-    val |= (unsigned HOST_WIDE_INT) shadow_bytes[BYTES_BIG_ENDIAN ? 3 - i : i]
-	   << (BITS_PER_UNIT * i);
-  return gen_int_mode (val, SImode);
-}
-
 /* Clear shadow memory at SHADOW_MEM, LEN bytes.  Can't call a library call here
    though.  */
 
@@ -989,6 +1165,7 @@ asan_clear_shadow (rtx shadow_mem, HOST_WIDE_INT len)
   rtx_code_label *top_label;
   rtx end, addr, tmp;
 
+  gcc_assert ((len & 3) == 0);
   start_sequence ();
   clear_storage (shadow_mem, GEN_INT (len), BLOCK_OP_NORMAL);
   insns = get_insns ();
@@ -1002,7 +1179,6 @@ asan_clear_shadow (rtx shadow_mem, HOST_WIDE_INT len)
       return;
     }
 
-  gcc_assert ((len & 3) == 0);
   top_label = gen_label_rtx ();
   addr = copy_to_mode_reg (Pmode, XEXP (shadow_mem, 0));
   shadow_mem = adjust_automodify_address (shadow_mem, SImode, addr, 0);
@@ -1017,7 +1193,9 @@ asan_clear_shadow (rtx shadow_mem, HOST_WIDE_INT len)
   emit_cmp_and_jump_insns (addr, end, LT, NULL_RTX, Pmode, true, top_label);
   jump = get_last_insn ();
   gcc_assert (JUMP_P (jump));
-  add_int_reg_note (jump, REG_BR_PROB, REG_BR_PROB_BASE * 80 / 100);
+  add_reg_br_prob_note (jump,
+			profile_probability::guessed_always ()
+			   .apply_scale (80, 100));
 }
 
 void
@@ -1027,6 +1205,150 @@ asan_function_start (void)
   switch_to_section (fnsec);
   ASM_OUTPUT_DEBUG_LABEL (asm_out_file, "LASANPC",
 			 current_function_funcdef_no);
+}
+
+/* Return number of shadow bytes that are occupied by a local variable
+   of SIZE bytes.  */
+
+static unsigned HOST_WIDE_INT
+shadow_mem_size (unsigned HOST_WIDE_INT size)
+{
+  /* It must be possible to align stack variables to granularity
+     of shadow memory.  */
+  gcc_assert (BITS_PER_UNIT
+	      * ASAN_SHADOW_GRANULARITY <= MAX_SUPPORTED_STACK_ALIGNMENT);
+
+  return ROUND_UP (size, ASAN_SHADOW_GRANULARITY) / ASAN_SHADOW_GRANULARITY;
+}
+
+/* Always emit 4 bytes at a time.  */
+#define RZ_BUFFER_SIZE 4
+
+/* ASAN redzone buffer container that handles emission of shadow bytes.  */
+struct asan_redzone_buffer
+{
+  /* Constructor.  */
+  asan_redzone_buffer (rtx shadow_mem, HOST_WIDE_INT prev_offset):
+    m_shadow_mem (shadow_mem), m_prev_offset (prev_offset),
+    m_original_offset (prev_offset), m_shadow_bytes (RZ_BUFFER_SIZE)
+  {}
+
+  /* Emit VALUE shadow byte at a given OFFSET.  */
+  void emit_redzone_byte (HOST_WIDE_INT offset, unsigned char value);
+
+  /* Emit RTX emission of the content of the buffer.  */
+  void flush_redzone_payload (void);
+
+private:
+  /* Flush if the content of the buffer is full
+     (equal to RZ_BUFFER_SIZE).  */
+  void flush_if_full (void);
+
+  /* Memory where we last emitted a redzone payload.  */
+  rtx m_shadow_mem;
+
+  /* Relative offset where we last emitted a redzone payload.  */
+  HOST_WIDE_INT m_prev_offset;
+
+  /* Relative original offset.  Used for checking only.  */
+  HOST_WIDE_INT m_original_offset;
+
+public:
+  /* Buffer with redzone payload.  */
+  auto_vec<unsigned char> m_shadow_bytes;
+};
+
+/* Emit VALUE shadow byte at a given OFFSET.  */
+
+void
+asan_redzone_buffer::emit_redzone_byte (HOST_WIDE_INT offset,
+					unsigned char value)
+{
+  gcc_assert ((offset & (ASAN_SHADOW_GRANULARITY - 1)) == 0);
+  gcc_assert (offset >= m_prev_offset);
+
+  HOST_WIDE_INT off
+    = m_prev_offset + ASAN_SHADOW_GRANULARITY * m_shadow_bytes.length ();
+  if (off == offset)
+    {
+      /* Consecutive shadow memory byte.  */
+      m_shadow_bytes.safe_push (value);
+      flush_if_full ();
+    }
+  else
+    {
+      if (!m_shadow_bytes.is_empty ())
+	flush_redzone_payload ();
+
+      /* Maybe start earlier in order to use aligned store.  */
+      HOST_WIDE_INT align = (offset - m_prev_offset) % ASAN_RED_ZONE_SIZE;
+      if (align)
+	{
+	  offset -= align;
+	  for (unsigned i = 0; i < align / BITS_PER_UNIT; i++)
+	    m_shadow_bytes.safe_push (0);
+	}
+
+      /* Adjust m_prev_offset and m_shadow_mem.  */
+      HOST_WIDE_INT diff = offset - m_prev_offset;
+      m_shadow_mem = adjust_address (m_shadow_mem, VOIDmode,
+				     diff >> ASAN_SHADOW_SHIFT);
+      m_prev_offset = offset;
+      m_shadow_bytes.safe_push (value);
+      flush_if_full ();
+    }
+}
+
+/* Emit RTX emission of the content of the buffer.  */
+
+void
+asan_redzone_buffer::flush_redzone_payload (void)
+{
+  gcc_assert (WORDS_BIG_ENDIAN == BYTES_BIG_ENDIAN);
+
+  if (m_shadow_bytes.is_empty ())
+    return;
+
+  /* Be sure we always emit to an aligned address.  */
+  gcc_assert (((m_prev_offset - m_original_offset)
+	      & (ASAN_RED_ZONE_SIZE - 1)) == 0);
+
+  /* Fill it to RZ_BUFFER_SIZE bytes with zeros if needed.  */
+  unsigned l = m_shadow_bytes.length ();
+  for (unsigned i = 0; i <= RZ_BUFFER_SIZE - l; i++)
+    m_shadow_bytes.safe_push (0);
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file,
+	     "Flushing rzbuffer at offset %" PRId64 " with: ", m_prev_offset);
+
+  unsigned HOST_WIDE_INT val = 0;
+  for (unsigned i = 0; i < RZ_BUFFER_SIZE; i++)
+    {
+      unsigned char v
+	= m_shadow_bytes[BYTES_BIG_ENDIAN ? RZ_BUFFER_SIZE - i - 1 : i];
+      val |= (unsigned HOST_WIDE_INT)v << (BITS_PER_UNIT * i);
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "%02x ", v);
+    }
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, "\n");
+
+  rtx c = gen_int_mode (val, SImode);
+  m_shadow_mem = adjust_address (m_shadow_mem, SImode, 0);
+  emit_move_insn (m_shadow_mem, c);
+  m_shadow_bytes.truncate (0);
+}
+
+/* Flush if the content of the buffer is full
+   (equal to RZ_BUFFER_SIZE).  */
+
+void
+asan_redzone_buffer::flush_if_full (void)
+{
+  if (m_shadow_bytes.length () == RZ_BUFFER_SIZE)
+    flush_redzone_payload ();
 }
 
 /* Insert code to protect stack vars.  The prologue sequence should be emitted
@@ -1049,12 +1371,11 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   rtx shadow_base, shadow_mem, ret, mem, orig_base;
   rtx_code_label *lab;
   rtx_insn *insns;
-  char buf[30];
-  unsigned char shadow_bytes[4];
+  char buf[32];
   HOST_WIDE_INT base_offset = offsets[length - 1];
   HOST_WIDE_INT base_align_bias = 0, offset, prev_offset;
   HOST_WIDE_INT asan_frame_size = offsets[0] - base_offset;
-  HOST_WIDE_INT last_offset, last_size;
+  HOST_WIDE_INT last_offset, last_size, last_size_aligned;
   int l;
   unsigned char cur_shadow_byte = ASAN_STACK_MAGIC_LEFT;
   tree str_cst, decl, id;
@@ -1062,6 +1383,9 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 
   if (shadow_ptr_types[0] == NULL_TREE)
     asan_init_shadow_ptr_types ();
+
+  expanded_location cfun_xloc
+    = expand_location (DECL_SOURCE_LOCATION (current_function_decl));
 
   /* First of all, prepare the description string.  */
   pretty_printer asan_pp;
@@ -1075,15 +1399,30 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
       pp_space (&asan_pp);
       pp_wide_integer (&asan_pp, offsets[l - 1] - offsets[l]);
       pp_space (&asan_pp);
+
+      expanded_location xloc
+	= expand_location (DECL_SOURCE_LOCATION (decl));
+      char location[32];
+
+      if (xloc.file == cfun_xloc.file)
+	sprintf (location, ":%d", xloc.line);
+      else
+	location[0] = '\0';
+
       if (DECL_P (decl) && DECL_NAME (decl))
 	{
-	  pp_decimal_int (&asan_pp, IDENTIFIER_LENGTH (DECL_NAME (decl)));
+	  unsigned idlen
+	    = IDENTIFIER_LENGTH (DECL_NAME (decl)) + strlen (location);
+	  pp_decimal_int (&asan_pp, idlen);
 	  pp_space (&asan_pp);
 	  pp_tree_identifier (&asan_pp, DECL_NAME (decl));
+	  pp_string (&asan_pp, location);
 	}
       else
 	pp_string (&asan_pp, "9 <unknown>");
-      pp_space (&asan_pp);
+
+      if (l > 2)
+	pp_space (&asan_pp);
     }
   str_cst = asan_pp_string (&asan_pp);
 
@@ -1101,13 +1440,15 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 	base_align_bias = ((asan_frame_size + alignb - 1)
 			   & ~(alignb - HOST_WIDE_INT_1)) - asan_frame_size;
     }
+
   /* Align base if target is STRICT_ALIGNMENT.  */
   if (STRICT_ALIGNMENT)
-    base = expand_binop (Pmode, and_optab, base,
-			 gen_int_mode (-((GET_MODE_ALIGNMENT (SImode)
-					  << ASAN_SHADOW_SHIFT)
-					 / BITS_PER_UNIT), Pmode), NULL_RTX,
-			 1, OPTAB_DIRECT);
+    {
+      const HOST_WIDE_INT align
+	= (GET_MODE_ALIGNMENT (SImode) / BITS_PER_UNIT) << ASAN_SHADOW_SHIFT;
+      base = expand_binop (Pmode, and_optab, base, gen_int_mode (-align, Pmode),
+			   NULL_RTX, 1, OPTAB_DIRECT);
+    }
 
   if (use_after_return_class == -1 && pbase)
     emit_move_insn (pbase, base);
@@ -1137,18 +1478,22 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
       emit_move_insn (orig_base, base);
       ret = expand_normal (asan_detect_stack_use_after_return);
       lab = gen_label_rtx ();
-      int very_likely = REG_BR_PROB_BASE - (REG_BR_PROB_BASE / 2000 - 1);
       emit_cmp_and_jump_insns (ret, const0_rtx, EQ, NULL_RTX,
-			       VOIDmode, 0, lab, very_likely);
+			       VOIDmode, 0, lab,
+			       profile_probability::very_likely ());
       snprintf (buf, sizeof buf, "__asan_stack_malloc_%d",
 		use_after_return_class);
       ret = init_one_libfunc (buf);
-      rtx addr = convert_memory_address (ptr_mode, base);
-      ret = emit_library_call_value (ret, NULL_RTX, LCT_NORMAL, ptr_mode, 2,
+      ret = emit_library_call_value (ret, NULL_RTX, LCT_NORMAL, ptr_mode,
 				     GEN_INT (asan_frame_size
 					      + base_align_bias),
-				     TYPE_MODE (pointer_sized_int_node),
-				     addr, ptr_mode);
+				     TYPE_MODE (pointer_sized_int_node));
+      /* __asan_stack_malloc_[n] returns a pointer to fake stack if succeeded
+	 and NULL otherwise.  Check RET value is NULL here and jump over the
+	 BASE reassignment in this case.  Otherwise, reassign BASE to RET.  */
+      emit_cmp_and_jump_insns (ret, const0_rtx, EQ, NULL_RTX,
+			       VOIDmode, 0, lab,
+			       profile_probability:: very_unlikely ());
       ret = convert_memory_address (Pmode, ret);
       emit_move_insn (base, ret);
       emit_label (lab);
@@ -1180,7 +1525,7 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   TREE_ASM_WRITTEN (id) = 1;
   emit_move_insn (mem, expand_normal (build_fold_addr_expr (decl)));
   shadow_base = expand_binop (Pmode, lshr_optab, base,
-			      GEN_INT (ASAN_SHADOW_SHIFT),
+			      gen_int_shift_amount (Pmode, ASAN_SHADOW_SHIFT),
 			      NULL_RTX, 1, OPTAB_DIRECT);
   shadow_base
     = plus_constant (Pmode, shadow_base,
@@ -1193,46 +1538,43 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   if (STRICT_ALIGNMENT)
     set_mem_align (shadow_mem, (GET_MODE_ALIGNMENT (SImode)));
   prev_offset = base_offset;
+
+  asan_redzone_buffer rz_buffer (shadow_mem, prev_offset);
   for (l = length; l; l -= 2)
     {
       if (l == 2)
 	cur_shadow_byte = ASAN_STACK_MAGIC_RIGHT;
       offset = offsets[l - 1];
-      if ((offset - base_offset) & (ASAN_RED_ZONE_SIZE - 1))
+
+      bool extra_byte = (offset - base_offset) & (ASAN_SHADOW_GRANULARITY - 1);
+      /* If a red-zone is not aligned to ASAN_SHADOW_GRANULARITY then
+	 the previous stack variable has size % ASAN_SHADOW_GRANULARITY != 0.
+	 In that case we have to emit one extra byte that will describe
+	 how many bytes (our of ASAN_SHADOW_GRANULARITY) can be accessed.  */
+      if (extra_byte)
 	{
-	  int i;
 	  HOST_WIDE_INT aoff
 	    = base_offset + ((offset - base_offset)
-			     & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
-	  shadow_mem = adjust_address (shadow_mem, VOIDmode,
-				       (aoff - prev_offset)
-				       >> ASAN_SHADOW_SHIFT);
-	  prev_offset = aoff;
-	  for (i = 0; i < 4; i++, aoff += (1 << ASAN_SHADOW_SHIFT))
-	    if (aoff < offset)
-	      {
-		if (aoff < offset - (1 << ASAN_SHADOW_SHIFT) + 1)
-		  shadow_bytes[i] = 0;
-		else
-		  shadow_bytes[i] = offset - aoff;
-	      }
-	    else
-	      shadow_bytes[i] = ASAN_STACK_MAGIC_PARTIAL;
-	  emit_move_insn (shadow_mem, asan_shadow_cst (shadow_bytes));
-	  offset = aoff;
+			     & ~(ASAN_SHADOW_GRANULARITY - HOST_WIDE_INT_1));
+	  rz_buffer.emit_redzone_byte (aoff, offset - aoff);
+	  offset = aoff + ASAN_SHADOW_GRANULARITY;
 	}
-      while (offset <= offsets[l - 2] - ASAN_RED_ZONE_SIZE)
+
+      /* Calculate size of red zone payload.  */
+      while (offset < offsets[l - 2])
 	{
-	  shadow_mem = adjust_address (shadow_mem, VOIDmode,
-				       (offset - prev_offset)
-				       >> ASAN_SHADOW_SHIFT);
-	  prev_offset = offset;
-	  memset (shadow_bytes, cur_shadow_byte, 4);
-	  emit_move_insn (shadow_mem, asan_shadow_cst (shadow_bytes));
-	  offset += ASAN_RED_ZONE_SIZE;
+	  rz_buffer.emit_redzone_byte (offset, cur_shadow_byte);
+	  offset += ASAN_SHADOW_GRANULARITY;
 	}
+
       cur_shadow_byte = ASAN_STACK_MAGIC_MIDDLE;
     }
+
+  /* As the automatic variables are aligned to
+     ASAN_RED_ZONE_SIZE / ASAN_SHADOW_GRANULARITY, the buffer should be
+     flushed here.  */
+  gcc_assert (rz_buffer.m_shadow_bytes.is_empty ());
+
   do_pending_stack_adjust ();
 
   /* Construct epilogue sequence.  */
@@ -1243,9 +1585,9 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
     {
       rtx_code_label *lab2 = gen_label_rtx ();
       char c = (char) ASAN_STACK_MAGIC_USE_AFTER_RET;
-      int very_likely = REG_BR_PROB_BASE - (REG_BR_PROB_BASE / 2000 - 1);
       emit_cmp_and_jump_insns (orig_base, base, EQ, NULL_RTX,
-			       VOIDmode, 0, lab2, very_likely);
+			       VOIDmode, 0, lab2,
+			       profile_probability::very_likely ());
       shadow_mem = gen_rtx_MEM (BLKmode, shadow_base);
       set_mem_alias_set (shadow_mem, asan_shadow_set);
       mem = gen_rtx_MEM (ptr_mode, base);
@@ -1256,7 +1598,7 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 	  && can_store_by_pieces (sz, builtin_memset_read_str, &c,
 				  BITS_PER_UNIT, true))
 	store_by_pieces (shadow_mem, sz, builtin_memset_read_str, &c,
-			 BITS_PER_UNIT, true, 0);
+			 BITS_PER_UNIT, true, RETURN_BEGIN);
       else if (use_after_return_class >= 5
 	       || !set_storage_via_setmem (shadow_mem,
 					   GEN_INT (sz),
@@ -1269,7 +1611,7 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 	  ret = init_one_libfunc (buf);
 	  rtx addr = convert_memory_address (ptr_mode, base);
 	  rtx orig_addr = convert_memory_address (ptr_mode, orig_base);
-	  emit_library_call (ret, LCT_NORMAL, ptr_mode, 3, addr, ptr_mode,
+	  emit_library_call (ret, LCT_NORMAL, ptr_mode, addr, ptr_mode,
 			     GEN_INT (asan_frame_size + base_align_bias),
 			     TYPE_MODE (pointer_sized_int_node),
 			     orig_addr, ptr_mode);
@@ -1288,37 +1630,94 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   prev_offset = base_offset;
   last_offset = base_offset;
   last_size = 0;
+  last_size_aligned = 0;
   for (l = length; l; l -= 2)
     {
       offset = base_offset + ((offsets[l - 1] - base_offset)
-			     & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
-      if (last_offset + last_size != offset)
+			      & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
+      if (last_offset + last_size_aligned < offset)
 	{
 	  shadow_mem = adjust_address (shadow_mem, VOIDmode,
 				       (last_offset - prev_offset)
 				       >> ASAN_SHADOW_SHIFT);
 	  prev_offset = last_offset;
-	  asan_clear_shadow (shadow_mem, last_size >> ASAN_SHADOW_SHIFT);
+	  asan_clear_shadow (shadow_mem, last_size_aligned >> ASAN_SHADOW_SHIFT);
 	  last_offset = offset;
 	  last_size = 0;
 	}
+      else
+	last_size = offset - last_offset;
       last_size += base_offset + ((offsets[l - 2] - base_offset)
-				  & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1))
+				  & ~(ASAN_MIN_RED_ZONE_SIZE - HOST_WIDE_INT_1))
 		   - offset;
+
+      /* Unpoison shadow memory that corresponds to a variable that is 
+	 is subject of use-after-return sanitization.  */
+      if (l > 2)
+	{
+	  decl = decls[l / 2 - 2];
+	  if (asan_handled_variables != NULL
+	      && asan_handled_variables->contains (decl))
+	    {
+	      HOST_WIDE_INT size = offsets[l - 3] - offsets[l - 2];
+	      if (dump_file && (dump_flags & TDF_DETAILS))
+		{
+		  const char *n = (DECL_NAME (decl)
+				   ? IDENTIFIER_POINTER (DECL_NAME (decl))
+				   : "<unknown>");
+		  fprintf (dump_file, "Unpoisoning shadow stack for variable: "
+			   "%s (%" PRId64 " B)\n", n, size);
+		}
+
+		last_size += size & ~(ASAN_MIN_RED_ZONE_SIZE - HOST_WIDE_INT_1);
+	    }
+	}
+      last_size_aligned
+	= ((last_size + (ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1))
+	   & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
     }
-  if (last_size)
+  if (last_size_aligned)
     {
       shadow_mem = adjust_address (shadow_mem, VOIDmode,
 				   (last_offset - prev_offset)
 				   >> ASAN_SHADOW_SHIFT);
-      asan_clear_shadow (shadow_mem, last_size >> ASAN_SHADOW_SHIFT);
+      asan_clear_shadow (shadow_mem, last_size_aligned >> ASAN_SHADOW_SHIFT);
     }
+
+  /* Clean-up set with instrumented stack variables.  */
+  delete asan_handled_variables;
+  asan_handled_variables = NULL;
+  delete asan_used_labels;
+  asan_used_labels = NULL;
 
   do_pending_stack_adjust ();
   if (lab)
     emit_label (lab);
 
   insns = get_insns ();
+  end_sequence ();
+  return insns;
+}
+
+/* Emit __asan_allocas_unpoison (top, bot) call.  The BASE parameter corresponds
+   to BOT argument, for TOP virtual_stack_dynamic_rtx is used.  NEW_SEQUENCE
+   indicates whether we're emitting new instructions sequence or not.  */
+
+rtx_insn *
+asan_emit_allocas_unpoison (rtx top, rtx bot, rtx_insn *before)
+{
+  if (before)
+    push_to_sequence (before);
+  else
+    start_sequence ();
+  rtx ret = init_one_libfunc ("__asan_allocas_unpoison");
+  top = convert_memory_address (ptr_mode, top);
+  bot = convert_memory_address (ptr_mode, bot);
+  ret = emit_library_call_value (ret, NULL_RTX, LCT_NORMAL, ptr_mode,
+				 top, ptr_mode, bot, ptr_mode);
+
+  do_pending_stack_adjust ();
+  rtx_insn *insns = get_insns ();
   end_sequence ();
   return insns;
 }
@@ -1332,13 +1731,23 @@ asan_needs_local_alias (tree decl)
   return DECL_WEAK (decl) || !targetm.binds_local_p (decl);
 }
 
+/* Return true if DECL, a global var, is an artificial ODR indicator symbol
+   therefore doesn't need protection.  */
+
+static bool
+is_odr_indicator (tree decl)
+{
+  return (DECL_ARTIFICIAL (decl)
+	  && lookup_attribute ("asan odr indicator", DECL_ATTRIBUTES (decl)));
+}
+
 /* Return true if DECL is a VAR_DECL that should be protected
    by Address Sanitizer, by appending a red zone with protected
    shadow memory after it and aligning it to at least
    ASAN_RED_ZONE_SIZE bytes.  */
 
 bool
-asan_protect_global (tree decl)
+asan_protect_global (tree decl, bool ignore_decl_rtl_set_p)
 {
   if (!ASAN_GLOBALS)
     return false;
@@ -1355,12 +1764,18 @@ asan_protect_global (tree decl)
 	return false;
       return true;
     }
-  if (TREE_CODE (decl) != VAR_DECL
+  if (!VAR_P (decl)
       /* TLS vars aren't statically protectable.  */
       || DECL_THREAD_LOCAL_P (decl)
       /* Externs will be protected elsewhere.  */
       || DECL_EXTERNAL (decl)
-      || !DECL_RTL_SET_P (decl)
+      /* PR sanitizer/81697: For architectures that use section anchors first
+	 call to asan_protect_global may occur before DECL_RTL (decl) is set.
+	 We should ignore DECL_RTL_SET_P then, because otherwise the first call
+	 to asan_protect_global will return FALSE and the following calls on the
+	 same decl after setting DECL_RTL (decl) will return TRUE and we'll end
+	 up with inconsistency at runtime.  */
+      || (!DECL_RTL_SET_P (decl) && !ignore_decl_rtl_set_p)
       /* Comdat vars pose an ABI problem, we can't know if
 	 the var that is selected by the linker will have
 	 padding or not.  */
@@ -1374,30 +1789,35 @@ asan_protect_global (tree decl)
 	 to be an array of such vars, putting padding in there
 	 breaks this assumption.  */
       || (DECL_SECTION_NAME (decl) != NULL
-	  && !symtab_node::get (decl)->implicit_section)
+	  && !symtab_node::get (decl)->implicit_section
+	  && !section_sanitized_p (DECL_SECTION_NAME (decl)))
       || DECL_SIZE (decl) == 0
       || ASAN_RED_ZONE_SIZE * BITS_PER_UNIT > MAX_OFILE_ALIGNMENT
+      || TREE_CODE (DECL_SIZE_UNIT (decl)) != INTEGER_CST
       || !valid_constant_size_p (DECL_SIZE_UNIT (decl))
       || DECL_ALIGN_UNIT (decl) > 2 * ASAN_RED_ZONE_SIZE
-      || TREE_TYPE (decl) == ubsan_get_source_location_type ())
+      || TREE_TYPE (decl) == ubsan_get_source_location_type ()
+      || is_odr_indicator (decl))
     return false;
 
-  rtl = DECL_RTL (decl);
-  if (!MEM_P (rtl) || GET_CODE (XEXP (rtl, 0)) != SYMBOL_REF)
-    return false;
-  symbol = XEXP (rtl, 0);
+  if (!ignore_decl_rtl_set_p || DECL_RTL_SET_P (decl))
+    {
 
-  if (CONSTANT_POOL_ADDRESS_P (symbol)
-      || TREE_CONSTANT_POOL_ADDRESS_P (symbol))
-    return false;
+      rtl = DECL_RTL (decl);
+      if (!MEM_P (rtl) || GET_CODE (XEXP (rtl, 0)) != SYMBOL_REF)
+	return false;
+      symbol = XEXP (rtl, 0);
+
+      if (CONSTANT_POOL_ADDRESS_P (symbol)
+	  || TREE_CONSTANT_POOL_ADDRESS_P (symbol))
+	return false;
+    }
 
   if (lookup_attribute ("weakref", DECL_ATTRIBUTES (decl)))
     return false;
 
-#ifndef ASM_OUTPUT_DEF
-  if (asan_needs_local_alias (decl))
+  if (!TARGET_SUPPORTS_ALIASES && asan_needs_local_alias (decl))
     return false;
-#endif
 
   return true;
 }
@@ -1529,18 +1949,18 @@ create_cond_insert_point (gimple_stmt_iterator *iter,
 
   /* Set up the newly created 'then block'.  */
   e = make_edge (cond_bb, then_bb, EDGE_TRUE_VALUE);
-  int fallthrough_probability
+  profile_probability fallthrough_probability
     = then_more_likely_p
-    ? PROB_VERY_UNLIKELY
-    : PROB_ALWAYS - PROB_VERY_UNLIKELY;
-  e->probability = PROB_ALWAYS - fallthrough_probability;
+    ? profile_probability::very_unlikely ()
+    : profile_probability::very_likely ();
+  e->probability = fallthrough_probability.invert ();
+  then_bb->count = e->count ();
   if (create_then_fallthru_edge)
     make_single_succ_edge (then_bb, fallthru_bb, EDGE_FALLTHRU);
 
   /* Set up the fallthrough basic block.  */
   e = find_edge (cond_bb, fallthru_bb);
   e->flags = EDGE_FALSE_VALUE;
-  e->count = cond_bb->count;
   e->probability = fallthrough_probability;
 
   /* Update dominance info for the newly created then_bb; note that
@@ -1592,16 +2012,18 @@ insert_if_then_before_iter (gcond *cond,
   gsi_insert_after (&cond_insert_point, cond, GSI_NEW_STMT);
 }
 
-/* Build
-   (base_addr >> ASAN_SHADOW_SHIFT) + asan_shadow_offset ().  */
+/* Build (base_addr >> ASAN_SHADOW_SHIFT) + asan_shadow_offset ().
+   If RETURN_ADDRESS is set to true, return memory location instread
+   of a value in the shadow memory.  */
 
 static tree
 build_shadow_mem_access (gimple_stmt_iterator *gsi, location_t location,
-			 tree base_addr, tree shadow_ptr_type)
+			 tree base_addr, tree shadow_ptr_type,
+			 bool return_address = false)
 {
   tree t, uintptr_type = TREE_TYPE (base_addr);
   tree shadow_type = TREE_TYPE (shadow_ptr_type);
-  gimple g;
+  gimple *g;
 
   t = build_int_cst (uintptr_type, ASAN_SHADOW_SHIFT);
   g = gimple_build_assign (make_ssa_name (uintptr_type), RSHIFT_EXPR,
@@ -1620,11 +2042,15 @@ build_shadow_mem_access (gimple_stmt_iterator *gsi, location_t location,
   gimple_set_location (g, location);
   gsi_insert_after (gsi, g, GSI_NEW_STMT);
 
-  t = build2 (MEM_REF, shadow_type, gimple_assign_lhs (g),
-	      build_int_cst (shadow_ptr_type, 0));
-  g = gimple_build_assign (make_ssa_name (shadow_type), MEM_REF, t);
-  gimple_set_location (g, location);
-  gsi_insert_after (gsi, g, GSI_NEW_STMT);
+  if (!return_address)
+    {
+      t = build2 (MEM_REF, shadow_type, gimple_assign_lhs (g),
+		  build_int_cst (shadow_ptr_type, 0));
+      g = gimple_build_assign (make_ssa_name (shadow_type), MEM_REF, t);
+      gimple_set_location (g, location);
+      gsi_insert_after (gsi, g, GSI_NEW_STMT);
+    }
+
   return gimple_assign_lhs (g);
 }
 
@@ -1637,7 +2063,7 @@ maybe_create_ssa_name (location_t loc, tree base, gimple_stmt_iterator *iter,
 {
   if (TREE_CODE (base) == SSA_NAME)
     return base;
-  gimple g = gimple_build_assign (make_ssa_name (TREE_TYPE (base)),
+  gimple *g = gimple_build_assign (make_ssa_name (TREE_TYPE (base)),
 				  TREE_CODE (base), base);
   gimple_set_location (g, loc);
   if (before_p)
@@ -1656,7 +2082,7 @@ maybe_cast_to_ptrmode (location_t loc, tree len, gimple_stmt_iterator *iter,
 {
   if (ptrofftype_p (len))
     return len;
-  gimple g = gimple_build_assign (make_ssa_name (pointer_sized_int_node),
+  gimple *g = gimple_build_assign (make_ssa_name (pointer_sized_int_node),
 				  NOP_EXPR, len);
   gimple_set_location (g, loc);
   if (before_p)
@@ -1692,7 +2118,7 @@ build_check_stmt (location_t loc, tree base, tree len,
 		  bool is_scalar_access, unsigned int align = 0)
 {
   gimple_stmt_iterator gsi = *iter;
-  gimple g;
+  gimple *g;
 
   gcc_assert (!(size_in_bytes > 0 && !is_non_zero_len));
 
@@ -1770,6 +2196,8 @@ instrument_derefs (gimple_stmt_iterator *iter, tree t,
 
   tree type, base;
   HOST_WIDE_INT size_in_bytes;
+  if (location == UNKNOWN_LOCATION)
+    location = EXPR_LOCATION (t);
 
   type = TREE_TYPE (t);
   switch (TREE_CODE (t))
@@ -1790,12 +2218,12 @@ instrument_derefs (gimple_stmt_iterator *iter, tree t,
   if (size_in_bytes <= 0)
     return;
 
-  HOST_WIDE_INT bitsize, bitpos;
+  poly_int64 bitsize, bitpos;
   tree offset;
   machine_mode mode;
-  int volatilep = 0, unsignedp = 0;
-  tree inner = get_inner_reference (t, &bitsize, &bitpos, &offset,
-				    &mode, &unsignedp, &volatilep, false);
+  int unsignedp, reversep, volatilep = 0;
+  tree inner = get_inner_reference (t, &bitsize, &bitpos, &offset, &mode,
+				    &unsignedp, &reversep, &volatilep);
 
   if (TREE_CODE (t) == COMPONENT_REF
       && DECL_BIT_FIELD_REPRESENTATIVE (TREE_OPERAND (t, 1)) != NULL_TREE)
@@ -1803,20 +2231,24 @@ instrument_derefs (gimple_stmt_iterator *iter, tree t,
       tree repr = DECL_BIT_FIELD_REPRESENTATIVE (TREE_OPERAND (t, 1));
       instrument_derefs (iter, build3 (COMPONENT_REF, TREE_TYPE (repr),
 				       TREE_OPERAND (t, 0), repr,
-				       NULL_TREE), location, is_store);
+				       TREE_OPERAND (t, 2)),
+			 location, is_store);
       return;
     }
 
-  if (bitpos % BITS_PER_UNIT
-      || bitsize != size_in_bytes * BITS_PER_UNIT)
+  if (!multiple_p (bitpos, BITS_PER_UNIT)
+      || maybe_ne (bitsize, size_in_bytes * BITS_PER_UNIT))
     return;
 
-  if (TREE_CODE (inner) == VAR_DECL
+  if (VAR_P (inner) && DECL_HARD_REGISTER (inner))
+    return;
+
+  poly_int64 decl_size;
+  if (VAR_P (inner)
       && offset == NULL_TREE
-      && bitpos >= 0
       && DECL_SIZE (inner)
-      && tree_fits_shwi_p (DECL_SIZE (inner))
-      && bitpos + bitsize <= tree_to_shwi (DECL_SIZE (inner)))
+      && poly_int_tree_p (DECL_SIZE (inner), &decl_size)
+      && known_subrange_p (bitpos, bitsize, 0, decl_size))
     {
       if (DECL_THREAD_LOCAL_P (inner))
 	return;
@@ -1826,7 +2258,9 @@ instrument_derefs (gimple_stmt_iterator *iter, tree t,
 	{
 	  /* Automatic vars in the current function will be always
 	     accessible.  */
-	  if (decl_function_context (inner) == current_function_decl)
+	  if (decl_function_context (inner) == current_function_decl
+	      && (!asan_sanitize_use_after_scope ()
+		  || !TREE_ADDRESSABLE (inner)))
 	    return;
 	}
       /* Always instrument external vars, they might be dynamically
@@ -1934,7 +2368,7 @@ instrument_builtin_call (gimple_stmt_iterator *iter)
 				    &src0, &src0_len, &src0_is_store,
 				    &src1, &src1_len, &src1_is_store,
 				    &dest, &dest_len, &dest_is_store,
-				    &dest_is_deref, &intercepted_p))
+				    &dest_is_deref, &intercepted_p, iter))
     {
       if (dest_is_deref)
 	{
@@ -1982,7 +2416,7 @@ instrument_builtin_call (gimple_stmt_iterator *iter)
 static bool
 maybe_instrument_assignment (gimple_stmt_iterator *iter)
 {
-  gimple s = gsi_stmt (*iter);
+  gimple *s = gsi_stmt (*iter);
 
   gcc_assert (gimple_assign_single_p (s));
 
@@ -1998,7 +2432,7 @@ maybe_instrument_assignment (gimple_stmt_iterator *iter)
 			 is_store);
       is_instrumented = true;
     }
- 
+
   if (gimple_assign_load_p (s))
     {
       ref_expr = gimple_assign_rhs1 (s);
@@ -2026,7 +2460,7 @@ maybe_instrument_assignment (gimple_stmt_iterator *iter)
 static bool
 maybe_instrument_call (gimple_stmt_iterator *iter)
 {
-  gimple stmt = gsi_stmt (*iter);
+  gimple *stmt = gsi_stmt (*iter);
   bool is_builtin = gimple_call_builtin_p (stmt, BUILT_IN_NORMAL);
 
   if (is_builtin && instrument_builtin_call (iter))
@@ -2048,11 +2482,43 @@ maybe_instrument_call (gimple_stmt_iterator *iter)
 	    }
 	}
       tree decl = builtin_decl_implicit (BUILT_IN_ASAN_HANDLE_NO_RETURN);
-      gimple g = gimple_build_call (decl, 0);
+      gimple *g = gimple_build_call (decl, 0);
       gimple_set_location (g, gimple_location (stmt));
       gsi_insert_before (iter, g, GSI_SAME_STMT);
     }
-  return false;
+
+  bool instrumented = false;
+  if (gimple_store_p (stmt))
+    {
+      tree ref_expr = gimple_call_lhs (stmt);
+      instrument_derefs (iter, ref_expr,
+			 gimple_location (stmt),
+			 /*is_store=*/true);
+
+      instrumented = true;
+    }
+
+  /* Walk through gimple_call arguments and check them id needed.  */
+  unsigned args_num = gimple_call_num_args (stmt);
+  for (unsigned i = 0; i < args_num; ++i)
+    {
+      tree arg = gimple_call_arg (stmt, i);
+      /* If ARG is not a non-aggregate register variable, compiler in general
+	 creates temporary for it and pass it as argument to gimple call.
+	 But in some cases, e.g. when we pass by value a small structure that
+	 fits to register, compiler can avoid extra overhead by pulling out
+	 these temporaries.  In this case, we should check the argument.  */
+      if (!is_gimple_reg (arg) && !is_gimple_min_invariant (arg))
+	{
+	  instrument_derefs (iter, arg,
+			     gimple_location (stmt),
+			     /*is_store=*/false);
+	  instrumented = true;
+	}
+    }
+  if (instrumented)
+    gsi_next (iter);
+  return instrumented;
 }
 
 /* Walk each instruction of all basic block and instrument those that
@@ -2090,7 +2556,7 @@ transform_statements (void)
 
       for (i = gsi_start_bb (bb); !gsi_end_p (i);)
 	{
-	  gimple s = gsi_stmt (i);
+	  gimple *s = gsi_stmt (i);
 
 	  if (has_stmt_been_instrumented_p (s))
 	    gsi_next (&i);
@@ -2109,8 +2575,11 @@ transform_statements (void)
 		 If the current instruction is a function call that
 		 might free something, let's forget about the memory
 		 references that got instrumented.  Otherwise we might
-		 miss some instrumentation opportunities.  */
-	      if (is_gimple_call (s) && !nonfreeing_call_p (s))
+		 miss some instrumentation opportunities.  Do the same
+		 for a ASAN_MARK poisoning internal function.  */
+	      if (is_gimple_call (s)
+		  && (!nonfreeing_call_p (s)
+		      || asan_mark_p (s, ASAN_MARK_POISON)))
 		empty_mem_ref_hash_table ();
 
 	      gsi_next (&i);
@@ -2129,6 +2598,9 @@ transform_statements (void)
 tree
 asan_dynamic_init_call (bool after_p)
 {
+  if (shadow_ptr_types[0] == NULL_TREE)
+    asan_init_shadow_ptr_types ();
+
   tree fn = builtin_decl_implicit (after_p
 				   ? BUILT_IN_ASAN_AFTER_DYNAMIC_INIT
 				   : BUILT_IN_ASAN_BEFORE_DYNAMIC_INIT);
@@ -2138,8 +2610,6 @@ asan_dynamic_init_call (bool after_p)
       pretty_printer module_name_pp;
       pp_string (&module_name_pp, main_input_filename);
 
-      if (shadow_ptr_types[0] == NULL_TREE)
-	asan_init_shadow_ptr_types ();
       module_name_cst = asan_pp_string (&module_name_pp);
       module_name_cst = fold_convert (const_ptr_type_node,
 				      module_name_cst);
@@ -2158,19 +2628,21 @@ asan_dynamic_init_call (bool after_p)
      const void *__module_name;
      uptr __has_dynamic_init;
      __asan_global_source_location *__location;
+     char *__odr_indicator;
    } type.  */
 
 static tree
 asan_global_struct (void)
 {
-  static const char *field_names[7]
+  static const char *field_names[]
     = { "__beg", "__size", "__size_with_redzone",
-	"__name", "__module_name", "__has_dynamic_init", "__location"};
-  tree fields[7], ret;
-  int i;
+	"__name", "__module_name", "__has_dynamic_init", "__location",
+	"__odr_indicator" };
+  tree fields[ARRAY_SIZE (field_names)], ret;
+  unsigned i;
 
   ret = make_node (RECORD_TYPE);
-  for (i = 0; i < 7; i++)
+  for (i = 0; i < ARRAY_SIZE (field_names); i++)
     {
       fields[i]
 	= build_decl (UNKNOWN_LOCATION, FIELD_DECL,
@@ -2190,6 +2662,75 @@ asan_global_struct (void)
   TYPE_STUB_DECL (ret) = type_decl;
   layout_type (ret);
   return ret;
+}
+
+/* Create and return odr indicator symbol for DECL.
+   TYPE is __asan_global struct type as returned by asan_global_struct.  */
+
+static tree
+create_odr_indicator (tree decl, tree type)
+{
+  char *name;
+  tree uptr = TREE_TYPE (DECL_CHAIN (TYPE_FIELDS (type)));
+  tree decl_name
+    = (HAS_DECL_ASSEMBLER_NAME_P (decl) ? DECL_ASSEMBLER_NAME (decl)
+					: DECL_NAME (decl));
+  /* DECL_NAME theoretically might be NULL.  Bail out with 0 in this case.  */
+  if (decl_name == NULL_TREE)
+    return build_int_cst (uptr, 0);
+  const char *dname = IDENTIFIER_POINTER (decl_name);
+  if (HAS_DECL_ASSEMBLER_NAME_P (decl))
+    dname = targetm.strip_name_encoding (dname);
+  size_t len = strlen (dname) + sizeof ("__odr_asan_");
+  name = XALLOCAVEC (char, len);
+  snprintf (name, len, "__odr_asan_%s", dname);
+#ifndef NO_DOT_IN_LABEL
+  name[sizeof ("__odr_asan") - 1] = '.';
+#elif !defined(NO_DOLLAR_IN_LABEL)
+  name[sizeof ("__odr_asan") - 1] = '$';
+#endif
+  tree var = build_decl (UNKNOWN_LOCATION, VAR_DECL, get_identifier (name),
+			 char_type_node);
+  TREE_ADDRESSABLE (var) = 1;
+  TREE_READONLY (var) = 0;
+  TREE_THIS_VOLATILE (var) = 1;
+  DECL_GIMPLE_REG_P (var) = 0;
+  DECL_ARTIFICIAL (var) = 1;
+  DECL_IGNORED_P (var) = 1;
+  TREE_STATIC (var) = 1;
+  TREE_PUBLIC (var) = 1;
+  DECL_VISIBILITY (var) = DECL_VISIBILITY (decl);
+  DECL_VISIBILITY_SPECIFIED (var) = DECL_VISIBILITY_SPECIFIED (decl);
+
+  TREE_USED (var) = 1;
+  tree ctor = build_constructor_va (TREE_TYPE (var), 1, NULL_TREE,
+				    build_int_cst (unsigned_type_node, 0));
+  TREE_CONSTANT (ctor) = 1;
+  TREE_STATIC (ctor) = 1;
+  DECL_INITIAL (var) = ctor;
+  DECL_ATTRIBUTES (var) = tree_cons (get_identifier ("asan odr indicator"),
+				     NULL, DECL_ATTRIBUTES (var));
+  make_decl_rtl (var);
+  varpool_node::finalize_decl (var);
+  return fold_convert (uptr, build_fold_addr_expr (var));
+}
+
+/* Return true if DECL, a global var, might be overridden and needs
+   an additional odr indicator symbol.  */
+
+static bool
+asan_needs_odr_indicator_p (tree decl)
+{
+  /* Don't emit ODR indicators for kernel because:
+     a) Kernel is written in C thus doesn't need ODR indicators.
+     b) Some kernel code may have assumptions about symbols containing specific
+        patterns in their names.  Since ODR indicators contain original names
+        of symbols they are emitted for, these assumptions would be broken for
+        ODR indicator symbols.  */
+  return (!(flag_sanitize & SANITIZE_KERNEL_ADDRESS)
+	  && !DECL_ARTIFICIAL (decl)
+	  && !DECL_WEAK (decl)
+	  && TREE_PUBLIC (decl));
 }
 
 /* Append description of a single global DECL into vector V.
@@ -2232,6 +2773,9 @@ asan_add_global (tree decl, tree type, vec<constructor_elt, va_gc> *v)
       assemble_alias (refdecl, DECL_ASSEMBLER_NAME (decl));
     }
 
+  tree odr_indicator_ptr
+    = (asan_needs_odr_indicator_p (decl) ? create_odr_indicator (decl, type)
+					 : build_int_cst (uptr, 0));
   CONSTRUCTOR_APPEND_ELT (vinner, NULL_TREE,
 			  fold_convert (const_ptr_type_node,
 					build_fold_addr_expr (refdecl)));
@@ -2244,7 +2788,11 @@ asan_add_global (tree decl, tree type, vec<constructor_elt, va_gc> *v)
   CONSTRUCTOR_APPEND_ELT (vinner, NULL_TREE,
 			  fold_convert (const_ptr_type_node, module_name_cst));
   varpool_node *vnode = varpool_node::get (decl);
-  int has_dynamic_init = vnode ? vnode->dynamically_initialized : 0;
+  int has_dynamic_init = 0;
+  /* FIXME: Enable initialization order fiasco detection in LTO mode once
+     proper fix for PR 79061 will be applied.  */
+  if (!in_lto_p)
+    has_dynamic_init = vnode ? vnode->dynamically_initialized : 0;
   CONSTRUCTOR_APPEND_ELT (vinner, NULL_TREE,
 			  build_int_cst (uptr, has_dynamic_init));
   tree locptr = NULL_TREE;
@@ -2279,6 +2827,7 @@ asan_add_global (tree decl, tree type, vec<constructor_elt, va_gc> *v)
   else
     locptr = build_int_cst (uptr, 0);
   CONSTRUCTOR_APPEND_ELT (vinner, NULL_TREE, locptr);
+  CONSTRUCTOR_APPEND_ELT (vinner, NULL_TREE, odr_indicator_ptr);
   init = build_constructor (type, vinner);
   CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, init);
 }
@@ -2311,6 +2860,29 @@ initialize_sanitizer_builtins (void)
   tree BT_FN_SIZE_CONST_PTR_INT
     = build_function_type_list (size_type_node, const_ptr_type_node,
 				integer_type_node, NULL_TREE);
+
+  tree BT_FN_VOID_UINT8_UINT8
+    = build_function_type_list (void_type_node, unsigned_char_type_node,
+				unsigned_char_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT16_UINT16
+    = build_function_type_list (void_type_node, uint16_type_node,
+				uint16_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT32_UINT32
+    = build_function_type_list (void_type_node, uint32_type_node,
+				uint32_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT64_UINT64
+    = build_function_type_list (void_type_node, uint64_type_node,
+				uint64_type_node, NULL_TREE);
+  tree BT_FN_VOID_FLOAT_FLOAT
+    = build_function_type_list (void_type_node, float_type_node,
+				float_type_node, NULL_TREE);
+  tree BT_FN_VOID_DOUBLE_DOUBLE
+    = build_function_type_list (void_type_node, double_type_node,
+				double_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT64_PTR
+    = build_function_type_list (void_type_node, uint64_type_node,
+				ptr_type_node, NULL_TREE);
+
   tree BT_FN_BOOL_VPTR_PTR_IX_INT_INT[5];
   tree BT_FN_IX_CONST_VPTR_INT[5];
   tree BT_FN_IX_VPTR_IX_INT[5];
@@ -2384,12 +2956,19 @@ initialize_sanitizer_builtins (void)
   /* ECF_COLD missing */ ATTR_CONST_NORETURN_NOTHROW_LEAF_LIST
 #undef ATTR_PURE_NOTHROW_LEAF_LIST
 #define ATTR_PURE_NOTHROW_LEAF_LIST ECF_PURE | ATTR_NOTHROW_LEAF_LIST
+#undef DEF_BUILTIN_STUB
+#define DEF_BUILTIN_STUB(ENUM, NAME)
+#undef DEF_SANITIZER_BUILTIN_1
+#define DEF_SANITIZER_BUILTIN_1(ENUM, NAME, TYPE, ATTRS)		\
+  do {									\
+    decl = add_builtin_function ("__builtin_" NAME, TYPE, ENUM,		\
+				 BUILT_IN_NORMAL, NAME, NULL_TREE);	\
+    set_call_expr_flags (decl, ATTRS);					\
+    set_builtin_decl (ENUM, decl, true);				\
+  } while (0)
 #undef DEF_SANITIZER_BUILTIN
-#define DEF_SANITIZER_BUILTIN(ENUM, NAME, TYPE, ATTRS) \
-  decl = add_builtin_function ("__builtin_" NAME, TYPE, ENUM,		\
-			       BUILT_IN_NORMAL, NAME, NULL_TREE);	\
-  set_call_expr_flags (decl, ATTRS);					\
-  set_builtin_decl (ENUM, decl, true);
+#define DEF_SANITIZER_BUILTIN(ENUM, NAME, TYPE, ATTRS)	\
+  DEF_SANITIZER_BUILTIN_1 (ENUM, NAME, TYPE, ATTRS);
 
 #include "sanitizer.def"
 
@@ -2398,11 +2977,13 @@ initialize_sanitizer_builtins (void)
      DEF_SANITIZER_BUILTIN here only as a convenience macro.  */
   if ((flag_sanitize & SANITIZE_OBJECT_SIZE)
       && !builtin_decl_implicit_p (BUILT_IN_OBJECT_SIZE))
-    DEF_SANITIZER_BUILTIN (BUILT_IN_OBJECT_SIZE, "object_size",
-			   BT_FN_SIZE_CONST_PTR_INT,
-			   ATTR_PURE_NOTHROW_LEAF_LIST)
+    DEF_SANITIZER_BUILTIN_1 (BUILT_IN_OBJECT_SIZE, "object_size",
+			     BT_FN_SIZE_CONST_PTR_INT,
+			     ATTR_PURE_NOTHROW_LEAF_LIST);
 
+#undef DEF_SANITIZER_BUILTIN_1
 #undef DEF_SANITIZER_BUILTIN
+#undef DEF_BUILTIN_STUB
 }
 
 /* Called via htab_traverse.  Count number of emitted
@@ -2480,6 +3061,8 @@ asan_finish_file (void)
     {
       tree fn = builtin_decl_implicit (BUILT_IN_ASAN_INIT);
       append_to_statement_list (build_call_expr (fn, 0), &asan_ctor_statements);
+      fn = builtin_decl_implicit (BUILT_IN_ASAN_VERSION_MISMATCH_CHECK);
+      append_to_statement_list (build_call_expr (fn, 0), &asan_ctor_statements);
     }
   FOR_EACH_DEFINED_VARIABLE (vnode)
     if (TREE_ASM_WRITTEN (vnode->decl)
@@ -2517,6 +3100,9 @@ asan_finish_file (void)
       TREE_CONSTANT (ctor) = 1;
       TREE_STATIC (ctor) = 1;
       DECL_INITIAL (var) = ctor;
+      SET_DECL_ALIGN (var, MAX (DECL_ALIGN (var),
+				ASAN_SHADOW_GRANULARITY * BITS_PER_UNIT));
+
       varpool_node::finalize_decl (var);
 
       tree fn = builtin_decl_implicit (BUILT_IN_ASAN_REGISTER_GLOBALS);
@@ -2538,16 +3124,161 @@ asan_finish_file (void)
   flag_sanitize |= SANITIZE_ADDRESS;
 }
 
+/* Poison or unpoison (depending on IS_CLOBBER variable) shadow memory based
+   on SHADOW address.  Newly added statements will be added to ITER with
+   given location LOC.  We mark SIZE bytes in shadow memory, where
+   LAST_CHUNK_SIZE is greater than zero in situation where we are at the
+   end of a variable.  */
+
+static void
+asan_store_shadow_bytes (gimple_stmt_iterator *iter, location_t loc,
+			 tree shadow,
+			 unsigned HOST_WIDE_INT base_addr_offset,
+			 bool is_clobber, unsigned size,
+			 unsigned last_chunk_size)
+{
+  tree shadow_ptr_type;
+
+  switch (size)
+    {
+    case 1:
+      shadow_ptr_type = shadow_ptr_types[0];
+      break;
+    case 2:
+      shadow_ptr_type = shadow_ptr_types[1];
+      break;
+    case 4:
+      shadow_ptr_type = shadow_ptr_types[2];
+      break;
+    default:
+      gcc_unreachable ();
+    }
+
+  unsigned char c = (char) is_clobber ? ASAN_STACK_MAGIC_USE_AFTER_SCOPE : 0;
+  unsigned HOST_WIDE_INT val = 0;
+  unsigned last_pos = size;
+  if (last_chunk_size && !is_clobber)
+    last_pos = BYTES_BIG_ENDIAN ? 0 : size - 1;
+  for (unsigned i = 0; i < size; ++i)
+    {
+      unsigned char shadow_c = c;
+      if (i == last_pos)
+	shadow_c = last_chunk_size;
+      val |= (unsigned HOST_WIDE_INT) shadow_c << (BITS_PER_UNIT * i);
+    }
+
+  /* Handle last chunk in unpoisoning.  */
+  tree magic = build_int_cst (TREE_TYPE (shadow_ptr_type), val);
+
+  tree dest = build2 (MEM_REF, TREE_TYPE (shadow_ptr_type), shadow,
+		      build_int_cst (shadow_ptr_type, base_addr_offset));
+
+  gimple *g = gimple_build_assign (dest, magic);
+  gimple_set_location (g, loc);
+  gsi_insert_after (iter, g, GSI_NEW_STMT);
+}
+
+/* Expand the ASAN_MARK builtins.  */
+
+bool
+asan_expand_mark_ifn (gimple_stmt_iterator *iter)
+{
+  gimple *g = gsi_stmt (*iter);
+  location_t loc = gimple_location (g);
+  HOST_WIDE_INT flag = tree_to_shwi (gimple_call_arg (g, 0));
+  bool is_poison = ((asan_mark_flags)flag) == ASAN_MARK_POISON;
+
+  tree base = gimple_call_arg (g, 1);
+  gcc_checking_assert (TREE_CODE (base) == ADDR_EXPR);
+  tree decl = TREE_OPERAND (base, 0);
+
+  /* For a nested function, we can have: ASAN_MARK (2, &FRAME.2.fp_input, 4) */
+  if (TREE_CODE (decl) == COMPONENT_REF
+      && DECL_NONLOCAL_FRAME (TREE_OPERAND (decl, 0)))
+    decl = TREE_OPERAND (decl, 0);
+
+  gcc_checking_assert (TREE_CODE (decl) == VAR_DECL);
+
+  if (is_poison)
+    {
+      if (asan_handled_variables == NULL)
+	asan_handled_variables = new hash_set<tree> (16);
+      asan_handled_variables->add (decl);
+    }
+  tree len = gimple_call_arg (g, 2);
+
+  gcc_assert (tree_fits_shwi_p (len));
+  unsigned HOST_WIDE_INT size_in_bytes = tree_to_shwi (len);
+  gcc_assert (size_in_bytes);
+
+  g = gimple_build_assign (make_ssa_name (pointer_sized_int_node),
+			   NOP_EXPR, base);
+  gimple_set_location (g, loc);
+  gsi_replace (iter, g, false);
+  tree base_addr = gimple_assign_lhs (g);
+
+  /* Generate direct emission if size_in_bytes is small.  */
+  if (size_in_bytes <= ASAN_PARAM_USE_AFTER_SCOPE_DIRECT_EMISSION_THRESHOLD)
+    {
+      const unsigned HOST_WIDE_INT shadow_size
+	= shadow_mem_size (size_in_bytes);
+      const unsigned int shadow_align
+	= (get_pointer_alignment (base) / BITS_PER_UNIT) >> ASAN_SHADOW_SHIFT;
+
+      tree shadow = build_shadow_mem_access (iter, loc, base_addr,
+					     shadow_ptr_types[0], true);
+
+      for (unsigned HOST_WIDE_INT offset = 0; offset < shadow_size;)
+	{
+	  unsigned size = 1;
+	  if (shadow_size - offset >= 4
+	      && (!STRICT_ALIGNMENT || shadow_align >= 4))
+	    size = 4;
+	  else if (shadow_size - offset >= 2
+		   && (!STRICT_ALIGNMENT || shadow_align >= 2))
+	    size = 2;
+
+	  unsigned HOST_WIDE_INT last_chunk_size = 0;
+	  unsigned HOST_WIDE_INT s = (offset + size) * ASAN_SHADOW_GRANULARITY;
+	  if (s > size_in_bytes)
+	    last_chunk_size = ASAN_SHADOW_GRANULARITY - (s - size_in_bytes);
+
+	  asan_store_shadow_bytes (iter, loc, shadow, offset, is_poison,
+				   size, last_chunk_size);
+	  offset += size;
+	}
+    }
+  else
+    {
+      g = gimple_build_assign (make_ssa_name (pointer_sized_int_node),
+			       NOP_EXPR, len);
+      gimple_set_location (g, loc);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      tree sz_arg = gimple_assign_lhs (g);
+
+      tree fun
+	= builtin_decl_implicit (is_poison ? BUILT_IN_ASAN_POISON_STACK_MEMORY
+				 : BUILT_IN_ASAN_UNPOISON_STACK_MEMORY);
+      g = gimple_build_call (fun, 2, base_addr, sz_arg);
+      gimple_set_location (g, loc);
+      gsi_insert_after (iter, g, GSI_NEW_STMT);
+    }
+
+  return false;
+}
+
 /* Expand the ASAN_{LOAD,STORE} builtins.  */
 
 bool
 asan_expand_check_ifn (gimple_stmt_iterator *iter, bool use_calls)
 {
-  gimple g = gsi_stmt (*iter);
+  gimple *g = gsi_stmt (*iter);
   location_t loc = gimple_location (g);
-
-  bool recover_p
-    = (flag_sanitize & flag_sanitize_recover & SANITIZE_KERNEL_ADDRESS) != 0;
+  bool recover_p;
+  if (flag_sanitize & SANITIZE_USER_ADDRESS)
+    recover_p = (flag_sanitize_recover & SANITIZE_USER_ADDRESS) != 0;
+  else
+    recover_p = (flag_sanitize_recover & SANITIZE_KERNEL_ADDRESS) != 0;
 
   HOST_WIDE_INT flags = tree_to_shwi (gimple_call_arg (g, 0));
   gcc_assert (flags < ASAN_CHECK_LAST);
@@ -2565,7 +3296,7 @@ asan_expand_check_ifn (gimple_stmt_iterator *iter, bool use_calls)
   if (use_calls)
     {
       /* Instrument using callbacks.  */
-      gimple g = gimple_build_assign (make_ssa_name (pointer_sized_int_node),
+      gimple *g = gimple_build_assign (make_ssa_name (pointer_sized_int_node),
 				      NOP_EXPR, base);
       gimple_set_location (g, loc);
       gsi_insert_before (iter, g, GSI_SAME_STMT);
@@ -2656,7 +3387,7 @@ asan_expand_check_ifn (gimple_stmt_iterator *iter, bool use_calls)
 	 & ((base_addr & 7) + (real_size_in_bytes - 1)) >= shadow).  */
       tree shadow = build_shadow_mem_access (&gsi, loc, base_addr,
 					     shadow_ptr_type);
-      gimple shadow_test = build_assign (NE_EXPR, shadow, 0);
+      gimple *shadow_test = build_assign (NE_EXPR, shadow, 0);
       gimple_seq seq = NULL;
       gimple_seq_add_stmt (&seq, shadow_test);
       /* Aligned (>= 8 bytes) can test just
@@ -2703,7 +3434,7 @@ asan_expand_check_ifn (gimple_stmt_iterator *iter, bool use_calls)
 
 	  tree shadow = build_shadow_mem_access (&gsi, loc, base_end_addr,
 						 shadow_ptr_type);
-	  gimple shadow_test = build_assign (NE_EXPR, shadow, 0);
+	  gimple *shadow_test = build_assign (NE_EXPR, shadow, 0);
 	  gimple_seq seq = NULL;
 	  gimple_seq_add_stmt (&seq, shadow_test);
 	  gimple_seq_add_stmt (&seq, build_assign (BIT_AND_EXPR,
@@ -2742,6 +3473,125 @@ asan_expand_check_ifn (gimple_stmt_iterator *iter, bool use_calls)
   return true;
 }
 
+/* Create ASAN shadow variable for a VAR_DECL which has been rewritten
+   into SSA.  Already seen VAR_DECLs are stored in SHADOW_VARS_MAPPING.  */
+
+static tree
+create_asan_shadow_var (tree var_decl,
+			hash_map<tree, tree> &shadow_vars_mapping)
+{
+  tree *slot = shadow_vars_mapping.get (var_decl);
+  if (slot == NULL)
+    {
+      tree shadow_var = copy_node (var_decl);
+
+      copy_body_data id;
+      memset (&id, 0, sizeof (copy_body_data));
+      id.src_fn = id.dst_fn = current_function_decl;
+      copy_decl_for_dup_finish (&id, var_decl, shadow_var);
+
+      DECL_ARTIFICIAL (shadow_var) = 1;
+      DECL_IGNORED_P (shadow_var) = 1;
+      DECL_SEEN_IN_BIND_EXPR_P (shadow_var) = 0;
+      gimple_add_tmp_var (shadow_var);
+
+      shadow_vars_mapping.put (var_decl, shadow_var);
+      return shadow_var;
+    }
+  else
+    return *slot;
+}
+
+/* Expand ASAN_POISON ifn.  */
+
+bool
+asan_expand_poison_ifn (gimple_stmt_iterator *iter,
+			bool *need_commit_edge_insert,
+			hash_map<tree, tree> &shadow_vars_mapping)
+{
+  gimple *g = gsi_stmt (*iter);
+  tree poisoned_var = gimple_call_lhs (g);
+  if (!poisoned_var || has_zero_uses (poisoned_var))
+    {
+      gsi_remove (iter, true);
+      return true;
+    }
+
+  if (SSA_NAME_VAR (poisoned_var) == NULL_TREE)
+    SET_SSA_NAME_VAR_OR_IDENTIFIER (poisoned_var,
+				    create_tmp_var (TREE_TYPE (poisoned_var)));
+
+  tree shadow_var = create_asan_shadow_var (SSA_NAME_VAR (poisoned_var),
+					    shadow_vars_mapping);
+
+  bool recover_p;
+  if (flag_sanitize & SANITIZE_USER_ADDRESS)
+    recover_p = (flag_sanitize_recover & SANITIZE_USER_ADDRESS) != 0;
+  else
+    recover_p = (flag_sanitize_recover & SANITIZE_KERNEL_ADDRESS) != 0;
+  tree size = DECL_SIZE_UNIT (shadow_var);
+  gimple *poison_call
+    = gimple_build_call_internal (IFN_ASAN_MARK, 3,
+				  build_int_cst (integer_type_node,
+						 ASAN_MARK_POISON),
+				  build_fold_addr_expr (shadow_var), size);
+
+  gimple *use;
+  imm_use_iterator imm_iter;
+  FOR_EACH_IMM_USE_STMT (use, imm_iter, poisoned_var)
+    {
+      if (is_gimple_debug (use))
+	continue;
+
+      int nargs;
+      bool store_p = gimple_call_internal_p (use, IFN_ASAN_POISON_USE);
+      tree fun = report_error_func (store_p, recover_p, tree_to_uhwi (size),
+				    &nargs);
+
+      gcall *call = gimple_build_call (fun, 1,
+				       build_fold_addr_expr (shadow_var));
+      gimple_set_location (call, gimple_location (use));
+      gimple *call_to_insert = call;
+
+      /* The USE can be a gimple PHI node.  If so, insert the call on
+	 all edges leading to the PHI node.  */
+      if (is_a <gphi *> (use))
+	{
+	  gphi *phi = dyn_cast<gphi *> (use);
+	  for (unsigned i = 0; i < gimple_phi_num_args (phi); ++i)
+	    if (gimple_phi_arg_def (phi, i) == poisoned_var)
+	      {
+		edge e = gimple_phi_arg_edge (phi, i);
+
+		/* Do not insert on an edge we can't split.  */
+		if (e->flags & EDGE_ABNORMAL)
+		  continue;
+
+		if (call_to_insert == NULL)
+		  call_to_insert = gimple_copy (call);
+
+		gsi_insert_seq_on_edge (e, call_to_insert);
+		*need_commit_edge_insert = true;
+		call_to_insert = NULL;
+	      }
+	}
+      else
+	{
+	  gimple_stmt_iterator gsi = gsi_for_stmt (use);
+	  if (store_p)
+	    gsi_replace (&gsi, call, true);
+	  else
+	    gsi_insert_before (&gsi, call, GSI_NEW_STMT);
+	}
+    }
+
+  SSA_NAME_IS_DEFAULT_DEF (poisoned_var) = true;
+  SSA_NAME_DEF_STMT (poisoned_var) = gimple_build_nop ();
+  gsi_replace (iter, poison_call, false);
+
+  return true;
+}
+
 /* Instrument the current function.  */
 
 static unsigned int
@@ -2750,15 +3600,14 @@ asan_instrument (void)
   if (shadow_ptr_types[0] == NULL_TREE)
     asan_init_shadow_ptr_types ();
   transform_statements ();
+  last_alloca_addr = NULL_TREE;
   return 0;
 }
 
 static bool
 gate_asan (void)
 {
-  return (flag_sanitize & SANITIZE_ADDRESS) != 0
-	  && !lookup_attribute ("no_sanitize_address",
-				DECL_ATTRIBUTES (current_function_decl));
+  return sanitize_flags_p (SANITIZE_ADDRESS);
 }
 
 namespace {

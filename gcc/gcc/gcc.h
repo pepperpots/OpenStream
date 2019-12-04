@@ -1,5 +1,5 @@
 /* Header file for modules that link with gcc.c
-   Copyright (C) 1999-2015 Free Software Foundation, Inc.
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -30,7 +30,10 @@ along with GCC; see the file COPYING3.  If not see
 class driver
 {
  public:
+  driver (bool can_finalize, bool debug);
+  ~driver ();
   int main (int argc, char **argv);
+  void finalize ();
 
  private:
   void set_progname (const char *argv0) const;
@@ -42,7 +45,7 @@ class driver
   void putenv_COLLECT_GCC (const char *argv0) const;
   void maybe_putenv_COLLECT_LTO_WRAPPER () const;
   void maybe_putenv_OFFLOAD_TARGETS () const;
-  void handle_unrecognized_options () const;
+  void handle_unrecognized_options ();
   int maybe_print_and_exit () const;
   bool prepare_infiles ();
   void do_spec_on_infiles () const;
@@ -54,6 +57,7 @@ class driver
   char *explicit_link_files;
   struct cl_decoded_option *decoded_options;
   unsigned int decoded_options_count;
+  option_proposer m_option_proposer;
 };
 
 /* The mapping of a spec function name to the C function that
@@ -67,7 +71,6 @@ struct spec_function
 /* These are exported by gcc.c.  */
 extern int do_spec (const char *);
 extern void record_temp_file (const char *, int, int);
-extern void pfatal_with_name (const char *) ATTRIBUTE_NORETURN;
 extern void set_input (const char *);
 
 /* Spec files linked with gcc.c must provide definitions for these.  */

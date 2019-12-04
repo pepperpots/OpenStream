@@ -144,14 +144,15 @@ func (t *TextNode) Copy() Node {
 type PipeNode struct {
 	NodeType
 	Pos
-	tr   *Tree
-	Line int             // The line number in the input (deprecated; kept for compatibility)
-	Decl []*VariableNode // Variable declarations in lexical order.
-	Cmds []*CommandNode  // The commands in lexical order.
+	tr       *Tree
+	Line     int             // The line number in the input. Deprecated: Kept for compatibility.
+	IsAssign bool            // The variables are being assigned, not declared.
+	Decl     []*VariableNode // Variables in lexical order.
+	Cmds     []*CommandNode  // The commands in lexical order.
 }
 
-func (t *Tree) newPipeline(pos Pos, line int, decl []*VariableNode) *PipeNode {
-	return &PipeNode{tr: t, NodeType: NodePipe, Pos: pos, Line: line, Decl: decl}
+func (t *Tree) newPipeline(pos Pos, line int, vars []*VariableNode) *PipeNode {
+	return &PipeNode{tr: t, NodeType: NodePipe, Pos: pos, Line: line, Decl: vars}
 }
 
 func (p *PipeNode) append(command *CommandNode) {
@@ -186,11 +187,12 @@ func (p *PipeNode) CopyPipe() *PipeNode {
 	if p == nil {
 		return p
 	}
-	var decl []*VariableNode
+	var vars []*VariableNode
 	for _, d := range p.Decl {
-		decl = append(decl, d.Copy().(*VariableNode))
+		vars = append(vars, d.Copy().(*VariableNode))
 	}
-	n := p.tr.newPipeline(p.Pos, p.Line, decl)
+	n := p.tr.newPipeline(p.Pos, p.Line, vars)
+	n.IsAssign = p.IsAssign
 	for _, c := range p.Cmds {
 		n.append(c.Copy().(*CommandNode))
 	}
@@ -208,7 +210,7 @@ type ActionNode struct {
 	NodeType
 	Pos
 	tr   *Tree
-	Line int       // The line number in the input (deprecated; kept for compatibility)
+	Line int       // The line number in the input. Deprecated: Kept for compatibility.
 	Pipe *PipeNode // The pipeline in the action.
 }
 
@@ -317,7 +319,7 @@ func (i *IdentifierNode) Copy() Node {
 	return NewIdentifier(i.Ident).SetTree(i.tr).SetPos(i.Pos)
 }
 
-// VariableNode holds a list of variable names, possibly with chained field
+// AssignNode holds a list of variable names, possibly with chained field
 // accesses. The dollar sign is part of the (first) name.
 type VariableNode struct {
 	NodeType
@@ -592,6 +594,11 @@ func (t *Tree) newNumber(pos Pos, text string, typ itemType) (*NumberNode, error
 	} else {
 		f, err := strconv.ParseFloat(text, 64)
 		if err == nil {
+			// If we parsed it as a float but it looks like an integer,
+			// it's a huge number too large to fit in an int. Reject it.
+			if !strings.ContainsAny(text, ".eE") {
+				return nil, fmt.Errorf("integer overflow: %q", text)
+			}
 			n.IsFloat = true
 			n.Float64 = f
 			// If a floating-point extraction succeeded, extract the int if needed.
@@ -696,7 +703,7 @@ type elseNode struct {
 	NodeType
 	Pos
 	tr   *Tree
-	Line int // The line number in the input (deprecated; kept for compatibility)
+	Line int // The line number in the input. Deprecated: Kept for compatibility.
 }
 
 func (t *Tree) newElse(pos Pos, line int) *elseNode {
@@ -724,7 +731,7 @@ type BranchNode struct {
 	NodeType
 	Pos
 	tr       *Tree
-	Line     int       // The line number in the input (deprecated; kept for compatibility)
+	Line     int       // The line number in the input. Deprecated: Kept for compatibility.
 	Pipe     *PipeNode // The pipeline to be evaluated.
 	List     *ListNode // What to execute if the value is non-empty.
 	ElseList *ListNode // What to execute if the value is empty (nil if absent).
@@ -809,7 +816,7 @@ type TemplateNode struct {
 	NodeType
 	Pos
 	tr   *Tree
-	Line int       // The line number in the input (deprecated; kept for compatibility)
+	Line int       // The line number in the input. Deprecated: Kept for compatibility.
 	Name string    // The name of the template (unquoted).
 	Pipe *PipeNode // The command to evaluate as dot for the template.
 }

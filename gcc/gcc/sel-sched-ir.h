@@ -1,6 +1,6 @@
 /* Instruction scheduling pass.  This file contains definitions used
    internally in the scheduler.
-   Copyright (C) 2006-2015 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -22,14 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_SEL_SCHED_IR_H
 
 /* For state_t.  */
-#include "insn-attr.h"
-#include "regset.h"
 /* For reg_note.  */
-#include "rtl.h"
-#include "ggc.h"
-#include "bitmap.h"
-#include "sched-int.h"
-#include "cfgloop.h"
 
 /* tc_t is a short for target context.  This is a state of the target
    backend.  */
@@ -364,12 +357,12 @@ struct _list_node
 /* _list_t functions.
    All of _*list_* functions are used through accessor macros, thus
    we can't move them in sel-sched-ir.c.  */
-extern alloc_pool sched_lists_pool;
+extern object_allocator<_list_node> sched_lists_pool;
 
 static inline _list_t
 _list_alloc (void)
 {
-  return (_list_t) pool_alloc (sched_lists_pool);
+  return sched_lists_pool.allocate ();
 }
 
 static inline void
@@ -395,7 +388,7 @@ _list_remove (_list_t *lp)
   _list_t n = *lp;
 
   *lp = _LIST_NEXT (n);
-  pool_free (sched_lists_pool, n);
+  sched_lists_pool.remove (n);
 }
 
 static inline void
@@ -1151,6 +1144,7 @@ get_all_loop_exits (basic_block bb)
       struct loop *this_loop;
       struct loop *pred_loop = NULL;
       int i;
+      unsigned this_depth;
       edge e;
 
       for (this_loop = bb->loop_father;
@@ -1162,11 +1156,14 @@ get_all_loop_exits (basic_block bb)
       gcc_assert (this_loop != NULL);
 
       exits = get_loop_exit_edges_unique_dests (this_loop);
+      this_depth = loop_depth (this_loop);
 
-      /* Traverse all loop headers.  */
+      /* Traverse all loop headers.  Be careful not to go back
+	 to the outer loop's header (see PR 84206).  */
       for (i = 0; exits.iterate (i, &e); i++)
-	if (in_current_region_p (e->dest)
-	    || inner_loop_header_p (e->dest))
+	if ((in_current_region_p (e->dest)
+	     || (inner_loop_header_p (e->dest)))
+	    && loop_depth (e->dest->loop_father) >= this_depth)
 	  {
 	    vec<edge> next_exits = get_all_loop_exits (e->dest);
 
@@ -1676,11 +1673,3 @@ extern void alloc_sched_pools (void);
 extern void free_sched_pools (void);
 
 #endif /* GCC_SEL_SCHED_IR_H */
-
-
-
-
-
-
-
-

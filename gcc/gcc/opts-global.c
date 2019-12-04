@@ -1,6 +1,6 @@
 /* Command line option handling.  Code involving global state that
    should not be shared with the driver.
-   Copyright (C) 2002-2015 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,46 +21,24 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "backend.h"
+#include "rtl.h"
+#include "tree.h"
+#include "tree-pass.h"
 #include "diagnostic.h"
 #include "opts.h"
 #include "flags.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h" /* Required by langhooks.h.  */
-#include "fold-const.h"
-#include "predict.h"
-#include "tm.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "basic-block.h"
-#include "tree-ssa-alias.h"
-#include "internal-fn.h"
-#include "gimple-expr.h"
-#include "is-a.h"
-#include "gimple.h"
 #include "langhooks.h"
-#include "rtl.h"
 #include "dbgcnt.h"
 #include "debug.h"
-#include "hash-map.h"
-#include "plugin-api.h"
-#include "ipa-ref.h"
-#include "cgraph.h"
-#include "lto-streamer.h"
 #include "output.h"
 #include "plugin.h"
 #include "toplev.h"
-#include "tree-pass.h"
 #include "context.h"
+#include "stringpool.h"
+#include "attribs.h"
 #include "asan.h"
+#include "file-prefix-map.h" /* add_*_prefix_map()  */
 
 typedef const char *const_char_p; /* For DEF_VEC_P.  */
 
@@ -72,7 +50,7 @@ unsigned num_in_fnames;
 
 /* Return a malloced slash-separated list of languages in MASK.  */
 
-static char *
+char *
 write_langs (unsigned int mask)
 {
   unsigned int n = 0, len = 0;
@@ -125,10 +103,14 @@ complain_wrong_lang (const struct cl_decoded_option *decoded,
 	   text, bad_lang);
   else if (lang_mask == CL_DRIVER)
     gcc_unreachable ();
-  else
+  else if (ok_langs[0] != '\0')
     /* Eventually this should become a hard error IMO.  */
     warning (0, "command line option %qs is valid for %s but not for %s",
 	     text, ok_langs, bad_lang);
+  else
+    /* Happens for -Werror=warning_name.  */
+    warning (0, "%<-Werror=%> argument %qs is not valid for %s",
+	     text, bad_lang);
 
   free (ok_langs);
   free (bad_lang);
@@ -192,7 +174,8 @@ lang_handle_option (struct gcc_options *opts,
 		    unsigned int lang_mask ATTRIBUTE_UNUSED, int kind,
 		    location_t loc,
 		    const struct cl_option_handlers *handlers,
-		    diagnostic_context *dc)
+		    diagnostic_context *dc,
+		    void (*) (void))
 {
   gcc_assert (opts == &global_options);
   gcc_assert (opts_set == &global_options_set);
@@ -292,10 +275,12 @@ decode_cmdline_options_to_array_default_mask (unsigned int argc,
 /* Set *HANDLERS to the default set of option handlers for use in the
    compilers proper (not the driver).  */
 void
-set_default_handlers (struct cl_option_handlers *handlers)
+set_default_handlers (struct cl_option_handlers *handlers,
+		      void (*target_option_override_hook) (void))
 {
   handlers->unknown_option_callback = unknown_option_callback;
   handlers->wrong_lang_callback = complain_wrong_lang;
+  handlers->target_option_override_hook = target_option_override_hook;
   handlers->num_handlers = 3;
   handlers->handlers[0].handler = lang_handle_option;
   handlers->handlers[0].mask = initial_lang_mask;
@@ -313,7 +298,8 @@ void
 decode_options (struct gcc_options *opts, struct gcc_options *opts_set,
 		struct cl_decoded_option *decoded_options,
 		unsigned int decoded_options_count,
-		location_t loc, diagnostic_context *dc)
+		location_t loc, diagnostic_context *dc,
+		void (*target_option_override_hook) (void))
 {
   struct cl_option_handlers handlers;
 
@@ -321,7 +307,7 @@ decode_options (struct gcc_options *opts, struct gcc_options *opts_set,
 
   lang_mask = initial_lang_mask;
 
-  set_default_handlers (&handlers);
+  set_default_handlers (&handlers, target_option_override_hook);
 
   default_options_optimization (opts, opts_set,
 				decoded_options, decoded_options_count,
@@ -334,6 +320,10 @@ decode_options (struct gcc_options *opts, struct gcc_options *opts_set,
 
   finish_options (opts, opts_set, loc);
 }
+
+/* Hold command-line options associated with stack limitation.  */
+const char *opt_fstack_limit_symbol_arg = NULL;
+int opt_fstack_limit_register_no = -1;
 
 /* Process common options that have been deferred until after the
    handlers have been called for all options.  */
@@ -378,6 +368,10 @@ handle_common_deferred_options (void)
 
 	case OPT_fdebug_prefix_map_:
 	  add_debug_prefix_map (opt->arg);
+	  break;
+
+	case OPT_ffile_prefix_map_:
+	  add_file_prefix_map (opt->arg);
 	  break;
 
 	case OPT_fdump_:
@@ -442,20 +436,30 @@ handle_common_deferred_options (void)
 	    if (reg < 0)
 	      error ("unrecognized register name %qs", opt->arg);
 	    else
-	      stack_limit_rtx = gen_rtx_REG (Pmode, reg);
+	      {
+		/* Deactivate previous OPT_fstack_limit_symbol_ options.  */
+		opt_fstack_limit_symbol_arg = NULL;
+		opt_fstack_limit_register_no = reg;
+	      }
 	  }
 	  break;
 
 	case OPT_fstack_limit_symbol_:
-	  stack_limit_rtx = gen_rtx_SYMBOL_REF (Pmode, ggc_strdup (opt->arg));
+	  /* Deactivate previous OPT_fstack_limit_register_ options.  */
+	  opt_fstack_limit_register_no = -1;
+	  opt_fstack_limit_symbol_arg = opt->arg;
 	  break;
 
 	case OPT_fasan_shadow_offset_:
 	  if (!(flag_sanitize & SANITIZE_KERNEL_ADDRESS))
-	    error ("-fasan-shadow-offset should only be used "
-		   "with -fsanitize=kernel-address");
+	    error ("%<-fasan-shadow-offset%> should only be used "
+		   "with %<-fsanitize=kernel-address%>");
 	  if (!set_asan_shadow_offset (opt->arg))
 	     error ("unrecognized shadow offset %qs", opt->arg);
+	  break;
+
+	case OPT_fsanitize_sections_:
+	  set_sanitized_sections (opt->arg);
 	  break;
 
 	default:

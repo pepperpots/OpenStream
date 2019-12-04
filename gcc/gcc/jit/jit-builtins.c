@@ -1,5 +1,5 @@
 /* jit-builtins.c -- Handling of builtin functions during JIT-compilation.
-   Copyright (C) 2014-2015 Free Software Foundation, Inc.
+   Copyright (C) 2014-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,12 +21,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "target.h"
+#include "jit-playback.h"
 #include "stringpool.h"
 
-#include "jit-common.h"
 #include "jit-builtins.h"
-#include "jit-recording.h"
-#include "jit-playback.h"
 
 namespace gcc {
 
@@ -62,7 +60,6 @@ static const struct builtin_data builtin_data[] =
 {
 #include "builtins.def"
 };
-#undef DEF_BUILTIN
 
 /* Helper function for find_builtin_by_name.  */
 
@@ -71,29 +68,28 @@ matches_builtin (const char *in_name,
 		 const struct builtin_data& bd)
 {
   const bool debug = 0;
-  gcc_assert (bd.name);
+
+  /* Ignore entries with a NULL name.  */
+  if (!bd.name)
+    return false;
 
   if (debug)
     fprintf (stderr, "seen builtin: %s\n", bd.name);
 
-  if (0 == strcmp (bd.name, in_name))
-    {
-      return true;
-    }
+  if (strcmp (bd.name, in_name) == 0)
+    return true;
 
   if (bd.both_p)
     {
       /* Then the macros in builtins.def gave a "__builtin_"
 	 prefix to bd.name, but we should also recognize the form
 	 without the prefix.  */
-      gcc_assert (0 == strncmp (bd.name, prefix, prefix_len));
+      gcc_assert (strncmp (bd.name, prefix, prefix_len) == 0);
       if (debug)
 	fprintf (stderr, "testing without prefix as: %s\n",
 		 bd.name + prefix_len);
-      if (0 == strcmp (bd.name + prefix_len, in_name))
-	{
-	  return true;
-	}
+      if (strcmp (bd.name + prefix_len, in_name) == 0)
+	return true;
     }
 
   return false;
@@ -305,6 +301,20 @@ builtins_manager::make_type (enum jit_builtin_type type_id)
 			    ARG6, ARG7, ARG8)				\
       case ENUM: return make_fn_type (ENUM, RETURN, 0, 8, ARG1, ARG2, ARG3, \
 				      ARG4, ARG5, ARG6, ARG7, ARG8);
+#define DEF_FUNCTION_TYPE_9(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5, \
+			    ARG6, ARG7, ARG8, ARG9)			\
+      case ENUM: return make_fn_type (ENUM, RETURN, 0, 9, ARG1, ARG2, ARG3, \
+				      ARG4, ARG5, ARG6, ARG7, ARG8, ARG9);
+#define DEF_FUNCTION_TYPE_10(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5, \
+			     ARG6, ARG7, ARG8, ARG9, ARG10)		 \
+      case ENUM: return make_fn_type (ENUM, RETURN, 0, 10, ARG1, ARG2, ARG3, \
+				      ARG4, ARG5, ARG6, ARG7, ARG8, ARG9, \
+				      ARG10);
+#define DEF_FUNCTION_TYPE_11(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5, \
+			     ARG6, ARG7, ARG8, ARG9, ARG10, ARG11)	 \
+      case ENUM: return make_fn_type (ENUM, RETURN, 0, 11, ARG1, ARG2, ARG3, \
+				      ARG4, ARG5, ARG6, ARG7, ARG8, ARG9, \
+				      ARG10, ARG11);
 #define DEF_FUNCTION_TYPE_VAR_0(ENUM, RETURN) \
       case ENUM: return make_fn_type (ENUM, RETURN, 1, 0);
 #define DEF_FUNCTION_TYPE_VAR_1(ENUM, RETURN, ARG1) \
@@ -319,15 +329,14 @@ builtins_manager::make_type (enum jit_builtin_type type_id)
 #define DEF_FUNCTION_TYPE_VAR_5(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5) \
       case ENUM: return make_fn_type (ENUM, RETURN, 1, 5, ARG1, ARG2, ARG3, \
 				      ARG4, ARG5);
+#define DEF_FUNCTION_TYPE_VAR_6(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5, \
+				ARG6)					\
+      case ENUM: return make_fn_type (ENUM, RETURN, 1, 6, ARG1, ARG2, ARG3, \
+				      ARG4, ARG5, ARG6);
 #define DEF_FUNCTION_TYPE_VAR_7(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5, \
 				ARG6, ARG7)				\
       case ENUM: return make_fn_type (ENUM, RETURN, 1, 7, ARG1, ARG2, ARG3, \
 				      ARG4, ARG5, ARG6, ARG7);
-#define DEF_FUNCTION_TYPE_VAR_11(ENUM, RETURN, ARG1, ARG2, ARG3, ARG4, ARG5, \
-				 ARG6, ARG7, ARG8, ARG9, ARG10, ARG11) \
-      case ENUM: return make_fn_type (ENUM, RETURN, 1, 11, ARG1, ARG2, ARG3, \
-				      ARG4, ARG5, ARG6, ARG7, ARG8, ARG9, \
-				      ARG10, ARG11);
 #define DEF_POINTER_TYPE(ENUM, TYPE) \
       case ENUM: return make_ptr_type (ENUM, TYPE);
 
@@ -343,14 +352,17 @@ builtins_manager::make_type (enum jit_builtin_type type_id)
 #undef DEF_FUNCTION_TYPE_6
 #undef DEF_FUNCTION_TYPE_7
 #undef DEF_FUNCTION_TYPE_8
+#undef DEF_FUNCTION_TYPE_9
+#undef DEF_FUNCTION_TYPE_10
+#undef DEF_FUNCTION_TYPE_11
 #undef DEF_FUNCTION_TYPE_VAR_0
 #undef DEF_FUNCTION_TYPE_VAR_1
 #undef DEF_FUNCTION_TYPE_VAR_2
 #undef DEF_FUNCTION_TYPE_VAR_3
 #undef DEF_FUNCTION_TYPE_VAR_4
 #undef DEF_FUNCTION_TYPE_VAR_5
+#undef DEF_FUNCTION_TYPE_VAR_6
 #undef DEF_FUNCTION_TYPE_VAR_7
-#undef DEF_FUNCTION_TYPE_VAR_11
 #undef DEF_POINTER_TYPE
 
     default:

@@ -1,14 +1,18 @@
--- { dg-do compile { target *-*-linux* } }
--- { dg-options "-gdwarf-2 -cargs -dA -margs" }
+-- { dg-do compile }
+-- { dg-options "-cargs -g -dA -fgnat-encodings=minimal -margs" }
 
 package Debug1 is
 
-  function N return Integer;
-  pragma Import (Ada, N);
+   type Index_T is new Positive range 1 .. 128;
 
-  type Arr is array (-N .. N) of Boolean;
-  A : Arr;
+   type Array_Type is array (Index_T range <>) of Integer;
+
+   type Record_Type (N : Index_T := 16) is record
+      A : Array_Type (1 .. N);
+   end record;
+
+   R : Record_Type;
 
 end Debug1;
 
--- { dg-final { scan-assembler-times "DW_AT_artificial" 17 } }
+--  { dg-final { scan-assembler-times "DW_AT_upper_bound" 4 } }

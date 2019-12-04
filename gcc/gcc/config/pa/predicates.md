@@ -1,5 +1,5 @@
 ;; Predicate definitions for HP PA-RISC.
-;; Copyright (C) 2005-2015 Free Software Foundation, Inc.
+;; Copyright (C) 2005-2019 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -272,10 +272,13 @@
      assumed in the instruction encoding.  */
   switch (mode)
     {
-    case BLKmode:
-    case QImode:
-    case HImode:
+    case E_BLKmode:
+    case E_QImode:
+    case E_HImode:
       return true;
+
+    case E_VOIDmode:
+      return false;
 
     default:
       return (INTVAL (op) % GET_MODE_SIZE (mode)) == 0;
@@ -301,6 +304,9 @@
 
   if (reg_plus_base_memory_operand (op, mode))
     {
+      if (reload_in_progress)
+	return true;
+
       /* Extract CONST_INT operand.  */
       if (GET_CODE (op) == SUBREG)
 	op = SUBREG_REG (op);
@@ -335,6 +341,9 @@
 
   if (reg_plus_base_memory_operand (op, mode))
     {
+      if (reload_in_progress)
+	return true;
+
       /* Extract CONST_INT operand.  */
       if (GET_CODE (op) == SUBREG)
 	op = SUBREG_REG (op);
@@ -580,6 +589,10 @@
 
 ;; Return 1 if OP is a CONST_INT with the value 2, 4, or 8.  These are
 ;; the valid constants for shadd instructions.
+
+(define_predicate "mem_shadd_operand"
+  (and (match_code "const_int")
+       (match_test "pa_mem_shadd_constant_p (INTVAL (op))")))
 
 (define_predicate "shadd_operand"
   (and (match_code "const_int")

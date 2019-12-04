@@ -1,5 +1,5 @@
 /* Parse and display command line options.
-   Copyright (C) 2000-2015 Free Software Foundation, Inc.
+   Copyright (C) 2000-2019 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -21,31 +21,30 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "target.h"
 #include "tree.h"
-#include "flags.h"
-#include "intl.h"
+#include "gfortran.h"
+#include "diagnostic.h"	/* For global_dc.  */
 #include "opts.h"
 #include "toplev.h"  /* For save_decoded_options.  */
-#include "params.h"
-#include "tree-inline.h"
-#include "gfortran.h"
-#include "target.h"
 #include "cpp.h"
-#include "diagnostic.h"	/* For global_dc.  */
-#include "tm.h"
 #include "langhooks.h"
 
 gfc_option_t gfc_option;
+
+#define SET_FLAG(flag, condition, on_value, off_value) \
+  do \
+    { \
+      if (condition) \
+	flag = (on_value); \
+      else \
+	flag = (off_value); \
+    } while (0)
+
+#define SET_BITFLAG2(m) m
+
+#define SET_BITFLAG(flag, condition, value) \
+  SET_BITFLAG2 (SET_FLAG (flag, condition, (flag | (value)), (flag & ~(value))))
 
 
 /* Set flags that control warnings and errors for different
@@ -57,10 +56,60 @@ set_default_std_flags (void)
 {
   gfc_option.allow_std = GFC_STD_F95_OBS | GFC_STD_F95_DEL
     | GFC_STD_F2003 | GFC_STD_F2008 | GFC_STD_F95 | GFC_STD_F77
-    | GFC_STD_F2008_OBS | GFC_STD_F2008_TS | GFC_STD_GNU | GFC_STD_LEGACY;
-  gfc_option.warn_std = GFC_STD_F95_DEL | GFC_STD_LEGACY;
+    | GFC_STD_F2008_OBS | GFC_STD_GNU | GFC_STD_LEGACY
+    | GFC_STD_F2018 | GFC_STD_F2018_DEL | GFC_STD_F2018_OBS;
+  gfc_option.warn_std = GFC_STD_F2018_DEL | GFC_STD_F95_DEL | GFC_STD_LEGACY;
 }
 
+/* Set (or unset) the DEC extension flags.  */
+
+static void
+set_dec_flags (int value)
+{
+  /* Set (or unset) other DEC compatibility extensions.  */
+  SET_BITFLAG (flag_dollar_ok, value, value);
+  SET_BITFLAG (flag_cray_pointer, value, value);
+  SET_BITFLAG (flag_dec_structure, value, value);
+  SET_BITFLAG (flag_dec_intrinsic_ints, value, value);
+  SET_BITFLAG (flag_dec_static, value, value);
+  SET_BITFLAG (flag_dec_math, value, value);
+  SET_BITFLAG (flag_dec_include, value, value);
+}
+
+/* Finalize DEC flags.  */
+
+static void
+post_dec_flags (int value)
+{
+  /* Don't warn for legacy code if -fdec is given; however, setting -fno-dec
+     does not force these warnings.  We make one final determination on this
+     at the end because -std= is always set first; thus, we can avoid
+     clobbering the user's desired standard settings in gfc_handle_option
+     e.g. when -fdec and -fno-dec are both given.  */
+  if (value)
+    {
+      gfc_option.allow_std |= GFC_STD_F95_OBS | GFC_STD_F95_DEL
+	| GFC_STD_GNU | GFC_STD_LEGACY;
+      gfc_option.warn_std &= ~(GFC_STD_LEGACY | GFC_STD_F95_DEL);
+    }
+}
+
+/* Enable (or disable) -finit-local-zero.  */
+
+static void
+set_init_local_zero (int value)
+{
+  gfc_option.flag_init_integer_value = 0;
+  gfc_option.flag_init_character_value = (char)0;
+
+  SET_FLAG (gfc_option.flag_init_integer, value, GFC_INIT_INTEGER_ON,
+	    GFC_INIT_INTEGER_OFF);
+  SET_FLAG (gfc_option.flag_init_logical, value, GFC_INIT_LOGICAL_FALSE,
+	    GFC_INIT_LOGICAL_OFF);
+  SET_FLAG (gfc_option.flag_init_character, value, GFC_INIT_CHARACTER_ON,
+	    GFC_INIT_CHARACTER_OFF);
+  SET_FLAG (flag_init_real, value, GFC_INIT_REAL_ZERO, GFC_INIT_REAL_OFF);
+}
 
 /* Return language mask for Fortran options.  */
 
@@ -98,11 +147,7 @@ gfc_init_options (unsigned int decoded_options_count,
 
   gfc_option.flag_preprocessed = 0;
   gfc_option.flag_d_lines = -1;
-  gfc_option.flag_init_integer = GFC_INIT_INTEGER_OFF;
-  gfc_option.flag_init_integer_value = 0;
-  gfc_option.flag_init_logical = GFC_INIT_LOGICAL_OFF;
-  gfc_option.flag_init_character = GFC_INIT_CHARACTER_OFF;
-  gfc_option.flag_init_character_value = (char)0;
+  set_init_local_zero (0);
   
   gfc_option.fpe = 0;
   /* All except GFC_FPE_INEXACT.  */
@@ -115,7 +160,9 @@ gfc_init_options (unsigned int decoded_options_count,
      enabled by default in Fortran.  Ideally, we should express this
      in .opt, but that is not supported yet.  */
   if (!global_options_set.x_cpp_warn_missing_include_dirs)
-    global_options.x_cpp_warn_missing_include_dirs = 1;;
+    global_options.x_cpp_warn_missing_include_dirs = 1;
+
+  set_dec_flags (0);
 
   set_default_std_flags ();
 
@@ -210,11 +257,13 @@ gfc_post_options (const char **pfilename)
   char *source_path;
   int i;
 
+  /* Finalize DEC flags.  */
+  post_dec_flags (flag_dec);
+
   /* Excess precision other than "fast" requires front-end
      support.  */
-  if (flag_excess_precision_cmdline == EXCESS_PRECISION_STANDARD
-      && TARGET_FLT_EVAL_METHOD_NON_DEFAULT)
-    sorry ("-fexcess-precision=standard for Fortran");
+  if (flag_excess_precision_cmdline == EXCESS_PRECISION_STANDARD)
+    sorry ("%<-fexcess-precision=standard%> for Fortran");
   flag_excess_precision_cmdline = EXCESS_PRECISION_FAST;
 
   /* Fortran allows associative math - but we cannot reassociate if
@@ -225,7 +274,9 @@ gfc_post_options (const char **pfilename)
   if (flag_protect_parens == -1)
     flag_protect_parens = !optimize_fast;
 
-  if (flag_stack_arrays == -1)
+  /* -Ofast sets implies -fstack-arrays unless an explicit size is set for
+     stack arrays.  */
+  if (flag_stack_arrays == -1 && flag_max_stack_var_size == -2)
     flag_stack_arrays = optimize_fast;
 
   /* By default, disable (re)allocation during assignment for -std=f95,
@@ -301,6 +352,7 @@ gfc_post_options (const char **pfilename)
       if (gfc_current_form == FORM_UNKNOWN)
 	{
 	  gfc_current_form = FORM_FREE;
+	  main_input_filename = filename;
 	  gfc_warning_now (0, "Reading file %qs as free form", 
 			   (filename[0] == '\0') ? "<stdin>" : filename);
 	}
@@ -327,8 +379,15 @@ gfc_post_options (const char **pfilename)
 	diagnostic_classify_diagnostic (global_dc, OPT_Wline_truncation,
 					DK_ERROR, UNKNOWN_LOCATION);
     }
-  else if (warn_line_truncation == -1)
-    warn_line_truncation = 0;
+  else
+    {
+      /* With -fdec, set -fd-lines-as-comments by default in fixed form.  */
+      if (flag_dec && gfc_option.flag_d_lines == -1)
+	gfc_option.flag_d_lines = 0;
+
+      if (warn_line_truncation == -1)
+	warn_line_truncation = 0;
+    }
 
   /* If -pedantic, warn about the use of GNU extensions.  */
   if (pedantic && (gfc_option.allow_std & GFC_STD_GNU) != 0)
@@ -370,6 +429,10 @@ gfc_post_options (const char **pfilename)
       flag_max_stack_var_size = -1;
     }
 
+  /* Set flag_stack_arrays correctly.  */
+  if (flag_stack_arrays == -1)
+    flag_stack_arrays = 0;
+
   /* Set default.  */
   if (flag_max_stack_var_size == -2)
     flag_max_stack_var_size = 32768;
@@ -378,11 +441,27 @@ gfc_post_options (const char **pfilename)
   if (!flag_automatic)
     flag_max_stack_var_size = 0;
   
+  /* If the user did not specify an inline matmul limit, inline up to the BLAS
+     limit or up to 30 if no external BLAS is specified.  */
+
+  if (flag_inline_matmul_limit < 0)
+    {
+      if (flag_external_blas)
+	flag_inline_matmul_limit = flag_blas_matmul_limit;
+      else
+	flag_inline_matmul_limit = 30;
+    }
+
   /* Optimization implies front end optimization, unless the user
      specified it directly.  */
 
   if (flag_frontend_optimize == -1)
-    flag_frontend_optimize = optimize;
+    flag_frontend_optimize = optimize && !optimize_debug;
+
+  /* Same for front end loop interchange.  */
+
+  if (flag_frontend_loop_interchange == -1)
+    flag_frontend_loop_interchange = optimize;
 
   if (flag_max_array_constructor < 65535)
     flag_max_array_constructor = 65535;
@@ -525,6 +604,15 @@ gfc_handle_runtime_check_option (const char *arg)
 	      result = 1;
 	      break;
 	    }
+	  else if (optname[n] && pos > 3 && gfc_str_startswith (arg, "no-")
+		   && strncmp (optname[n], arg+3, pos-3) == 0)
+	    {
+	      gfc_option.rtcheck &= ~optmask[n];
+	      arg += pos;
+	      pos = 0;
+	      result = 1;
+	      break;
+	    }
 	}
       if (!result)
 	gfc_fatal_error ("Argument to %<-fcheck%> is not valid: %s", arg);
@@ -536,7 +624,7 @@ gfc_handle_runtime_check_option (const char *arg)
    recognized and handled.  */
 
 bool
-gfc_handle_option (size_t scode, const char *arg, int value,
+gfc_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
 		   int kind ATTRIBUTE_UNUSED, location_t loc ATTRIBUTE_UNUSED,
 		   const struct cl_option_handlers *handlers ATTRIBUTE_UNUSED)
 {
@@ -555,7 +643,7 @@ gfc_handle_option (size_t scode, const char *arg, int value,
       break;
 
     case OPT_fcheck_array_temporaries:
-      gfc_option.rtcheck |= GFC_RTCHECK_ARRAY_TEMPS;
+      SET_BITFLAG (gfc_option.rtcheck, value, GFC_RTCHECK_ARRAY_TEMPS);
       break;
       
     case OPT_fd_lines_as_code:
@@ -605,12 +693,7 @@ gfc_handle_option (size_t scode, const char *arg, int value,
       break;
 
     case OPT_finit_local_zero:
-      gfc_option.flag_init_integer = GFC_INIT_INTEGER_ON;
-      gfc_option.flag_init_integer_value = 0;
-      flag_init_real = GFC_INIT_REAL_ZERO;
-      gfc_option.flag_init_logical = GFC_INIT_LOGICAL_FALSE;
-      gfc_option.flag_init_character = GFC_INIT_CHARACTER_ON;
-      gfc_option.flag_init_character_value = (char)0;
+      set_init_local_zero (value);
       break;
 
     case OPT_finit_logical_:
@@ -625,7 +708,7 @@ gfc_handle_option (size_t scode, const char *arg, int value,
 
     case OPT_finit_integer_:
       gfc_option.flag_init_integer = GFC_INIT_INTEGER_ON;
-      gfc_option.flag_init_integer_value = atoi (arg);
+      gfc_option.flag_init_integer_value = strtol (arg, NULL, 10);
       break;
 
     case OPT_finit_character_:
@@ -656,8 +739,7 @@ gfc_handle_option (size_t scode, const char *arg, int value,
       break;
 
     case OPT_std_f95:
-      gfc_option.allow_std = GFC_STD_F95_OBS | GFC_STD_F95 | GFC_STD_F77
-			     | GFC_STD_F2008_OBS;
+      gfc_option.allow_std = GFC_STD_OPT_F95;
       gfc_option.warn_std = GFC_STD_F95_OBS;
       gfc_option.max_continue_fixed = 19;
       gfc_option.max_continue_free = 39;
@@ -667,8 +749,7 @@ gfc_handle_option (size_t scode, const char *arg, int value,
       break;
 
     case OPT_std_f2003:
-      gfc_option.allow_std = GFC_STD_F95_OBS | GFC_STD_F77 
-	| GFC_STD_F2003 | GFC_STD_F95 | GFC_STD_F2008_OBS;
+      gfc_option.allow_std = GFC_STD_OPT_F03;
       gfc_option.warn_std = GFC_STD_F95_OBS;
       gfc_option.max_identifier_length = 63;
       warn_ampersand = 1;
@@ -676,8 +757,7 @@ gfc_handle_option (size_t scode, const char *arg, int value,
       break;
 
     case OPT_std_f2008:
-      gfc_option.allow_std = GFC_STD_F95_OBS | GFC_STD_F77 
-	| GFC_STD_F2003 | GFC_STD_F95 | GFC_STD_F2008 | GFC_STD_F2008_OBS;
+      gfc_option.allow_std = GFC_STD_OPT_F08;
       gfc_option.warn_std = GFC_STD_F95_OBS | GFC_STD_F2008_OBS;
       gfc_option.max_identifier_length = 63;
       warn_ampersand = 1;
@@ -685,10 +765,10 @@ gfc_handle_option (size_t scode, const char *arg, int value,
       break;
 
     case OPT_std_f2008ts:
-      gfc_option.allow_std = GFC_STD_F95_OBS | GFC_STD_F77 
-	| GFC_STD_F2003 | GFC_STD_F95 | GFC_STD_F2008 | GFC_STD_F2008_OBS
-	| GFC_STD_F2008_TS;
-      gfc_option.warn_std = GFC_STD_F95_OBS | GFC_STD_F2008_OBS;
+    case OPT_std_f2018:
+      gfc_option.allow_std = GFC_STD_OPT_F18;
+      gfc_option.warn_std = GFC_STD_F95_OBS | GFC_STD_F2008_OBS
+	| GFC_STD_F2018_OBS;
       gfc_option.max_identifier_length = 63;
       warn_ampersand = 1;
       warn_tabs = 1;
@@ -709,6 +789,11 @@ gfc_handle_option (size_t scode, const char *arg, int value,
 
     case OPT_fcheck_:
       gfc_handle_runtime_check_option (arg);
+      break;
+
+    case OPT_fdec:
+      /* Set (or unset) the DEC extension flags.  */
+      set_dec_flags (value);
       break;
     }
 
@@ -800,3 +885,7 @@ gfc_get_option_string (void)
   result[--pos] = '\0';
   return result;
 }
+
+#undef SET_BITFLAG
+#undef SET_BITFLAG2
+#undef SET_FLAG

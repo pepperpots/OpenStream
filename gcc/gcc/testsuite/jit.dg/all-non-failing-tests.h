@@ -22,6 +22,16 @@
 #undef create_code
 #undef verify_code
 
+/* test-add-driver-options.c: We don't use this one, since the extra options
+   affect the whole context.  */
+
+/* test-alignment.c */
+#define create_code create_code_alignment
+#define verify_code verify_code_alignment
+#include "test-alignment.c"
+#undef create_code
+#undef verify_code
+
 /* test-arith-overflow.c */
 #define create_code create_code_arith_overflow
 #define verify_code verify_code_arith_overflow
@@ -43,6 +53,13 @@
 #undef create_code
 #undef verify_code
 
+/* test-autovectorize.c */
+#define create_code create_code_autovectorize
+#define verify_code verify_code_autovectorize
+#include "test-autovectorize.c"
+#undef create_code
+#undef verify_code
+
 /* test-calling-external-function.c */
 #define create_code create_code_calling_external_function
 #define verify_code verify_code_calling_external_function
@@ -54,6 +71,13 @@
 #define create_code create_code_calling_function_ptr
 #define verify_code verify_code_calling_function_ptr
 #include "test-calling-function-ptr.c"
+#undef create_code
+#undef verify_code
+
+/* test-returning-function-ptr.c */
+#define create_code create_code_calling_internal_function
+#define verify_code verify_code_calling_internal_function
+#include "test-returning-function-ptr.c"
 #undef create_code
 #undef verify_code
 
@@ -102,6 +126,13 @@
 #define create_code create_code_factorial
 #define verify_code verify_code_factorial
 #include "test-factorial.c"
+#undef create_code
+#undef verify_code
+
+/* test-factorial-must-tail-call.c */
+#define create_code create_code_factorial_must_tail_call
+#define verify_code verify_code_factorial_must_tail_call
+#include "test-factorial-must-tail-call.c"
 #undef create_code
 #undef verify_code
 
@@ -161,6 +192,13 @@
 #undef create_code
 #undef verify_code
 
+/* test-pr66779.c */
+#define create_code create_code_pr66779
+#define verify_code verify_code_pr66779
+#include "test-pr66779.c"
+#undef create_code
+#undef verify_code
+
 /* test-reading-struct.c */
 #define create_code create_code_reading_struct
 #define verify_code verify_code_reading_struct
@@ -207,6 +245,8 @@
    of gcc_jit_context_set_bool_allow_unreachable_blocks affects the whole
    context.  */
 
+/* test-vector-types.cc: We don't use this, since it's C++.  */
+
 /* test-volatile.c */
 #define create_code create_code_volatile
 #define verify_code verify_code_volatile
@@ -232,6 +272,9 @@ const struct testcase testcases[] = {
   {"accessing_union",
    create_code_accessing_union,
    verify_code_accessing_union},
+  {"alignment",
+   create_code_alignment,
+   verify_code_alignment},
   {"arith_overflow",
    create_code_arith_overflow,
    verify_code_arith_overflow},
@@ -241,12 +284,18 @@ const struct testcase testcases[] = {
   {"arrays",
    create_code_arrays,
    verify_code_arrays},
+  {"autovectorize",
+   create_code_autovectorize,
+   verify_code_autovectorize},
   {"calling_external_function",
    create_code_calling_external_function,
    verify_code_calling_external_function},
   {"calling_function_ptr",
    create_code_calling_function_ptr,
    verify_code_calling_function_ptr},
+  {"calling_internal_function",
+   create_code_calling_internal_function,
+   verify_code_calling_internal_function},
   {"compound_assignment",
    create_code_compound_assignment,
    verify_code_compound_assignment},
@@ -265,6 +314,9 @@ const struct testcase testcases[] = {
   {"factorial",
    create_code_factorial,
    verify_code_factorial},
+  {"factorial_must_tail_call",
+   create_code_factorial_must_tail_call,
+   verify_code_factorial_must_tail_call},
   {"fibonacci",
    create_code_fibonacci,
    verify_code_fibonacci},
@@ -289,6 +341,9 @@ const struct testcase testcases[] = {
   {"pr66700_observing_write_through_ptr",
    create_code_pr66700_observing_write_through_ptr,
    verify_code_pr66700_observing_write_through_ptr},
+  {"pr66779",
+   create_code_pr66779,
+   verify_code_pr66779},
   {"reading_struct ",
    create_code_reading_struct ,
    verify_code_reading_struct },

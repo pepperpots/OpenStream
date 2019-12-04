@@ -1,5 +1,5 @@
 /* Definitions of target machine for Visium.
-   Copyright (C) 2002-2015 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
    Contributed by C.Nettleton, J.P.Parkes and P.Garbett.
 
    This file is part of GCC.
@@ -235,16 +235,6 @@
    the alignment that the object would ordinarily have.  The value of
    this macro is used instead of that alignment to align the object. */
 #define DATA_ALIGNMENT(TYPE,ALIGN) visium_data_alignment (TYPE, ALIGN)
-
-/* `CONSTANT_ALIGNMENT (CONSTANT, BASIC-ALIGN)`
-
-   If defined, a C expression to compute the alignment given to a
-   constant that is being placed in memory.  CONSTANT is the constant
-   and BASIC-ALIGN is the alignment that the object would ordinarily
-   have.  The value of this macro is used instead of that alignment to
-   align the object. */
-#define CONSTANT_ALIGNMENT(EXP,ALIGN) \
-  visium_data_alignment (TREE_TYPE (EXP), ALIGN)
 
 /* `LOCAL_ALIGNMENT (TYPE, BASIC-ALIGN)`
 
@@ -556,58 +546,12 @@
    50, 51, 52,                             /* flags, arg, frame */ \
    0, 34 }                                 /* r0, f0 */
 
-/* `HARD_REGNO_NREGS (REGNO, MODE)'
-
-   A C expression for the number of consecutive hard registers,
-   starting at register number REGNO, required to hold a value of mode
-   MODE.  */
-#define HARD_REGNO_NREGS(REGNO, MODE) \
-  ((REGNO) == MDB_REGNUM ?                    \
-  ((GET_MODE_SIZE (MODE) + 2 * UNITS_PER_WORD - 1) / (2 * UNITS_PER_WORD)) \
-  : ((GET_MODE_SIZE (MODE) + UNITS_PER_WORD - 1) / UNITS_PER_WORD))
-
 /* `HARD_REGNO_RENAME_OK (OLD_REG, NEW_REG)'
 
    A C expression which is nonzero if hard register NEW_REG can be
    considered for use as a rename register for hard register OLD_REG. */
 #define HARD_REGNO_RENAME_OK(OLD_REG, NEW_REG) \
   visium_hard_regno_rename_ok (OLD_REG, NEW_REG)
-
-/*  `HARD_REGNO_MODE_OK (REGNO, MODE)'
-
-    A C expression that is nonzero if it is permissible to store a
-    value of mode MODE in hard register number REGNO (or in several
-    registers starting with that one). 
-
-    Modes with sizes which cross from the one register class to the
-    other cannot be allowed. Only single floats are allowed in the
-    floating point registers, and only fixed point values in the EAM
-    registers. */
-#define HARD_REGNO_MODE_OK(REGNO, MODE)                         \
- (GP_REGISTER_P (REGNO) ?                                       \
-     GP_REGISTER_P (REGNO + HARD_REGNO_NREGS (REGNO, MODE) - 1) \
-  : FP_REGISTER_P (REGNO) ?                                     \
-     (MODE) == SFmode || ((MODE) == SImode && TARGET_FPU_IEEE)  \
-  : GET_MODE_CLASS (MODE) == MODE_INT                           \
-    && HARD_REGNO_NREGS (REGNO, MODE) == 1)
-
-/* `MODES_TIEABLE_P (MODE1, MODE2)'
-
-   A C expression that is nonzero if a value of mode MODE1 is
-   accessible in mode MODE2 without copying.
-
-   If `HARD_REGNO_MODE_OK (R, MODE1)' and `HARD_REGNO_MODE_OK (R,
-   MODE2)' are always the same for any R, then `MODES_TIEABLE_P
-   (MODE1, MODE2)' should be nonzero.  If they differ for any R, you
-   should define this macro to return zero unless some other mechanism
-   ensures the accessibility of the value in a narrower mode.
-
-   You should define this macro to return nonzero in as many cases as
-   possible since doing so will allow GNU CC to perform better
-   register allocation. */
-#define MODES_TIEABLE_P(MODE1, MODE2) \
-  ((GET_MODE_CLASS (MODE1) == MODE_INT) \
-  && (GET_MODE_CLASS (MODE2) == MODE_INT))
 
 /* Register Classes
 
@@ -769,36 +713,6 @@ enum reg_class
    registers. */
 #define PREFERRED_RELOAD_CLASS(X,CLASS) CLASS
 
-/*  `CANNOT_CHANGE_MODE_CLASS (from, to, class)
-
-    If defined, a C expression that returns nonzero for a `class' for
-    which a change from mode `from' to mode `to' is invalid.
-
-    It's not obvious from the above that MDB cannot change mode. However
-    difficulties arise from expressions of the form
-
-    (subreg:SI (reg:DI R_MDB) 0)
- 
-    There is no way to convert that reference to a single machine
-    register and, without the following definition, reload will quietly
-    convert it to
- 
-     (reg:SI R_MDB)  */
-#define CANNOT_CHANGE_MODE_CLASS(FROM,TO,CLASS) \
-  (CLASS == MDB ? (GET_MODE_SIZE (FROM) != GET_MODE_SIZE (TO)) : 0)
-
-/* `CLASS_MAX_NREGS (CLASS, MODE)'
-
-   A C expression for the maximum number of consecutive registers of
-   class CLASS needed to hold a value of mode MODE.
-
-   This is closely related to the macro `HARD_REGNO_NREGS'.  In fact,
-   the value of the macro `CLASS_MAX_NREGS (CLASS, MODE)' should be
-   the maximum value of `HARD_REGNO_NREGS (REGNO, MODE)' for all REGNO
-   values in the class CLASS.
-
-   This macro helps control the handling of multiple-word values in
-   the reload pass.  */
 #define CLASS_MAX_NREGS(CLASS, MODE)    \
   ((CLASS) == MDB ?                     \
   ((GET_MODE_SIZE (MODE) + 2 * UNITS_PER_WORD - 1) / (2 * UNITS_PER_WORD)) \
@@ -812,17 +726,6 @@ enum reg_class
    Define this macro if pushing a word onto the stack moves the stack
    pointer to a smaller address.  */
 #define STACK_GROWS_DOWNWARD 1
-
-/* `STARTING_FRAME_OFFSET'
-
-   Offset from the frame pointer to the first local variable slot to
-   be allocated.
-
-   If `FRAME_GROWS_DOWNWARD', find the next slot's offset by
-   subtracting the first slot's length from `STARTING_FRAME_OFFSET'.
-   Otherwise, it is found by adding the length of the first slot to
-   the value `STARTING_FRAME_OFFSET'. */
-#define STARTING_FRAME_OFFSET 0
 
 /* `FIRST_PARM_OFFSET (FUNDECL)'
 
@@ -963,10 +866,8 @@ enum reg_class
 
 /* `INITIAL_ELIMINATION_OFFSET (FROM-REG, TO-REG, OFFSET-VAR)'
 
-   This macro is similar to `INITIAL_FRAME_POINTER_OFFSET'.  It
-   specifies the initial difference between the specified pair of
-   registers.  This macro must be defined if `ELIMINABLE_REGS' is
-   defined.  */
+   This macro returns the initial difference between the specified pair
+   of registers.  */
 #define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET) \
   (OFFSET = visium_initial_elimination_offset (FROM, TO))
 
@@ -1075,14 +976,6 @@ struct visium_args
    If not defined, this defaults to the value 1. */
 #define DEFAULT_PCC_STRUCT_RETURN 0
 
-/* `STRUCT_VALUE'
-
-   If the structure value address is not passed in a register, define
-   `STRUCT_VALUE' as an expression returning an RTX for the place
-   where the address is passed.  If it returns 0, the address is
-   passed as an "invisible" first argument. */
-#define STRUCT_VALUE 0
-
 /* Caller-Saves Register Allocation
 
    If you enable it, GNU CC can save registers around function calls.
@@ -1152,16 +1045,20 @@ struct visium_args
 
 	moviu	r9,%u FUNCTION
 	movil	r9,%l FUNCTION
+	[nop]
 	moviu	r20,%u STATIC
 	bra	tr,r9,r0
-	movil	r20,%l STATIC
+	 movil	r20,%l STATIC
 
     A difficulty is setting the correct instruction parity at run time.
 
 
     TRAMPOLINE_SIZE 
     A C expression for the size in bytes of the trampoline, as an integer. */
-#define TRAMPOLINE_SIZE 20
+#define TRAMPOLINE_SIZE (visium_cpu == PROCESSOR_GR6 ? 24 : 20)
+
+/* Alignment required for trampolines, in bits.  */
+#define TRAMPOLINE_ALIGNMENT (visium_cpu == PROCESSOR_GR6 ? 64 : 32)
 
 /* Implicit calls to library routines
 
@@ -1288,21 +1185,6 @@ do									\
    bitfield instructions. */
 #define SHIFT_COUNT_TRUNCATED 0
 
-/* `TRULY_NOOP_TRUNCATION (OUTPREC, INPREC)'
-
-   A C expression which is nonzero if on this machine it is safe to
-   "convert" an integer of INPREC bits to one of OUTPREC bits (where
-   OUTPREC is smaller than INPREC) by merely operating on it as if it
-   had only OUTPREC bits.
-
-   On many machines, this expression can be 1.
-
-   When `TRULY_NOOP_TRUNCATION' returns 1 for a pair of sizes for
-   modes for which `MODES_TIEABLE_P' is 0, suboptimal code can result.
-   If this is the case, making `TRULY_NOOP_TRUNCATION' return 0 in
-   such cases may improve things. */
-#define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC) 1
-
 /* `STORE_FLAG_VALUE'
 
    A C expression describing the value returned by a comparison
@@ -1332,14 +1214,6 @@ do									\
    functions being called, in `call' RTL expressions.  On most
    machines this should be `QImode'. */
 #define FUNCTION_MODE SImode
-
-/* `NO_IMPLICIT_EXTERN_C'
-
-   Define this macro if the system header files support C++ as well as
-   C.  This macro inhibits the usual method of using system header
-   files in C++, which is to pretend that the file's contents are
-   enclosed in `extern "C" {...}'. */
-#define NO_IMPLICIT_EXTERN_C
 
 /* Dividing the Output into Sections (Texts, Data, ...)
 
@@ -1485,49 +1359,6 @@ do									\
 #define ADDITIONAL_REGISTER_NAMES \
   {{"r22", HARD_FRAME_POINTER_REGNUM}, {"r23", STACK_POINTER_REGNUM}}
 
-/* `PRINT_OPERAND (STREAM, X, CODE)'
-
-   A C compound statement to output to stdio stream STREAM the
-   assembler syntax for an instruction operand X.  X is an RTL
-   expression.
-
-   CODE is a value that can be used to specify one of several ways of
-   printing the operand.  It is used when identical operands must be
-   printed differently depending on the context.  CODE comes from the
-   `%' specification that was used to request printing of the operand.
-   If the specification was just `%DIGIT' then CODE is 0; if the
-   specification was `%LTR DIGIT' then CODE is the ASCII code for LTR.
-
-   If X is a register, this macro should print the register's name.
-   The names can be found in an array `reg_names' whose type is `char
-   *[]'.  `reg_names' is initialized from `REGISTER_NAMES'.
-
-   When the machine description has a specification `%PUNCT' (a `%'
-   followed by a punctuation character), this macro is called with a
-   null pointer for X and the punctuation character for CODE. */
-#define PRINT_OPERAND(STREAM, X, CODE) print_operand (STREAM, X, CODE)
-
-/* `PRINT_OPERAND_PUNCT_VALID_P (CODE)'
-
-   A C expression which evaluates to true if CODE is a valid
-   punctuation character for use in the `PRINT_OPERAND' macro.  If
-   `PRINT_OPERAND_PUNCT_VALID_P' is not defined, it means that no
-   punctuation characters (except for the standard one, `%') are used */
-#define PRINT_OPERAND_PUNCT_VALID_P(CODE) ((CODE) == '#')
-
-/* `PRINT_OPERAND_ADDRESS (STREAM, X)'
-
-   A C compound statement to output to stdio stream STREAM the
-   assembler syntax for an instruction operand that is a memory
-   reference whose address is X.  X is an RTL expression.
-
-   On some machines, the syntax for a symbolic address depends on the
-   section that the address refers to.  On these machines, define the
-   macro `ENCODE_SECTION_INFO' to store the information into the
-   `symbol_ref', and then check for it here. */
-#define PRINT_OPERAND_ADDRESS(STREAM, ADDR) \
-  print_operand_address (STREAM, ADDR)
-
 /* `REGISTER_PREFIX'
    `LOCAL_LABEL_PREFIX'
    `USER_LABEL_PREFIX'
@@ -1581,13 +1412,13 @@ do									\
 #define ASM_OUTPUT_ADDR_DIFF_ELT(STREAM,BODY,VALUE,REL)  		\
   switch (GET_MODE (BODY))						\
     {									\
-    case SImode:							\
+    case E_SImode:							\
       asm_fprintf ((STREAM), "\t.long\t%LL%d-%LL%d\n", (VALUE),(REL));	\
       break;								\
-    case HImode:							\
+    case E_HImode:							\
       asm_fprintf ((STREAM), "\t.word\t%LL%d-%LL%d\n", (VALUE),(REL));	\
       break;								\
-    case QImode:							\
+    case E_QImode:							\
       asm_fprintf ((STREAM), "\t.byte\t%LL%d-%LL%d\n", (VALUE),(REL));	\
       break;								\
     default:								\
@@ -1621,7 +1452,11 @@ do									\
    Here we output a word of zero so that jump-tables can be seperated
    in reverse assembly. */
 #define ASM_OUTPUT_CASE_END(STREAM, NUM, TABLE) \
-  asm_fprintf (STREAM, "\t.long   0\n");
+  asm_fprintf (STREAM, "\t.long   0\n")
+
+/* Support subalignment values.  */
+
+#define SUBALIGN_LOG 3
 
 /* Assembler Commands for Alignment
 
@@ -1655,7 +1490,7 @@ do									\
    POWER bytes.  POWER will be a C expression of type `int'. */
 #define ASM_OUTPUT_ALIGN(STREAM,LOG)      \
   if ((LOG) != 0)                       \
-    fprintf (STREAM, "\t.align  %d\n", (1<<(LOG)))
+    fprintf (STREAM, "\t.align  %d\n", (1 << (LOG)))
 
 /* `ASM_OUTPUT_MAX_SKIP_ALIGN (STREAM, POWER, MAX_SKIP)`
 
@@ -1666,16 +1501,10 @@ do									\
    expression of type `int'. */
 #define ASM_OUTPUT_MAX_SKIP_ALIGN(STREAM,LOG,MAX_SKIP)			\
   if ((LOG) != 0) {							\
-    if ((MAX_SKIP) == 0) fprintf ((STREAM), "\t.p2align %d\n", (LOG));	\
-    else {								\
+    if ((MAX_SKIP) == 0 || (MAX_SKIP) >= (1 << (LOG)) - 1)		\
+      fprintf ((STREAM), "\t.p2align %d\n", (LOG));			\
+    else								\
       fprintf ((STREAM), "\t.p2align %d,,%d\n", (LOG), (MAX_SKIP));	\
-      /* Make sure that we have at least 8-byte alignment if > 8-byte	\
-	 alignment is preferred.  */					\
-      if ((LOG) > 3							\
-	  && (1 << (LOG)) > ((MAX_SKIP) + 1)				\
-	  && (MAX_SKIP) >= 7)						\
-	fputs ("\t.p2align 3\n", (STREAM));				\
-    }									\
   }
 
 /* Controlling Debugging Information Format
@@ -1692,9 +1521,8 @@ do									\
    automatic variable having address X (an RTL expression).  The
    default computation assumes that X is based on the frame-pointer
    and gives the offset from the frame-pointer.  This is required for
-   targets that produce debugging output for DBX or COFF-style
-   debugging output for SDB and allow the frame-pointer to be
-   eliminated when the `-g' options is used. */
+   targets that produce debugging output for DBX and allow the frame-pointer
+   to be eliminated when the `-g' options is used. */
 #define DEBUGGER_AUTO_OFFSET(X) \
   (GET_CODE (X) == PLUS ? INTVAL (XEXP (X, 1)) : 0)
 
@@ -1715,14 +1543,14 @@ do									\
 #define ASM_OUTPUT_COMMON(STREAM, NAME, SIZE, ROUNDED)      \
 ( fputs ("\n\t.comm  ", (STREAM)),                        \
   assemble_name ((STREAM), (NAME)),                         \
-  fprintf ((STREAM), ","HOST_WIDE_INT_PRINT_UNSIGNED"\n", ROUNDED))
+  fprintf ((STREAM), "," HOST_WIDE_INT_PRINT_UNSIGNED"\n", ROUNDED))
 
 /* This says how to output assembler code to declare an
    unitialised internal linkage data object. */
 #define ASM_OUTPUT_LOCAL(STREAM, NAME, SIZE, ROUNDED)     \
 ( fputs ("\n\t.lcomm ", (STREAM)),                      \
   assemble_name ((STREAM), (NAME)),                     \
-  fprintf ((STREAM), ","HOST_WIDE_INT_PRINT_UNSIGNED"\n", ROUNDED))
+  fprintf ((STREAM), "," HOST_WIDE_INT_PRINT_UNSIGNED"\n", ROUNDED))
 
 /* Prettify the assembly.  */
 extern int visium_indent_opcode;
@@ -1735,3 +1563,19 @@ extern int visium_indent_opcode;
 	visium_indent_opcode = 0;	\
       }					\
   } while (0)
+
+/* Configure-time default values for common options.  */
+#define OPTION_DEFAULT_SPECS { "cpu", "%{!mcpu=*:-mcpu=%(VALUE)}" }
+
+/* Values of TARGET_CPU_DEFAULT specified via --with-cpu.  */
+#define TARGET_CPU_gr5	0
+#define TARGET_CPU_gr6	1
+
+/* Default -mcpu multilib for above values.  */
+#if TARGET_CPU_DEFAULT == TARGET_CPU_gr5
+#define MULTILIB_DEFAULTS { "mcpu=gr5" }
+#elif TARGET_CPU_DEFAULT == TARGET_CPU_gr6
+#define MULTILIB_DEFAULTS { "mcpu=gr6" }
+#else
+#error Unrecognized value in TARGET_CPU_DEFAULT
+#endif

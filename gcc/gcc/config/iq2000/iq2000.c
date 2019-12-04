@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on Vitesse IQ2000 processors
-   Copyright (C) 2003-2015 Free Software Foundation, Inc.
+   Copyright (C) 2003-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -17,66 +17,37 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
+#include "target.h"
+#include "rtl.h"
 #include "tree.h"
-#include "fold-const.h"
+#include "stringpool.h"
+#include "attribs.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "optabs.h"
+#include "regs.h"
+#include "emit-rtl.h"
+#include "recog.h"
+#include "diagnostic-core.h"
 #include "stor-layout.h"
 #include "calls.h"
 #include "varasm.h"
-#include "rtl.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "insn-config.h"
-#include "conditions.h"
 #include "output.h"
 #include "insn-attr.h"
-#include "flags.h"
-#include "function.h"
-#include "hashtab.h"
-#include "statistics.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "expmed.h"
-#include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
-#include "stmt.h"
 #include "expr.h"
-#include "insn-codes.h"
-#include "optabs.h"
-#include "libfuncs.h"
-#include "recog.h"
-#include "diagnostic-core.h"
-#include "reload.h"
-#include "ggc.h"
-#include "tm_p.h"
-#include "debug.h"
-#include "target.h"
-#include "target-def.h"
 #include "langhooks.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "predict.h"
-#include "basic-block.h"
-#include "df.h"
 #include "builtins.h"
+
+/* This file should be included last.  */
+#include "target-def.h"
 
 /* Enumeration for all of the relational tests, so that we can build
    arrays indexed by the test type, and not worry about the order
@@ -183,7 +154,7 @@ static bool iq2000_return_in_memory   (const_tree, const_tree);
 static void iq2000_setup_incoming_varargs (cumulative_args_t,
 					   machine_mode, tree, int *,
 					   int);
-static bool iq2000_rtx_costs          (rtx, int, int, int, int *, bool);
+static bool iq2000_rtx_costs          (rtx, machine_mode, int, int, int *, bool);
 static int  iq2000_address_cost       (rtx, machine_mode, addr_space_t,
 				       bool);
 static section *iq2000_select_section (tree, int, unsigned HOST_WIDE_INT);
@@ -196,6 +167,7 @@ static rtx iq2000_function_arg	      (cumulative_args_t,
 				       machine_mode, const_tree, bool);
 static void iq2000_function_arg_advance (cumulative_args_t,
 					 machine_mode, const_tree, bool);
+static pad_direction iq2000_function_arg_padding (machine_mode, const_tree);
 static unsigned int iq2000_function_arg_boundary (machine_mode,
 						  const_tree);
 static void iq2000_va_start	      (tree, rtx);
@@ -206,8 +178,12 @@ static void iq2000_trampoline_init    (rtx, tree, rtx);
 static rtx iq2000_function_value      (const_tree, const_tree, bool);
 static rtx iq2000_libcall_value       (machine_mode, const_rtx);
 static void iq2000_print_operand      (FILE *, rtx, int);
-static void iq2000_print_operand_address (FILE *, rtx);
+static void iq2000_print_operand_address (FILE *, machine_mode, rtx);
 static bool iq2000_print_operand_punct_valid_p (unsigned char code);
+static bool iq2000_hard_regno_mode_ok (unsigned int, machine_mode);
+static bool iq2000_modes_tieable_p (machine_mode, machine_mode);
+static HOST_WIDE_INT iq2000_constant_alignment (const_tree, HOST_WIDE_INT);
+static HOST_WIDE_INT iq2000_starting_frame_offset (void);
 
 #undef  TARGET_INIT_BUILTINS
 #define TARGET_INIT_BUILTINS 		iq2000_init_builtins
@@ -260,6 +236,8 @@ static bool iq2000_print_operand_punct_valid_p (unsigned char code);
 #define TARGET_FUNCTION_ARG		iq2000_function_arg
 #undef  TARGET_FUNCTION_ARG_ADVANCE
 #define TARGET_FUNCTION_ARG_ADVANCE	iq2000_function_arg_advance
+#undef  TARGET_FUNCTION_ARG_PADDING
+#define TARGET_FUNCTION_ARG_PADDING	iq2000_function_arg_padding
 #undef  TARGET_FUNCTION_ARG_BOUNDARY
 #define TARGET_FUNCTION_ARG_BOUNDARY	iq2000_function_arg_boundary
 
@@ -271,6 +249,9 @@ static bool iq2000_print_operand_punct_valid_p (unsigned char code);
 #undef	TARGET_EXPAND_BUILTIN_VA_START
 #define	TARGET_EXPAND_BUILTIN_VA_START	iq2000_va_start
 
+#undef TARGET_LRA_P
+#define TARGET_LRA_P hook_bool_void_false
+
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	iq2000_legitimate_address_p
 
@@ -281,6 +262,20 @@ static bool iq2000_print_operand_punct_valid_p (unsigned char code);
 #define TARGET_ASM_TRAMPOLINE_TEMPLATE	iq2000_asm_trampoline_template
 #undef  TARGET_TRAMPOLINE_INIT
 #define TARGET_TRAMPOLINE_INIT		iq2000_trampoline_init
+
+#undef  TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK	iq2000_hard_regno_mode_ok
+#undef  TARGET_MODES_TIEABLE_P
+#define TARGET_MODES_TIEABLE_P		iq2000_modes_tieable_p
+
+#undef  TARGET_CONSTANT_ALIGNMENT
+#define TARGET_CONSTANT_ALIGNMENT	iq2000_constant_alignment
+
+#undef  TARGET_STARTING_FRAME_OFFSET
+#define TARGET_STARTING_FRAME_OFFSET	iq2000_starting_frame_offset
+
+#undef  TARGET_HAVE_SPECULATION_SAFE_VALUE
+#define TARGET_HAVE_SPECULATION_SAFE_VALUE speculation_safe_value_not_needed
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
@@ -652,17 +647,17 @@ iq2000_move_1word (rtx operands[], rtx_insn *insn, int unsignedp)
 		{
 		default:
 		  break;
-		case SFmode:
+		case E_SFmode:
 		  ret = "lw\t%0,%1";
 		  break;
-		case SImode:
-		case CCmode:
+		case E_SImode:
+		case E_CCmode:
 		  ret = "lw\t%0,%1";
 		  break;
-		case HImode:
+		case E_HImode:
 		  ret = (unsignedp) ? "lhu\t%0,%1" : "lh\t%0,%1";
 		  break;
-		case QImode:
+		case E_QImode:
 		  ret = (unsignedp) ? "lbu\t%0,%1" : "lb\t%0,%1";
 		  break;
 		}
@@ -762,10 +757,10 @@ iq2000_move_1word (rtx operands[], rtx_insn *insn, int unsignedp)
 	    {
 	      switch (mode)
 		{
-		case SFmode: ret = "sw\t%1,%0"; break;
-		case SImode: ret = "sw\t%1,%0"; break;
-		case HImode: ret = "sh\t%1,%0"; break;
-		case QImode: ret = "sb\t%1,%0"; break;
+		case E_SFmode: ret = "sw\t%1,%0"; break;
+		case E_SImode: ret = "sw\t%1,%0"; break;
+		case E_HImode: ret = "sh\t%1,%0"; break;
+		case E_QImode: ret = "sb\t%1,%0"; break;
 		default: break;
 		}
 	    }
@@ -775,10 +770,10 @@ iq2000_move_1word (rtx operands[], rtx_insn *insn, int unsignedp)
 	{
 	  switch (mode)
 	    {
-	    case SFmode: ret = "sw\t%z1,%0"; break;
-	    case SImode: ret = "sw\t%z1,%0"; break;
-	    case HImode: ret = "sh\t%z1,%0"; break;
-	    case QImode: ret = "sb\t%z1,%0"; break;
+	    case E_SFmode: ret = "sw\t%z1,%0"; break;
+	    case E_SImode: ret = "sw\t%z1,%0"; break;
+	    case E_HImode: ret = "sh\t%z1,%0"; break;
+	    case E_QImode: ret = "sb\t%z1,%0"; break;
 	    default: break;
 	    }
 	}
@@ -787,10 +782,10 @@ iq2000_move_1word (rtx operands[], rtx_insn *insn, int unsignedp)
 	{
 	  switch (mode)
 	    {
-	    case SFmode: ret = "sw\t%.,%0"; break;
-	    case SImode: ret = "sw\t%.,%0"; break;
-	    case HImode: ret = "sh\t%.,%0"; break;
-	    case QImode: ret = "sb\t%.,%0"; break;
+	    case E_SFmode: ret = "sw\t%.,%0"; break;
+	    case E_SImode: ret = "sw\t%.,%0"; break;
+	    case E_HImode: ret = "sh\t%.,%0"; break;
+	    case E_QImode: ret = "sb\t%.,%0"; break;
 	    default: break;
 	    }
 	}
@@ -1106,7 +1101,7 @@ gen_conditional_branch (rtx operands[], machine_mode mode)
       label1 = pc_rtx;
     }
 
-  emit_jump_insn (gen_rtx_SET (VOIDmode, pc_rtx,
+  emit_jump_insn (gen_rtx_SET (pc_rtx,
 			       gen_rtx_IF_THEN_ELSE (VOIDmode,
 						     gen_rtx_fmt_ee (test_code,
 								     VOIDmode,
@@ -1180,7 +1175,7 @@ iq2000_function_arg_advance (cumulative_args_t cum_v, machine_mode mode,
   cum->arg_number++;
   switch (mode)
     {
-    case VOIDmode:
+    case E_VOIDmode:
       break;
 
     default:
@@ -1192,37 +1187,37 @@ iq2000_function_arg_advance (cumulative_args_t cum_v, machine_mode mode,
 			 / UNITS_PER_WORD);
       break;
 
-    case BLKmode:
+    case E_BLKmode:
       cum->gp_reg_found = 1;
       cum->arg_words += ((int_size_in_bytes (type) + UNITS_PER_WORD - 1)
 			 / UNITS_PER_WORD);
       break;
 
-    case SFmode:
+    case E_SFmode:
       cum->arg_words ++;
       if (! cum->gp_reg_found && cum->arg_number <= 2)
 	cum->fp_code += 1 << ((cum->arg_number - 1) * 2);
       break;
 
-    case DFmode:
+    case E_DFmode:
       cum->arg_words += 2;
       if (! cum->gp_reg_found && cum->arg_number <= 2)
 	cum->fp_code += 2 << ((cum->arg_number - 1) * 2);
       break;
 
-    case DImode:
+    case E_DImode:
       cum->gp_reg_found = 1;
       cum->arg_words += 2;
       break;
 
-    case TImode:
+    case E_TImode:
       cum->gp_reg_found = 1;
       cum->arg_words += 4;
       break;
 
-    case QImode:
-    case HImode:
-    case SImode:
+    case E_QImode:
+    case E_HImode:
+    case E_SImode:
       cum->gp_reg_found = 1;
       cum->arg_words ++;
       break;
@@ -1260,11 +1255,11 @@ iq2000_function_arg (cumulative_args_t cum_v, machine_mode mode,
   cum->last_arg_fp = 0;
   switch (mode)
     {
-    case SFmode:
+    case E_SFmode:
       regbase = GP_ARG_FIRST;
       break;
 
-    case DFmode:
+    case E_DFmode:
       cum->arg_words += cum->arg_words & 1;
 
       regbase = GP_ARG_FIRST;
@@ -1274,26 +1269,26 @@ iq2000_function_arg (cumulative_args_t cum_v, machine_mode mode,
       gcc_assert (GET_MODE_CLASS (mode) == MODE_COMPLEX_INT
 		  || GET_MODE_CLASS (mode) == MODE_COMPLEX_FLOAT);
 
-      /* Drops through.  */
-    case BLKmode:
+      /* FALLTHRU */
+    case E_BLKmode:
       if (type != NULL_TREE && TYPE_ALIGN (type) > (unsigned) BITS_PER_WORD)
 	cum->arg_words += (cum->arg_words & 1);
       regbase = GP_ARG_FIRST;
       break;
 
-    case VOIDmode:
-    case QImode:
-    case HImode:
-    case SImode:
+    case E_VOIDmode:
+    case E_QImode:
+    case E_HImode:
+    case E_SImode:
       regbase = GP_ARG_FIRST;
       break;
 
-    case DImode:
+    case E_DImode:
       cum->arg_words += (cum->arg_words & 1);
       regbase = GP_ARG_FIRST;
       break;
 
-    case TImode:
+    case E_TImode:
       cum->arg_words += (cum->arg_words & 3);
       regbase = GP_ARG_FIRST;
       break;
@@ -1395,6 +1390,22 @@ iq2000_function_arg (cumulative_args_t cum_v, machine_mode mode,
     }
 
   return ret;
+}
+
+/* Implement TARGET_FUNCTION_ARG_PADDING.  */
+
+static pad_direction
+iq2000_function_arg_padding (machine_mode mode, const_tree type)
+{
+  return (! BYTES_BIG_ENDIAN
+	  ? PAD_UPWARD
+	  : ((mode == BLKmode
+	      ? (type
+		 && TREE_CODE (TYPE_SIZE (type)) == INTEGER_CST
+		 && int_size_in_bytes (type) < (PARM_BOUNDARY / BITS_PER_UNIT))
+	      : (GET_MODE_BITSIZE (mode) < PARM_BOUNDARY
+		 && GET_MODE_CLASS (mode) == MODE_INT))
+	     ? PAD_DOWNWARD : PAD_UPWARD));
 }
 
 static unsigned int
@@ -1571,7 +1582,6 @@ final_prescan_insn (rtx_insn *insn, rtx opvec[] ATTRIBUTE_UNUSED,
 	   && NEXT_INSN (PREV_INSN (insn)) == insn)
     {
       rtx_insn *nop_insn = emit_insn_after (gen_nop (), insn);
-
       INSN_ADDRESSES_NEW (nop_insn, -1);
     }
   
@@ -1820,7 +1830,7 @@ iq2000_emit_frame_related_store (rtx mem, rtx reg, HOST_WIDE_INT offset)
   rtx dwarf_mem = gen_rtx_MEM (GET_MODE (reg), dwarf_address);
 
   iq2000_annotate_frame_insn (emit_move_insn (mem, reg),
-			    gen_rtx_SET (GET_MODE (reg), dwarf_mem, reg));
+			      gen_rtx_SET (dwarf_mem, reg));
 }
 
 /* Emit instructions to save/restore registers, as determined by STORE_P.  */
@@ -1969,10 +1979,10 @@ iq2000_expand_prologue (void)
 	{
 	  if (next_arg == 0
 	      && DECL_NAME (cur_arg)
-	      && ((0 == strcmp (IDENTIFIER_POINTER (DECL_NAME (cur_arg)),
-				"__builtin_va_alist"))
-		  || (0 == strcmp (IDENTIFIER_POINTER (DECL_NAME (cur_arg)),
-				   "va_alist"))))
+	      && (strcmp (IDENTIFIER_POINTER (DECL_NAME (cur_arg)),
+			  "__builtin_va_alist") == 0
+		  || strcmp (IDENTIFIER_POINTER (DECL_NAME (cur_arg)),
+			     "va_alist") == 0))
 	    {
 	      last_arg_is_vararg_marker = 1;
 	      break;
@@ -2064,7 +2074,7 @@ iq2000_expand_prologue (void)
       insn = emit_insn (gen_subsi3 (stack_pointer_rtx, stack_pointer_rtx,
 				    adjustment_rtx));
 
-      dwarf_pattern = gen_rtx_SET (Pmode, stack_pointer_rtx,
+      dwarf_pattern = gen_rtx_SET (stack_pointer_rtx,
 				   plus_constant (Pmode, stack_pointer_rtx,
 						  -tsize));
 
@@ -2083,6 +2093,9 @@ iq2000_expand_prologue (void)
 	    RTX_FRAME_RELATED_P (insn) = 1;
 	}
     }
+
+  if (flag_stack_usage_info)
+    current_function_static_stack_size = cfun->machine->total_size;
 
   emit_insn (gen_blockage ());
 }
@@ -2647,6 +2660,7 @@ expand_one_builtin (enum insn_code icode, rtx target, tree exp,
     {
     case 0:
 	pat = GEN_FCN (icode) (target);
+	break;
     case 1:
       if (target)
 	pat = GEN_FCN (icode) (target, op[0]);
@@ -2927,7 +2941,7 @@ iq2000_setup_incoming_varargs (cumulative_args_t cum_v,
    reference whose address is ADDR.  ADDR is an RTL expression.  */
 
 static void
-iq2000_print_operand_address (FILE * file, rtx addr)
+iq2000_print_operand_address (FILE * file, machine_mode mode, rtx addr)
 {
   if (!addr)
     error ("PRINT_OPERAND_ADDRESS, null pointer");
@@ -2952,7 +2966,7 @@ iq2000_print_operand_address (FILE * file, rtx addr)
 			     "PRINT_OPERAND_ADDRESS, LO_SUM with #1 not REG.");
 
 	  fprintf (file, "%%lo(");
-	  iq2000_print_operand_address (file, arg1);
+	  iq2000_print_operand_address (file, mode, arg1);
 	  fprintf (file, ")(%s)", reg_names [REGNO (arg0)]);
 	}
 	break;
@@ -3085,7 +3099,7 @@ iq2000_print_operand (FILE *file, rtx op, int letter)
 	  break;
 
 	default:
-	  error ("PRINT_OPERAND: Unknown punctuation '%c'", letter);
+	  error ("PRINT_OPERAND: Unknown punctuation %<%c%>", letter);
 	  break;
 	}
 
@@ -3200,10 +3214,12 @@ iq2000_print_operand (FILE *file, rtx op, int letter)
 
   else if (code == MEM)
     {
+      machine_mode mode = GET_MODE (op);
+
       if (letter == 'D')
-	output_address (plus_constant (Pmode, XEXP (op, 0), 4));
+	output_address (mode, plus_constant (Pmode, XEXP (op, 0), 4));
       else
-	output_address (XEXP (op, 0));
+	output_address (mode, XEXP (op, 0));
     }
 
   else if (code == CONST_DOUBLE
@@ -3305,8 +3321,7 @@ iq2000_legitimize_address (rtx xinsn, rtx old_x ATTRIBUTE_UNUSED,
           emit_move_insn (int_reg,
                           GEN_INT (INTVAL (xplus1) & ~ 0x7fff));
 
-          emit_insn (gen_rtx_SET (VOIDmode,
-                                  ptr_reg,
+          emit_insn (gen_rtx_SET (ptr_reg,
                                   gen_rtx_PLUS (Pmode, xplus0, int_reg)));
 
           return plus_constant (Pmode, ptr_reg, INTVAL (xplus1) & 0x7fff);
@@ -3321,11 +3336,11 @@ iq2000_legitimize_address (rtx xinsn, rtx old_x ATTRIBUTE_UNUSED,
 
 
 static bool
-iq2000_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED,
+iq2000_rtx_costs (rtx x, machine_mode mode, int outer_code ATTRIBUTE_UNUSED,
 		  int opno ATTRIBUTE_UNUSED, int * total,
 		  bool speed ATTRIBUTE_UNUSED)
 {
-  machine_mode mode = GET_MODE (x);
+  int code = GET_CODE (x);
 
   switch (code)
     {
@@ -3334,7 +3349,7 @@ iq2000_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED,
 	int num_words = (GET_MODE_SIZE (mode) > UNITS_PER_WORD) ? 2 : 1;
 
 	if (simple_memory_operand (x, mode))
-	  return COSTS_N_INSNS (num_words);
+	  return COSTS_N_INSNS (num_words) != 0;
 
 	* total = COSTS_N_INSNS (2 * num_words);
 	break;
@@ -3501,6 +3516,45 @@ iq2000_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   mem = adjust_address (m_tramp, Pmode,
 			TRAMPOLINE_CODE_SIZE + GET_MODE_SIZE (Pmode));
   emit_move_insn (mem, chain_value);
+}
+
+/* Implement TARGET_HARD_REGNO_MODE_OK.  */
+
+static bool
+iq2000_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
+{
+  return (REGNO_REG_CLASS (regno) == GR_REGS
+	  ? (regno & 1) == 0 || GET_MODE_SIZE (mode) <= 4
+	  : (regno & 1) == 0 || GET_MODE_SIZE (mode) == 4);
+}
+
+/* Implement TARGET_MODES_TIEABLE_P.  */
+
+static bool
+iq2000_modes_tieable_p (machine_mode mode1, machine_mode mode2)
+{
+  return ((GET_MODE_CLASS (mode1) == MODE_FLOAT
+	   || GET_MODE_CLASS (mode1) == MODE_COMPLEX_FLOAT)
+	  == (GET_MODE_CLASS (mode2) == MODE_FLOAT
+	      || GET_MODE_CLASS (mode2) == MODE_COMPLEX_FLOAT));
+}
+
+/* Implement TARGET_CONSTANT_ALIGNMENT.  */
+
+static HOST_WIDE_INT
+iq2000_constant_alignment (const_tree exp, HOST_WIDE_INT align)
+{
+  if (TREE_CODE (exp) == STRING_CST || TREE_CODE (exp) == CONSTRUCTOR)
+    return MAX (align, BITS_PER_WORD);
+  return align;
+}
+
+/* Implement TARGET_STARTING_FRAME_OFFSET.  */
+
+static HOST_WIDE_INT
+iq2000_starting_frame_offset (void)
+{
+  return crtl->outgoing_args_size;
 }
 
 #include "gt-iq2000.h"

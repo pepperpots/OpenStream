@@ -1,5 +1,5 @@
 /* Read and annotate call graph profile from the auto profile data file.
-   Copyright (C) 2014-2015 Free Software Foundation, Inc.
+   Copyright (C) 2014-2019 Free Software Foundation, Inc.
    Contributed by Dehao Chen (dehao@google.com)
 
 This file is part of GCC.
@@ -19,71 +19,37 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
+#define INCLUDE_MAP
+#define INCLUDE_SET
 #include "system.h"
-
-#include <string.h>
-#include <map>
-#include <set>
-
 #include "coretypes.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
 #include "tree.h"
-#include "fold-const.h"
-#include "tree-pass.h"
-#include "flags.h"
+#include "gimple.h"
 #include "predict.h"
-#include "vec.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "tm.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "basic-block.h"
-#include "diagnostic-core.h"
+#include "alloc-pool.h"
+#include "tree-pass.h"
+#include "ssa.h"
+#include "cgraph.h"
 #include "gcov-io.h"
+#include "diagnostic-core.h"
 #include "profile.h"
 #include "langhooks.h"
-#include "opts.h"
-#include "tree-pass.h"
 #include "cfgloop.h"
-#include "tree-ssa-alias.h"
 #include "tree-cfg.h"
 #include "tree-cfgcleanup.h"
-#include "tree-ssa-operands.h"
 #include "tree-into-ssa.h"
-#include "internal-fn.h"
-#include "is-a.h"
-#include "gimple-expr.h"
-#include "gimple.h"
 #include "gimple-iterator.h"
-#include "gimple-ssa.h"
-#include "hash-map.h"
-#include "plugin-api.h"
-#include "ipa-ref.h"
-#include "cgraph.h"
 #include "value-prof.h"
-#include "coverage.h"
 #include "params.h"
-#include "alloc-pool.h"
 #include "symbol-summary.h"
 #include "ipa-prop.h"
+#include "ipa-fnsummary.h"
 #include "ipa-inline.h"
 #include "tree-inline.h"
-#include "stringpool.h"
 #include "auto-profile.h"
+#include "tree-pretty-print.h"
+#include "gimple-pretty-print.h"
 
 /* The following routines implements AutoFDO optimization.
 
@@ -135,6 +101,23 @@ along with GCC; see the file COPYING3.  If not see
 namespace autofdo
 {
 
+/* Intermediate edge info used when propagating AutoFDO profile information.
+   We can't edge->count() directly since it's computed from edge's probability
+   while probability is yet not decided during propagation.  */
+#define AFDO_EINFO(e)                     ((struct edge_info *) e->aux)
+class edge_info
+{
+public:
+  edge_info () : count_ (profile_count::zero ().afdo ()), annotated_ (false) {}
+  bool is_annotated () const { return annotated_; }
+  void set_annotated () { annotated_ = true; }
+  profile_count get_count () const { return count_; }
+  void set_count (profile_count count) { count_ = count; }
+private:
+  profile_count count_;
+  bool annotated_;
+};
+
 /* Represent a source location: (function_decl, lineno).  */
 typedef std::pair<tree, unsigned> decl_lineno;
 
@@ -150,7 +133,7 @@ typedef std::map<unsigned, gcov_type> icall_target_map;
 
 /* Set of gimple stmts. Used to track if the stmt has already been promoted
    to direct call.  */
-typedef std::set<gimple> stmt_set;
+typedef std::set<gimple *> stmt_set;
 
 /* Represent count info of an inline stack.  */
 struct count_info
@@ -316,7 +299,7 @@ public:
 
   /* Find count_info for a given gimple STMT. If found, store the count_info
      in INFO and return true; otherwise return false.  */
-  bool get_count_info (gimple stmt, count_info *info) const;
+  bool get_count_info (gimple *stmt, count_info *info) const;
 
   /* Find total count of the callee of EDGE.  */
   gcov_type get_callsite_total_count (struct cgraph_edge *edge) const;
@@ -352,8 +335,8 @@ static string_table *afdo_string_table;
 /* Store the AutoFDO source profile.  */
 static autofdo_source_profile *afdo_source_profile;
 
-/* gcov_ctr_summary structure to store the profile_info.  */
-static struct gcov_ctr_summary *afdo_profile_info;
+/* gcov_summary structure to store the profile_info.  */
+static gcov_summary *afdo_profile_info;
 
 /* Helper functions.  */
 
@@ -379,7 +362,7 @@ get_combined_location (location_t loc, tree decl)
 {
   /* TODO: allow more bits for line and less bits for discriminator.  */
   if (LOCATION_LINE (loc) - DECL_SOURCE_LINE (decl) >= (1<<16))
-    warning_at (loc, OPT_Woverflow, "Offset exceeds 16 bytes.");
+    warning_at (loc, OPT_Woverflow, "offset exceeds 16 bytes");
   return ((LOCATION_LINE (loc) - DECL_SOURCE_LINE (decl)) << 16);
 }
 
@@ -388,17 +371,10 @@ get_combined_location (location_t loc, tree decl)
 static tree
 get_function_decl_from_block (tree block)
 {
-  tree decl;
-
-  if (LOCATION_LOCUS (BLOCK_SOURCE_LOCATION (block) == UNKNOWN_LOCATION))
+  if (!inlined_function_outer_scope_p (block))
     return NULL_TREE;
 
-  for (decl = BLOCK_ABSTRACT_ORIGIN (block);
-       decl && (TREE_CODE (decl) == BLOCK);
-       decl = BLOCK_ABSTRACT_ORIGIN (decl))
-    if (TREE_CODE (decl) == FUNCTION_DECL)
-      break;
-  return decl;
+  return BLOCK_ABSTRACT_ORIGIN (block);
 }
 
 /* Store inline stack for STMT in STACK.  */
@@ -438,7 +414,7 @@ get_inline_stack (location_t locus, inline_stack *stack)
    of DECL, The lower 16 bits stores the discriminator.  */
 
 static unsigned
-get_relative_location_for_stmt (gimple stmt)
+get_relative_location_for_stmt (gimple *stmt)
 {
   location_t locus = gimple_location (stmt);
   if (LOCATION_LOCUS (locus) == UNKNOWN_LOCATION)
@@ -461,7 +437,7 @@ has_indirect_call (basic_block bb)
 
   for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
     {
-      gimple stmt = gsi_stmt (gsi);
+      gimple *stmt = gsi_stmt (gsi);
       if (gimple_code (stmt) == GIMPLE_CALL && !gimple_call_internal_p (stmt)
           && (gimple_call_fn (stmt) == NULL
               || TREE_CODE (gimple_call_fn (stmt)) != FUNCTION_DECL))
@@ -511,7 +487,7 @@ string_table::get_index_by_decl (tree decl) const
   ret = get_index (lang_hooks.dwarf_name (decl, 0));
   if (ret != -1)
     return ret;
-  if (DECL_ABSTRACT_ORIGIN (decl))
+  if (DECL_FROM_INLINE (decl))
     return get_index_by_decl (DECL_ABSTRACT_ORIGIN (decl));
 
   return -1;
@@ -578,7 +554,7 @@ function_instance::get_function_instance_by_decl (unsigned lineno,
       if (ret != callsites.end ())
         return ret->second;
     }
-  if (DECL_ABSTRACT_ORIGIN (decl))
+  if (DECL_FROM_INLINE (decl))
     return get_function_instance_by_decl (lineno, DECL_ABSTRACT_ORIGIN (decl));
 
   return NULL;
@@ -747,7 +723,7 @@ autofdo_source_profile::get_function_instance_by_decl (tree decl) const
    in INFO and return true; otherwise return false.  */
 
 bool
-autofdo_source_profile::get_count_info (gimple stmt, count_info *info) const
+autofdo_source_profile::get_count_info (gimple *stmt, count_info *info) const
 {
   if (LOCATION_LOCUS (gimple_location (stmt)) == cfun->function_end_locus)
     return false;
@@ -784,8 +760,18 @@ bool
 autofdo_source_profile::update_inlined_ind_target (gcall *stmt,
                                                    count_info *info)
 {
+  if (dump_file)
+    {
+      fprintf (dump_file, "Checking indirect call -> direct call ");
+      print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
+    }
+
   if (LOCATION_LOCUS (gimple_location (stmt)) == cfun->function_end_locus)
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, " good locus\n");
+      return false;
+    }
 
   count_info old_info;
   get_count_info (stmt, &old_info);
@@ -798,25 +784,45 @@ autofdo_source_profile::update_inlined_ind_target (gcall *stmt,
      hot any more. Will avoid promote the original target.
 
      To check if original promoted target is still hot, we check the total
-     count of the unpromoted targets (stored in old_info). If it is no less
-     than half of the callsite count (stored in INFO), the original promoted
-     target is considered not hot any more.  */
-  if (total >= info->count / 2)
-    return false;
+     count of the unpromoted targets (stored in TOTAL). If a callsite count
+     (stored in INFO) is smaller than half of the total count, the original
+     promoted target is considered not hot any more.  */
+  if (info->count < total / 2)
+    {
+      if (dump_file)
+	fprintf (dump_file, " not hot anymore %ld < %ld",
+		 (long)info->count,
+		 (long)total /2);
+      return false;
+    }
 
   inline_stack stack;
   get_inline_stack (gimple_location (stmt), &stack);
   if (stack.length () == 0)
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, " no inline stack\n");
+      return false;
+    }
   function_instance *s = get_function_instance_by_inline_stack (stack);
   if (s == NULL)
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, " function not found in inline stack\n");
+      return false;
+    }
   icall_target_map map;
   if (s->find_icall_target_map (stmt, &map) == 0)
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, " no target map\n");
+      return false;
+    }
   for (icall_target_map::const_iterator iter = map.begin ();
        iter != map.end (); ++iter)
     info->targets[iter->first] = iter->second;
+  if (dump_file)
+    fprintf (dump_file, " looks good\n");
   return true;
 }
 
@@ -856,7 +862,7 @@ autofdo_source_profile::read ()
 {
   if (gcov_read_unsigned () != GCOV_TAG_AFDO_FUNCTION)
     {
-      inform (0, "Not expected TAG.");
+      inform (UNKNOWN_LOCATION, "Not expected TAG.");
       return false;
     }
 
@@ -871,7 +877,6 @@ autofdo_source_profile::read ()
       function_instance::function_instance_stack stack;
       function_instance *s = function_instance::read_function_instance (
           &stack, gcov_read_counter ());
-      afdo_profile_info->sum_all += s->total_count ();
       map_[s->name ()] = s;
     }
   return true;
@@ -921,16 +926,25 @@ static void
 read_profile (void)
 {
   if (gcov_open (auto_profile_file, 1) == 0)
-    error ("Cannot open profile file %s.", auto_profile_file);
+    {
+      error ("cannot open profile file %s", auto_profile_file);
+      return;
+    }
 
   if (gcov_read_unsigned () != GCOV_DATA_MAGIC)
-    error ("AutoFDO profile magic number does not mathch.");
+    {
+      error ("AutoFDO profile magic number does not match");
+      return;
+    }
 
   /* Skip the version number.  */
   unsigned version = gcov_read_unsigned ();
   if (version != AUTO_PROFILE_VERSION)
-    error ("AutoFDO profile version %u does match %u.",
-           version, AUTO_PROFILE_VERSION);
+    {
+      error ("AutoFDO profile version %u does match %u",
+	     version, AUTO_PROFILE_VERSION);
+      return;
+    }
 
   /* Skip the empty integer.  */
   gcov_read_unsigned ();
@@ -938,29 +952,21 @@ read_profile (void)
   /* string_table.  */
   afdo_string_table = new string_table ();
   if (!afdo_string_table->read())
-    error ("Cannot read string table from %s.", auto_profile_file);
+    {
+      error ("cannot read string table from %s", auto_profile_file);
+      return;
+    }
 
   /* autofdo_source_profile.  */
   afdo_source_profile = autofdo_source_profile::create ();
   if (afdo_source_profile == NULL)
-    error ("Cannot read function profile from %s.", auto_profile_file);
+    {
+      error ("cannot read function profile from %s", auto_profile_file);
+      return;
+    }
 
   /* autofdo_module_profile.  */
   fake_read_autofdo_module_profile ();
-
-  /* Read in the working set.  */
-  if (gcov_read_unsigned () != GCOV_TAG_AFDO_WORKING_SET)
-    error ("Cannot read working set from %s.", auto_profile_file);
-
-  /* Skip the length of the section.  */
-  gcov_read_unsigned ();
-  gcov_working_set_t set[128];
-  for (unsigned i = 0; i < 128; i++)
-    {
-      set[i].num_counters = gcov_read_unsigned ();
-      set[i].min_counter = gcov_read_counter ();
-    }
-  add_working_set (set);
 }
 
 /* From AutoFDO profiles, find values inside STMT for that we want to measure
@@ -975,22 +981,16 @@ static void
 afdo_indirect_call (gimple_stmt_iterator *gsi, const icall_target_map &map,
                     bool transform)
 {
-  gimple gs = gsi_stmt (*gsi);
+  gimple *gs = gsi_stmt (*gsi);
   tree callee;
 
   if (map.size () == 0)
     return;
   gcall *stmt = dyn_cast <gcall *> (gs);
-  if ((!stmt) || gimple_call_fndecl (stmt) != NULL_TREE)
+  if (!stmt
+      || gimple_call_internal_p (stmt)
+      || gimple_call_fndecl (stmt) != NULL_TREE)
     return;
-
-  callee = gimple_call_fn (stmt);
-
-  histogram_value hist = gimple_alloc_histogram_value (
-      cfun, HIST_TYPE_INDIR_CALL, stmt, callee);
-  hist->n_counters = 3;
-  hist->hvalue.counters = XNEWVEC (gcov_type, hist->n_counters);
-  gimple_add_histogram_value (cfun, stmt, hist);
 
   gcov_type total = 0;
   icall_target_map::const_iterator max_iter = map.end ();
@@ -1002,9 +1002,20 @@ afdo_indirect_call (gimple_stmt_iterator *gsi, const icall_target_map &map,
       if (max_iter == map.end () || max_iter->second < iter->second)
         max_iter = iter;
     }
+  struct cgraph_node *direct_call = cgraph_node::get_for_asmname (
+      get_identifier (afdo_string_table->get_name (max_iter->first)));
+  if (direct_call == NULL || !direct_call->profile_id)
+    return;
 
-  hist->hvalue.counters[0]
-      = (unsigned long long)afdo_string_table->get_name (max_iter->first);
+  callee = gimple_call_fn (stmt);
+
+  histogram_value hist = gimple_alloc_histogram_value (
+      cfun, HIST_TYPE_INDIR_CALL, stmt, callee);
+  hist->n_counters = 3;
+  hist->hvalue.counters = XNEWVEC (gcov_type, hist->n_counters);
+  gimple_add_histogram_value (cfun, stmt, hist);
+
+  hist->hvalue.counters[0] = direct_call->profile_id;
   hist->hvalue.counters[1] = max_iter->second;
   hist->hvalue.counters[2] = total;
 
@@ -1013,15 +1024,39 @@ afdo_indirect_call (gimple_stmt_iterator *gsi, const icall_target_map &map,
 
   struct cgraph_edge *indirect_edge
       = cgraph_node::get (current_function_decl)->get_edge (stmt);
-  struct cgraph_node *direct_call = cgraph_node::get_for_asmname (
-      get_identifier ((const char *) hist->hvalue.counters[0]));
+
+  if (dump_file)
+    {
+      fprintf (dump_file, "Indirect call -> direct call ");
+      print_generic_expr (dump_file, callee, TDF_SLIM);
+      fprintf (dump_file, " => ");
+      print_generic_expr (dump_file, direct_call->decl, TDF_SLIM);
+    }
 
   if (direct_call == NULL || !check_ic_target (stmt, direct_call))
-    return;
+    {
+      if (dump_file)
+        fprintf (dump_file, " not transforming\n");
+      return;
+    }
   if (DECL_STRUCT_FUNCTION (direct_call->decl) == NULL)
-    return;
+    {
+      if (dump_file)
+        fprintf (dump_file, " no declaration\n");
+      return;
+    }
+
+  if (dump_file)
+    {
+      fprintf (dump_file, " transformation on insn ");
+      print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
+      fprintf (dump_file, "\n");
+    }
+
+  /* FIXME: Count should be initialized.  */
   struct cgraph_edge *new_edge
-      = indirect_edge->make_speculative (direct_call, 0, 0);
+      = indirect_edge->make_speculative (direct_call,
+					 profile_count::uninitialized ());
   new_edge->redirect_call_stmt_to_callee ();
   gimple_remove_histogram_value (cfun, stmt, hist);
   inline_call (new_edge, true, NULL, NULL, false);
@@ -1052,18 +1087,6 @@ set_bb_annotated (basic_block bb, bb_set *annotated)
   annotated->insert (bb);
 }
 
-static bool
-is_edge_annotated (const edge e, const edge_set &annotated)
-{
-  return annotated.find (e) != annotated.end ();
-}
-
-static void
-set_edge_annotated (edge e, edge_set *annotated)
-{
-  annotated->insert (e);
-}
-
 /* For a given BB, set its execution count. Attach value profile if a stmt
    is not in PROMOTED, because we only want to promote an indirect call once.
    Return TRUE if BB is annotated.  */
@@ -1080,7 +1103,7 @@ afdo_set_bb_count (basic_block bb, const stmt_set &promoted)
   for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
     {
       count_info info;
-      gimple stmt = gsi_stmt (gsi);
+      gimple *stmt = gsi_stmt (gsi);
       if (gimple_clobber_p (stmt) || is_gimple_debug (stmt))
         continue;
       if (afdo_source_profile->get_count_info (stmt, &info))
@@ -1111,7 +1134,7 @@ afdo_set_bb_count (basic_block bb, const stmt_set &promoted)
   FOR_EACH_EDGE (e, ei, bb->succs)
   afdo_source_profile->mark_annotated (e->goto_locus);
 
-  bb->count = max_count;
+  bb->count = profile_count::from_gcov_type (max_count).afdo ();
   return true;
 }
 
@@ -1143,28 +1166,28 @@ afdo_find_equiv_class (bb_set *annotated_bb)
     bb->aux = bb;
     dom_bbs = get_dominated_by (CDI_DOMINATORS, bb);
     FOR_EACH_VEC_ELT (dom_bbs, i, bb1)
-    if (bb1->aux == NULL && dominated_by_p (CDI_POST_DOMINATORS, bb, bb1)
-        && bb1->loop_father == bb->loop_father)
-      {
-        bb1->aux = bb;
-        if (bb1->count > bb->count && is_bb_annotated (bb1, *annotated_bb))
-          {
-            bb->count = bb1->count;
-            set_bb_annotated (bb, annotated_bb);
-          }
-      }
+      if (bb1->aux == NULL && dominated_by_p (CDI_POST_DOMINATORS, bb, bb1)
+	  && bb1->loop_father == bb->loop_father)
+	{
+	  bb1->aux = bb;
+	  if (bb1->count > bb->count && is_bb_annotated (bb1, *annotated_bb))
+	    {
+	      bb->count = bb1->count;
+	      set_bb_annotated (bb, annotated_bb);
+	    }
+	}
     dom_bbs = get_dominated_by (CDI_POST_DOMINATORS, bb);
     FOR_EACH_VEC_ELT (dom_bbs, i, bb1)
-    if (bb1->aux == NULL && dominated_by_p (CDI_DOMINATORS, bb, bb1)
-        && bb1->loop_father == bb->loop_father)
-      {
-        bb1->aux = bb;
-        if (bb1->count > bb->count && is_bb_annotated (bb1, *annotated_bb))
-          {
-            bb->count = bb1->count;
-            set_bb_annotated (bb, annotated_bb);
-          }
-      }
+      if (bb1->aux == NULL && dominated_by_p (CDI_DOMINATORS, bb, bb1)
+	  && bb1->loop_father == bb->loop_father)
+	{
+	  bb1->aux = bb;
+	  if (bb1->count > bb->count && is_bb_annotated (bb1, *annotated_bb))
+	    {
+	      bb->count = bb1->count;
+	      set_bb_annotated (bb, annotated_bb);
+	    }
+	}
   }
 }
 
@@ -1173,12 +1196,11 @@ afdo_find_equiv_class (bb_set *annotated_bb)
    edges' counts are known, then the basic block's unknown count can also be
    calculated.
    IS_SUCC is true if out edges of a basic blocks are examined.
-   Update ANNOTATED_BB and ANNOTATED_EDGE accordingly.
+   Update ANNOTATED_BB accordingly.
    Return TRUE if any basic block/edge count is changed.  */
 
 static bool
-afdo_propagate_edge (bool is_succ, bb_set *annotated_bb,
-                     edge_set *annotated_edge)
+afdo_propagate_edge (bool is_succ, bb_set *annotated_bb)
 {
   basic_block bb;
   bool changed = false;
@@ -1188,35 +1210,33 @@ afdo_propagate_edge (bool is_succ, bb_set *annotated_bb,
     edge e, unknown_edge = NULL;
     edge_iterator ei;
     int num_unknown_edge = 0;
-    gcov_type total_known_count = 0;
+    profile_count total_known_count = profile_count::zero ().afdo ();
 
     FOR_EACH_EDGE (e, ei, is_succ ? bb->succs : bb->preds)
-    if (!is_edge_annotated (e, *annotated_edge))
-      num_unknown_edge++, unknown_edge = e;
-    else
-      total_known_count += e->count;
-
-    if (num_unknown_edge == 0)
       {
-        if (total_known_count > bb->count)
-          {
-            bb->count = total_known_count;
-            changed = true;
-          }
-        if (!is_bb_annotated (bb, *annotated_bb))
-          {
-            set_bb_annotated (bb, annotated_bb);
-            changed = true;
-          }
+	gcc_assert (AFDO_EINFO (e) != NULL);
+	if (! AFDO_EINFO (e)->is_annotated ())
+	  num_unknown_edge++, unknown_edge = e;
+	else
+	  total_known_count += AFDO_EINFO (e)->get_count ();
+      }
+
+    /* Be careful not to annotate block with no successor in special cases.  */
+    if (num_unknown_edge == 0 && total_known_count > bb->count)
+      {
+	bb->count = total_known_count;
+	if (!is_bb_annotated (bb, *annotated_bb))
+	  set_bb_annotated (bb, annotated_bb);
+	changed = true;
       }
     else if (num_unknown_edge == 1 && is_bb_annotated (bb, *annotated_bb))
       {
-        if (bb->count >= total_known_count)
-          unknown_edge->count = bb->count - total_known_count;
-        else
-          unknown_edge->count = 0;
-        set_edge_annotated (unknown_edge, annotated_edge);
-        changed = true;
+	if (bb->count > total_known_count)
+	  AFDO_EINFO (unknown_edge)->set_count (bb->count - total_known_count);
+	else
+	  AFDO_EINFO (unknown_edge)->set_count (profile_count::zero().afdo ());
+	AFDO_EINFO (unknown_edge)->set_annotated ();
+	changed = true;
       }
   }
   return changed;
@@ -1252,18 +1272,17 @@ afdo_propagate_edge (bool is_succ, bb_set *annotated_bb,
        goto BB3
 
    In this case, we need to propagate through PHI to determine the edge
-   count of BB1->BB.t1, BB.t1->BB.t2.
-   Update ANNOTATED_EDGE accordingly.  */
+   count of BB1->BB.t1, BB.t1->BB.t2.  */
 
 static void
-afdo_propagate_circuit (const bb_set &annotated_bb, edge_set *annotated_edge)
+afdo_propagate_circuit (const bb_set &annotated_bb)
 {
   basic_block bb;
   FOR_ALL_BB_FN (bb, cfun)
   {
-    gimple def_stmt;
+    gimple *def_stmt;
     tree cmp_rhs, cmp_lhs;
-    gimple cmp_stmt = last_stmt (bb);
+    gimple *cmp_stmt = last_stmt (bb);
     edge e;
     edge_iterator ei;
 
@@ -1295,7 +1314,7 @@ afdo_propagate_circuit (const bb_set &annotated_bb, edge_set *annotated_edge)
       bool check_value_one = (((integer_onep (cmp_rhs))
                                ^ (gimple_cond_code (cmp_stmt) == EQ_EXPR))
                               ^ ((e->flags & EDGE_TRUE_VALUE) != 0));
-      if (!is_edge_annotated (e, *annotated_edge))
+      if (! AFDO_EINFO (e)->is_annotated ())
         continue;
       for (i = 0; i < gimple_phi_num_args (phi_stmt); i++)
         {
@@ -1309,19 +1328,18 @@ afdo_propagate_circuit (const bb_set &annotated_bb, edge_set *annotated_edge)
             continue;
           total++;
           only_one = ep;
-          if (e->probability == 0 && !is_edge_annotated (ep, *annotated_edge))
-            {
-              ep->probability = 0;
-              ep->count = 0;
-              set_edge_annotated (ep, annotated_edge);
-            }
-        }
-      if (total == 1 && !is_edge_annotated (only_one, *annotated_edge))
-        {
-          only_one->probability = e->probability;
-          only_one->count = e->count;
-          set_edge_annotated (only_one, annotated_edge);
-        }
+          if (! (AFDO_EINFO (e)->get_count ()).nonzero_p ()
+	      && ! AFDO_EINFO (ep)->is_annotated ())
+	    {
+	      AFDO_EINFO (ep)->set_count (profile_count::zero ().afdo ());
+	      AFDO_EINFO (ep)->set_annotated ();
+	    }
+	}
+      if (total == 1 && ! AFDO_EINFO (only_one)->is_annotated ())
+	{
+	  AFDO_EINFO (only_one)->set_count (AFDO_EINFO (e)->get_count ());
+	  AFDO_EINFO (only_one)->set_annotated ();
+	}
     }
   }
 }
@@ -1330,7 +1348,7 @@ afdo_propagate_circuit (const bb_set &annotated_bb, edge_set *annotated_edge)
    graph. We do the propagation iteratively until stablize.  */
 
 static void
-afdo_propagate (bb_set *annotated_bb, edge_set *annotated_edge)
+afdo_propagate (bb_set *annotated_bb)
 {
   basic_block bb;
   bool changed = true;
@@ -1339,7 +1357,7 @@ afdo_propagate (bb_set *annotated_bb, edge_set *annotated_edge)
   FOR_ALL_BB_FN (bb, cfun)
   {
     bb->count = ((basic_block)bb->aux)->count;
-    if (is_bb_annotated ((const basic_block)bb->aux, *annotated_bb))
+    if (is_bb_annotated ((basic_block)bb->aux, *annotated_bb))
       set_bb_annotated (bb, annotated_bb);
   }
 
@@ -1347,11 +1365,11 @@ afdo_propagate (bb_set *annotated_bb, edge_set *annotated_edge)
     {
       changed = false;
 
-      if (afdo_propagate_edge (true, annotated_bb, annotated_edge))
+      if (afdo_propagate_edge (true, annotated_bb))
         changed = true;
-      if (afdo_propagate_edge (false, annotated_bb, annotated_edge))
+      if (afdo_propagate_edge (false, annotated_bb))
         changed = true;
-      afdo_propagate_circuit (*annotated_bb, annotated_edge);
+      afdo_propagate_circuit (*annotated_bb);
     }
 }
 
@@ -1359,54 +1377,59 @@ afdo_propagate (bb_set *annotated_bb, edge_set *annotated_edge)
    probabilities.  */
 
 static void
-afdo_calculate_branch_prob (bb_set *annotated_bb, edge_set *annotated_edge)
+afdo_calculate_branch_prob (bb_set *annotated_bb)
 {
+  edge e;
+  edge_iterator ei;
   basic_block bb;
-  bool has_sample = false;
-
-  FOR_EACH_BB_FN (bb, cfun)
-  if (bb->count > 0)
-    has_sample = true;
-
-  if (!has_sample)
-    return;
 
   calculate_dominance_info (CDI_POST_DOMINATORS);
   calculate_dominance_info (CDI_DOMINATORS);
   loop_optimizer_init (0);
 
+  FOR_ALL_BB_FN (bb, cfun)
+    {
+      gcc_assert (bb->aux == NULL);
+      FOR_EACH_EDGE (e, ei, bb->succs)
+	{
+	  gcc_assert (e->aux == NULL);
+	  e->aux = new edge_info ();
+	}
+    }
+
   afdo_find_equiv_class (annotated_bb);
-  afdo_propagate (annotated_bb, annotated_edge);
+  afdo_propagate (annotated_bb);
 
   FOR_EACH_BB_FN (bb, cfun)
   {
-    edge e;
-    edge_iterator ei;
     int num_unknown_succ = 0;
-    gcov_type total_count = 0;
+    profile_count total_count = profile_count::zero ().afdo ();
 
     FOR_EACH_EDGE (e, ei, bb->succs)
     {
-      if (!is_edge_annotated (e, *annotated_edge))
+      gcc_assert (AFDO_EINFO (e) != NULL);
+      if (! AFDO_EINFO (e)->is_annotated ())
         num_unknown_succ++;
       else
-        total_count += e->count;
+        total_count += AFDO_EINFO (e)->get_count ();
     }
-    if (num_unknown_succ == 0 && total_count > 0)
+    if (num_unknown_succ == 0 && total_count > profile_count::zero ())
       {
-        FOR_EACH_EDGE (e, ei, bb->succs)
-        e->probability = (double)e->count * REG_BR_PROB_BASE / total_count;
+	FOR_EACH_EDGE (e, ei, bb->succs)
+	  e->probability
+	    = AFDO_EINFO (e)->get_count ().probability_in (total_count);
       }
   }
   FOR_ALL_BB_FN (bb, cfun)
-  {
-    edge e;
-    edge_iterator ei;
-
-    FOR_EACH_EDGE (e, ei, bb->succs)
-    e->count = (double)bb->count * e->probability / REG_BR_PROB_BASE;
-    bb->aux = NULL;
-  }
+    {
+      bb->aux = NULL;
+      FOR_EACH_EDGE (e, ei, bb->succs)
+	if (AFDO_EINFO (e) != NULL)
+	  {
+	    delete AFDO_EINFO (e);
+	    e->aux = NULL;
+	  }
+    }
 
   loop_optimizer_finalize ();
   free_dominance_info (CDI_DOMINATORS);
@@ -1425,7 +1448,7 @@ afdo_vpt_for_early_inline (stmt_set *promoted_stmts)
           current_function_decl) == NULL)
     return false;
 
-  compute_inline_parameters (cgraph_node::get (current_function_decl), true);
+  compute_fn_summary (cgraph_node::get (current_function_decl), true);
 
   bool has_vpt = false;
   FOR_EACH_BB_FN (bb, cfun)
@@ -1438,7 +1461,7 @@ afdo_vpt_for_early_inline (stmt_set *promoted_stmts)
     for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
       {
         count_info info;
-        gimple stmt = gsi_stmt (gsi);
+	gimple *stmt = gsi_stmt (gsi);
         if (afdo_source_profile->get_count_info (stmt, &info))
           bb_count = MAX (bb_count, info.count);
       }
@@ -1469,7 +1492,9 @@ afdo_vpt_for_early_inline (stmt_set *promoted_stmts)
 
   if (has_vpt)
     {
-      optimize_inline_calls (current_function_decl);
+      unsigned todo = optimize_inline_calls (current_function_decl);
+      if (todo & TODO_update_ssa_any)
+       update_ssa (TODO_update_ssa);
       return true;
     }
 
@@ -1484,31 +1509,29 @@ afdo_annotate_cfg (const stmt_set &promoted_stmts)
 {
   basic_block bb;
   bb_set annotated_bb;
-  edge_set annotated_edge;
   const function_instance *s
       = afdo_source_profile->get_function_instance_by_decl (
           current_function_decl);
 
   if (s == NULL)
     return;
-  cgraph_node::get (current_function_decl)->count = s->head_count ();
-  ENTRY_BLOCK_PTR_FOR_FN (cfun)->count = s->head_count ();
-  gcov_type max_count = ENTRY_BLOCK_PTR_FOR_FN (cfun)->count;
+  cgraph_node::get (current_function_decl)->count
+     = profile_count::from_gcov_type (s->head_count ()).afdo ();
+  ENTRY_BLOCK_PTR_FOR_FN (cfun)->count
+     = profile_count::from_gcov_type (s->head_count ()).afdo ();
+  EXIT_BLOCK_PTR_FOR_FN (cfun)->count = profile_count::zero ().afdo ();
+  profile_count max_count = ENTRY_BLOCK_PTR_FOR_FN (cfun)->count;
 
   FOR_EACH_BB_FN (bb, cfun)
-  {
-    edge e;
-    edge_iterator ei;
-
-    bb->count = 0;
-    FOR_EACH_EDGE (e, ei, bb->succs)
-    e->count = 0;
-
-    if (afdo_set_bb_count (bb, promoted_stmts))
-      set_bb_annotated (bb, &annotated_bb);
-    if (bb->count > max_count)
-      max_count = bb->count;
-  }
+    {
+      /* As autoFDO uses sampling approach, we have to assume that all
+	 counters are zero when not seen by autoFDO.  */
+      bb->count = profile_count::zero ().afdo ();
+      if (afdo_set_bb_count (bb, promoted_stmts))
+	set_bb_annotated (bb, &annotated_bb);
+      if (bb->count > max_count)
+	max_count = bb->count;
+    }
   if (ENTRY_BLOCK_PTR_FOR_FN (cfun)->count
       > ENTRY_BLOCK_PTR_FOR_FN (cfun)->next_bb->count)
     {
@@ -1527,12 +1550,13 @@ afdo_annotate_cfg (const stmt_set &promoted_stmts)
       DECL_SOURCE_LOCATION (current_function_decl));
   afdo_source_profile->mark_annotated (cfun->function_start_locus);
   afdo_source_profile->mark_annotated (cfun->function_end_locus);
-  if (max_count > 0)
+  if (max_count > profile_count::zero ())
     {
-      afdo_calculate_branch_prob (&annotated_bb, &annotated_edge);
-      counts_to_freqs ();
-      profile_status_for_fn (cfun) = PROFILE_READ;
+      /* Calculate, propagate count and probability information on CFG.  */
+      afdo_calculate_branch_prob (&annotated_bb);
     }
+  update_max_bb_count ();
+  profile_status_for_fn (cfun) = PROFILE_READ;
   if (flag_value_profile_transformations)
     {
       gimple_value_profile_transformations ();
@@ -1547,7 +1571,7 @@ afdo_annotate_cfg (const stmt_set &promoted_stmts)
 static void
 early_inline ()
 {
-  compute_inline_parameters (cgraph_node::get (current_function_decl), true);
+  compute_fn_summary (cgraph_node::get (current_function_decl), true);
   unsigned todo = early_inliner (cfun);
   if (todo & TODO_update_ssa_any)
     update_ssa (TODO_update_ssa);
@@ -1625,7 +1649,7 @@ auto_profile (void)
     free_dominance_info (CDI_DOMINATORS);
     free_dominance_info (CDI_POST_DOMINATORS);
     cgraph_edge::rebuild_edges ();
-    compute_inline_parameters (cgraph_node::get (current_function_decl), true);
+    compute_fn_summary (cgraph_node::get (current_function_decl), true);
     pop_cfun ();
   }
 
@@ -1641,11 +1665,9 @@ read_autofdo_file (void)
   if (auto_profile_file == NULL)
     auto_profile_file = DEFAULT_AUTO_PROFILE_FILE;
 
-  autofdo::afdo_profile_info = (struct gcov_ctr_summary *)xcalloc (
-      1, sizeof (struct gcov_ctr_summary));
+  autofdo::afdo_profile_info = XNEW (gcov_summary);
   autofdo::afdo_profile_info->runs = 1;
   autofdo::afdo_profile_info->sum_max = 0;
-  autofdo::afdo_profile_info->sum_all = 0;
 
   /* Read the profile from the profile file.  */
   autofdo::read_profile ();
@@ -1672,11 +1694,12 @@ afdo_callsite_hot_enough_for_early_inline (struct cgraph_edge *edge)
   if (count > 0)
     {
       bool is_hot;
-      const struct gcov_ctr_summary *saved_profile_info = profile_info;
+      profile_count pcount = profile_count::from_gcov_type (count).afdo ();
+      gcov_summary *saved_profile_info = profile_info;
       /* At early inline stage, profile_info is not set yet. We need to
          temporarily set it to afdo_profile_info to calculate hotness.  */
       profile_info = autofdo::afdo_profile_info;
-      is_hot = maybe_hot_count_p (NULL, count);
+      is_hot = maybe_hot_count_p (NULL, pcount);
       profile_info = saved_profile_info;
       return is_hot;
     }

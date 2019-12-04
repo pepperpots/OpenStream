@@ -1,6 +1,6 @@
 /* Limit this to known non-strict alignment targets.  */
 /* { dg-do run { target { i?86-*-linux* x86_64-*-linux* } } } */
-/* { dg-options "-O -fsanitize=alignment -fno-sanitize-recover=alignment -fdump-tree-sanopt-details" } */
+/* { dg-options "-O -fsanitize=alignment -fno-sanitize-recover=alignment -Wno-address-of-packed-member -fdump-tree-sanopt-details" } */
 /* { dg-skip-if "" { *-*-* } { "-flto -fno-fat-lto-objects" } } */
 /* { dg-shouldfail "ubsan" } */
 
@@ -28,6 +28,5 @@ main ()
   return 0;
 }
 
-/* { dg-output "\.c:16:\[0-9]*: \[^\n\r]*member access within misaligned address 0x\[0-9a-fA-F]* for type 'struct S', which requires \[48] byte alignment.*" } */
+/* { dg-output "\.c:16:\[0-9]*: \[^\n\r]*member access within misaligned address 0x\[0-9a-fA-F]* for type 'struct S', which requires \[48] byte alignment" } */
 /* { dg-final { scan-tree-dump-times "Optimizing" 4 "sanopt"} } */
-/* { dg-final { cleanup-tree-dump "sanopt" } } */

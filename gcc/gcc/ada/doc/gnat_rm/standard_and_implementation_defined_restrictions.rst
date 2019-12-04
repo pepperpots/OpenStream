@@ -54,8 +54,8 @@ the call.
 
 .. index:: Max_Entry_Queue_Depth
 
-The restriction `Max_Entry_Queue_Depth` is recognized as a
-synonym for `Max_Entry_Queue_Length`. This is retained for historical
+The restriction ``Max_Entry_Queue_Depth`` is recognized as a
+synonym for ``Max_Entry_Queue_Length``. This is retained for historical
 compatibility purposes (and a warning will be generated for its use if
 warnings on obsolescent features are activated).
 
@@ -137,12 +137,19 @@ No_Anonymous_Allocators
 [RM H.4] This restriction ensures at compile time that there are no
 occurrences of an allocator of anonymous access type.
 
+No_Asynchronous_Control
+-----------------------
+.. index:: No_Asynchronous_Control
+
+[RM J.13] This restriction ensures at compile time that there are no semantic
+dependences on the predefined package Asynchronous_Task_Control.
+
 No_Calendar
 -----------
 .. index:: No_Calendar
 
-[GNAT] This restriction ensures at compile time that there is no implicit or
-explicit dependence on the package `Ada.Calendar`.
+[GNAT] This restriction ensures at compile time that there are no semantic
+dependences on package Calendar.
 
 No_Coextensions
 ---------------
@@ -170,14 +177,14 @@ No_Delay
 .. index:: No_Delay
 
 [RM H.4] This restriction ensures at compile time that there are no
-delay statements and no dependences on package Calendar.
+delay statements and no semantic dependences on package Calendar.
 
 No_Dependence
 -------------
 .. index:: No_Dependence
 
-[RM 13.12.1] This restriction checks at compile time that there are no
-dependence on a library unit.
+[RM 13.12.1] This restriction ensures at compile time that there are no
+dependences on a library unit.
 
 No_Direct_Boolean_Operators
 ---------------------------
@@ -194,7 +201,7 @@ No_Dispatch
 .. index:: No_Dispatch
 
 [RM H.4] This restriction ensures at compile time that there are no
-occurrences of `T'Class`, for any (tagged) subtype `T`.
+occurrences of ``T'Class``, for any (tagged) subtype ``T``.
 
 No_Dispatching_Calls
 --------------------
@@ -210,7 +217,7 @@ in the implementation of class-wide objects assignments. The
 membership test is allowed in the presence of this restriction, because its
 implementation requires no dispatching.
 This restriction is comparable to the official Ada restriction
-`No_Dispatch` except that it is a bit less restrictive in that it allows
+``No_Dispatch`` except that it is a bit less restrictive in that it allows
 all classwide constructs that do not imply dispatching.
 The following example indicates constructs that violate this restriction.
 
@@ -254,7 +261,7 @@ The following example indicates constructs that violate this restriction.
        null;
     end if;
   end Example;
-  
+
 
 No_Dynamic_Attachment
 ---------------------
@@ -267,8 +274,8 @@ Detach_Handler, and Reference).
 
 .. index:: No_Dynamic_Interrupts
 
-The restriction `No_Dynamic_Interrupts` is recognized as a
-synonym for `No_Dynamic_Attachment`. This is retained for historical
+The restriction ``No_Dynamic_Interrupts`` is recognized as a
+synonym for ``No_Dynamic_Attachment``. This is retained for historical
 compatibility purposes (and a warning will be generated for its use if
 warnings on obsolescent features are activated).
 
@@ -312,7 +319,7 @@ must define with the following profile:
     (Source_Location : System.Address; Line : Integer);
   pragma Export (C, Last_Chance_Handler,
                  "__gnat_last_chance_handler");
-  
+
 
 The parameter is a C null-terminated string representing a message to be
 associated with the exception (typically the source location of the raise
@@ -360,19 +367,19 @@ chapter 7.6 of the Ada 2005 RM as well as all form of code generation
 performed by the compiler to support these features. The following types
 are no longer considered controlled when this restriction is in effect:
 
-* 
-  `Ada.Finalization.Controlled`
-* 
-  `Ada.Finalization.Limited_Controlled`
-* 
-  Derivations from `Controlled` or `Limited_Controlled`
-* 
+*
+  ``Ada.Finalization.Controlled``
+*
+  ``Ada.Finalization.Limited_Controlled``
+*
+  Derivations from ``Controlled`` or ``Limited_Controlled``
+*
   Class-wide types
-* 
+*
   Protected types
-* 
+*
   Task types
-* 
+*
   Array and record types with controlled components
 
 The compiler no longer generates code to initialize, finalize or adjust an
@@ -414,8 +421,8 @@ No_Implicit_Dynamic_Code
 [GNAT] This restriction prevents the compiler from building 'trampolines'.
 This is a structure that is built on the stack and contains dynamic
 code to be executed at run time. On some targets, a trampoline is
-built for the following features: `Access`,
-`Unrestricted_Access`, or `Address` of a nested subprogram;
+built for the following features: ``Access``,
+``Unrestricted_Access``, or ``Address`` of a nested subprogram;
 nested task bodies; primitive operations of nested tagged types.
 Trampolines do not work on machines that prevent execution of stack
 data. For example, on windows systems, enabling DEP (data execution
@@ -426,8 +433,8 @@ On many targets, trampolines have been largely eliminated. Look at the
 version of system.ads for your target --- if it has
 Always_Compatible_Rep equal to False, then trampolines are largely
 eliminated. In particular, a trampoline is built for the following
-features: `Address` of a nested subprogram;
-`Access` or `Unrestricted_Access` of a nested subprogram,
+features: ``Address`` of a nested subprogram;
+``Access`` or ``Unrestricted_Access`` of a nested subprogram,
 but only if pragma Favor_Top_Level applies, or the access type has a
 foreign-language convention; primitive operations of nested tagged
 types.
@@ -438,19 +445,18 @@ No_Implicit_Heap_Allocations
 
 [RM D.7] No constructs are allowed to cause implicit heap allocation.
 
-No_Implicit_Loops
------------------
-.. index:: No_Implicit_Loops
+No_Implicit_Protected_Object_Allocations
+----------------------------------------
+.. index:: No_Implicit_Protected_Object_Allocations
 
-[GNAT] This restriction ensures that the generated code does not contain any
-implicit `for` loops, either by modifying
-the generated code where possible,
-or by rejecting any construct that would otherwise generate an implicit
-`for` loop. If this restriction is active, it is possible to build
-large array aggregates with all static components without generating an
-intermediate temporary, and without generating a loop to initialize individual
-components. Otherwise, a loop is created for arrays larger than about 5000
-scalar components.
+[GNAT] No constructs are allowed to cause implicit heap allocation of a
+protected object.
+
+No_Implicit_Task_Allocations
+----------------------------
+.. index:: No_Implicit_Task_Allocations
+
+[GNAT] No constructs are allowed to cause implicit heap allocation of a task.
 
 No_Initialize_Scalars
 ---------------------
@@ -504,19 +510,15 @@ No_Multiple_Elaboration
 -----------------------
 .. index:: No_Multiple_Elaboration
 
-[GNAT] Normally each package contains a 16-bit counter used to check for access
-before elaboration, and to control multiple elaboration attempts.
-This counter is eliminated for units compiled with the static model
-of elaboration if restriction `No_Elaboration_Code`
-is active but because of
-the need to check for multiple elaboration in the general case, these
-counters cannot be eliminated if elaboration code may be present. The
-restriction `No_Multiple_Elaboration`
-allows suppression of these counters
-in static elaboration units even if they do have elaboration code. If this
-restriction is used, then the situations in which multiple elaboration is
-possible, including non-Ada main programs, and Stand Alone libraries, are not
-permitted, and will be diagnosed by the binder.
+[GNAT] When this restriction is active, we are not requesting control-flow
+preservation with -fpreserve-control-flow, and the static elaboration model is
+used, the compiler is allowed to suppress the elaboration counter normally
+associated with the unit, even if the unit has elaboration code. This counter
+is typically used to check for access before elaboration and to control
+multiple elaboration attempts. If the restriction is used, then the
+situations in which multiple elaboration is possible, including non-Ada main
+programs and Stand Alone libraries, are not permitted and will be diagnosed
+by the binder.
 
 No_Nested_Finalization
 ----------------------
@@ -557,7 +559,7 @@ No_Relative_Delay
 .. index:: No_Relative_Delay
 
 [RM D.7] This restriction ensures at compile time that there are no delay
-relative statements and prevents expressions such as `delay 1.23;` from
+relative statements and prevents expressions such as ``delay 1.23;`` from
 appearing in source code.
 
 No_Requeue_Statements
@@ -565,13 +567,13 @@ No_Requeue_Statements
 .. index:: No_Requeue_Statements
 
 [RM D.7] This restriction ensures at compile time that no requeue statements
-are permitted and prevents keyword `requeue` from being used in source
+are permitted and prevents keyword ``requeue`` from being used in source
 code.
 
 .. index:: No_Requeue
 
-The restriction `No_Requeue` is recognized as a
-synonym for `No_Requeue_Statements`. This is retained for historical
+The restriction ``No_Requeue`` is recognized as a
+synonym for ``No_Requeue_Statements``. This is retained for historical
 compatibility purposes (and a warning will be generated for its use if
 warnings on oNobsolescent features are activated).
 
@@ -582,14 +584,15 @@ No_Secondary_Stack
 [GNAT] This restriction ensures at compile time that the generated code
 does not contain any reference to the secondary stack.  The secondary
 stack is used to implement functions returning unconstrained objects
-(arrays or records) on some targets.
+(arrays or records) on some targets. Suppresses the allocation of
+secondary stacks for tasks (excluding the environment task) at run time.
 
 No_Select_Statements
 --------------------
 .. index:: No_Select_Statements
 
 [RM D.7] This restriction ensures at compile time no select statements of any
-kind are permitted, that is the keyword `select` may not appear.
+kind are permitted, that is the keyword ``select`` may not appear.
 
 No_Specific_Termination_Handlers
 --------------------------------
@@ -629,8 +632,8 @@ No_Stream_Optimizations
 .. index:: No_Stream_Optimizations
 
 [GNAT] This restriction affects the performance of stream operations on types
-`String`, `Wide_String` and `Wide_Wide_String`. By default, the
-compiler uses block reads and writes when manipulating `String` objects
+``String``, ``Wide_String`` and ``Wide_Wide_String``. By default, the
+compiler uses block reads and writes when manipulating ``String`` objects
 due to their supperior performance. When this restriction is in effect, the
 compiler performs all IO operations on a per-character basis.
 
@@ -641,8 +644,8 @@ No_Streams
 [GNAT] This restriction ensures at compile/bind time that there are no
 stream objects created and no use of stream attributes.
 This restriction does not forbid dependences on the package
-`Ada.Streams`. So it is permissible to with
-`Ada.Streams` (or another package that does so itself)
+``Ada.Streams``. So it is permissible to with
+``Ada.Streams`` (or another package that does so itself)
 as long as no actual stream objects are created and no
 stream attributes are used.
 
@@ -659,17 +662,26 @@ No_Task_Allocators
 [RM D.7] There are no allocators for task types
 or types containing task subcomponents.
 
+No_Task_At_Interrupt_Priority
+-----------------------------
+.. index:: No_Task_At_Interrupt_Priority
+
+[GNAT] This restriction ensures at compile time that there is no
+Interrupt_Priority aspect or pragma for a task or a task type. As
+a consequence, the tasks are always created with a priority below
+that an interrupt priority.
+
 No_Task_Attributes_Package
 --------------------------
 .. index:: No_Task_Attributes_Package
 
 [GNAT] This restriction ensures at compile time that there are no implicit or
-explicit dependencies on the package `Ada.Task_Attributes`.
+explicit dependencies on the package ``Ada.Task_Attributes``.
 
 .. index:: No_Task_Attributes
 
-The restriction `No_Task_Attributes` is recognized as a synonym
-for `No_Task_Attributes_Package`. This is retained for historical
+The restriction ``No_Task_Attributes`` is recognized as a synonym
+for ``No_Task_Attributes_Package``. This is retained for historical
 compatibility purposes (and a warning will be generated for its use if
 warnings on obsolescent features are activated).
 
@@ -692,7 +704,7 @@ No_Tasking
 
 [GNAT] This restriction prevents the declaration of tasks or task types
 throughout the partition.  It is similar in effect to the use of
-`Max_Tasks => 0` except that violations are caught at compile time
+``Max_Tasks => 0`` except that violations are caught at compile time
 and cause an error message to be output either by the compiler or
 binder.
 
@@ -709,6 +721,20 @@ No_Unchecked_Access
 [RM H.4] This restriction ensures at compile time that there are no
 occurrences of the Unchecked_Access attribute.
 
+No_Unchecked_Conversion
+-----------------------
+.. index:: No_Unchecked_Conversion
+
+[RM J.13] This restriction ensures at compile time that there are no semantic
+dependences on the predefined generic function Unchecked_Conversion.
+
+No_Unchecked_Deallocation
+-------------------------
+.. index:: No_Unchecked_Deallocation
+
+[RM J.13] This restriction ensures at compile time that there are no semantic
+dependences on the predefined generic procedure Unchecked_Deallocation.
+
 No_Use_Of_Entity
 ----------------
 .. index:: No_Use_Of_Entity
@@ -722,6 +748,29 @@ where ``Name`` is the fully qualified entity, for example ::
 
    No_Use_Of_Entity => Ada.Text_IO.Put_Line
 
+Pure_Barriers
+-------------
+.. index:: Pure_Barriers
+
+[GNAT] This restriction ensures at compile time that protected entry
+barriers are restricted to:
+
+* components of the protected object (excluding selection from dereferences),
+* constant declarations,
+* named numbers,
+* enumeration literals,
+* integer literals,
+* real literals,
+* character literals,
+* implicitly defined comparison operators,
+* uses of the Standard."not" operator,
+* short-circuit operator,
+* the Count attribute
+
+This restriction is a relaxation of the Simple_Barriers restriction,
+but still ensures absence of side effects, exceptions, and recursion
+during the evaluation of the barriers.
+
 Simple_Barriers
 ---------------
 .. index:: Simple_Barriers
@@ -733,8 +782,8 @@ part of the protected type.  No other form of entry barriers is permitted.
 
 .. index:: Boolean_Entry_Barriers
 
-The restriction `Boolean_Entry_Barriers` is recognized as a
-synonym for `Simple_Barriers`. This is retained for historical
+The restriction ``Boolean_Entry_Barriers`` is recognized as a
+synonym for ``Simple_Barriers``. This is retained for historical
 compatibility purposes (and a warning will be generated for its use if
 warnings on obsolescent features are activated).
 
@@ -744,7 +793,7 @@ Static_Priorities
 
 [GNAT] This restriction ensures at compile time that all priority expressions
 are static, and that there are no dependences on the package
-`Ada.Dynamic_Priorities`.
+``Ada.Dynamic_Priorities``.
 
 Static_Storage_Size
 -------------------
@@ -771,10 +820,10 @@ No_Elaboration_Code
 
 [GNAT] This restriction ensures at compile time that no elaboration code is
 generated.  Note that this is not the same condition as is enforced
-by pragma `Preelaborate`.  There are cases in which pragma
-`Preelaborate` still permits code to be generated (e.g., code
+by pragma ``Preelaborate``.  There are cases in which pragma
+``Preelaborate`` still permits code to be generated (e.g., code
 to initialize a large array to all zeroes), and there are cases of units
-which do not meet the requirements for pragma `Preelaborate`,
+which do not meet the requirements for pragma ``Preelaborate``,
 but for which no elaboration code is generated.  Generally, it is
 the case that preelaborable units will meet the restrictions, with
 the exception of large aggregates initialized with an others_clause,
@@ -785,7 +834,7 @@ throughout a partition.
 
 In the case of aggregates with others, if the aggregate has a dynamic
 size, there is no way to eliminate the elaboration code (such dynamic
-bounds would be incompatible with `Preelaborate` in any case). If
+bounds would be incompatible with ``Preelaborate`` in any case). If
 the bounds are static, then use of this restriction actually modifies
 the code choice of the compiler to avoid generating a loop, and instead
 generate the aggregate statically if possible, no matter how many times
@@ -801,7 +850,7 @@ example, if the source contains a declaration:
 .. code-block:: ada
 
      Val : constant Integer := X;
-  
+
 
 where X is not a static constant, it may be possible, depending
 on complex optimization circuitry, for the compiler to figure
@@ -813,6 +862,27 @@ optimizer can figure this out.
 Note that this the implementation of this restriction requires full
 code generation. If it is used in conjunction with "semantics only"
 checking, then some cases of violations may be missed.
+
+When this restriction is active, we are not requesting control-flow
+preservation with -fpreserve-control-flow, and the static elaboration model is
+used, the compiler is allowed to suppress the elaboration counter normally
+associated with the unit. This counter is typically used to check for access
+before elaboration and to control multiple elaboration attempts.
+
+No_Dynamic_Sized_Objects
+------------------------
+.. index:: No_Dynamic_Sized_Objects
+
+[GNAT] This restriction disallows certain constructs that might lead to the
+creation of dynamic-sized composite objects (or array or discriminated type).
+An array subtype indication is illegal if the bounds are not static
+or references to discriminants of an enclosing type.
+A discriminated subtype indication is illegal if the type has
+discriminant-dependent array components or a variant part, and the
+discriminants are not static. In addition, array and record aggregates are
+illegal in corresponding cases. Note that this restriction does not forbid
+access discriminants. It is often a good idea to combine this restriction
+with No_Secondary_Stack.
 
 No_Entry_Queue
 --------------
@@ -862,7 +932,7 @@ No_Implementation_Restrictions
 .. index:: No_Implementation_Restrictions
 
 [GNAT] This restriction checks at compile time that no GNAT-defined restriction
-identifiers (other than `No_Implementation_Restrictions` itself)
+identifiers (other than ``No_Implementation_Restrictions`` itself)
 are present.  With this restriction, the only other restriction identifiers
 that can be used are those defined in the Ada Reference Manual.
 
@@ -886,6 +956,20 @@ Unrestricted_Access is forbidden is that it would require the prefix
 to be aliased, and in such cases, it can always be replaced by
 the standard attribute Unchecked_Access which is preferable.
 
+No_Implicit_Loops
+-----------------
+.. index:: No_Implicit_Loops
+
+[GNAT] This restriction ensures that the generated code of the unit marked
+with this restriction does not contain any implicit ``for`` loops, either by
+modifying the generated code where possible, or by rejecting any construct
+that would otherwise generate an implicit ``for`` loop. If this restriction is
+active, it is possible to build large array aggregates with all static
+components without generating an intermediate temporary, and without generating
+a loop to initialize individual components. Otherwise, a loop is created for
+arrays larger than about 5000 scalar components. Note that if this restriction
+is set in the spec of a package, it will not apply to its body.
+
 No_Obsolescent_Features
 -----------------------
 .. index:: No_Obsolescent_Features
@@ -898,33 +982,49 @@ No_Wide_Characters
 .. index:: No_Wide_Characters
 
 [GNAT] This restriction ensures at compile time that no uses of the types
-`Wide_Character` or `Wide_String` or corresponding wide
+``Wide_Character`` or ``Wide_String`` or corresponding wide
 wide types
 appear, and that no wide or wide wide string or character literals
 appear in the program (that is literals representing characters not in
-type `Character`).
+type ``Character``).
+
+Static_Dispatch_Tables
+----------------------
+.. index:: Static_Dispatch_Tables
+
+[GNAT] This restriction checks at compile time that all the artifacts
+associated with dispatch tables can be placed in read-only memory.
 
 SPARK_05
 --------
 .. index:: SPARK_05
 
-[GNAT] This restriction checks at compile time that some constructs
-forbidden in SPARK 2005 are not present. Error messages related to
-SPARK restriction have the form:
+[GNAT] This restriction checks at compile time that some constructs forbidden
+in SPARK 2005 are not present. Note that SPARK 2005 has been superseded by
+SPARK 2014, whose restrictions are checked by the tool GNATprove. To check that
+a codebase respects SPARK 2014 restrictions, mark the code with pragma or
+aspect ``SPARK_Mode``, and run the tool GNATprove at Stone assurance level, as
+follows::
 
+  gnatprove -P project.gpr --mode=stone
+
+or equivalently::
+
+  gnatprove -P project.gpr --mode=check_all
+
+With restriction ``SPARK_05``, error messages related to SPARK 2005 restriction
+have the form:
 
 ::
 
   violation of restriction "SPARK_05" at <source-location>
    <error message>
-  
 
 .. index:: SPARK
 
-The restriction `SPARK` is recognized as a
-synonym for `SPARK_05`. This is retained for historical
-compatibility purposes (and an unconditional warning will be generated
-for its use, advising replacement by `SPARK`).
+The restriction ``SPARK`` is recognized as a synonym for ``SPARK_05``. This is
+retained for historical compatibility purposes (and an unconditional warning
+will be generated for its use, advising replacement by ``SPARK_05``).
 
 This is not a replacement for the semantic checks performed by the
 SPARK Examiner tool, as the compiler currently only deals with code,
@@ -932,13 +1032,13 @@ not SPARK 2005 annotations, and does not guarantee catching all
 cases of constructs forbidden by SPARK 2005.
 
 Thus it may well be the case that code which passes the compiler with
-the SPARK restriction is rejected by the SPARK Examiner, e.g. due to
+the SPARK 2005 restriction is rejected by the SPARK Examiner, e.g. due to
 the different visibility rules of the Examiner based on SPARK 2005
-`inherit` annotations.
+``inherit`` annotations.
 
 This restriction can be useful in providing an initial filter for code
 developed using SPARK 2005, or in examining legacy code to see how far
-it is from meeting SPARK restrictions.
+it is from meeting SPARK 2005 restrictions.
 
 The list below summarizes the checks that are performed when this
 restriction is in force:
@@ -982,7 +1082,7 @@ restriction is in force:
 * No object renaming
 * No use clause
 * Aggregates must be qualified
-* Non-static choice in array aggregates not allowed
+* Nonstatic choice in array aggregates not allowed
 * The only view conversions which are allowed as in-out parameters are conversions of a tagged type to an ancestor type
 * No mixing of positional and named association in aggregate, no multi choice
 * AND, OR and XOR for arrays only allowed when operands have same static bounds
@@ -993,7 +1093,7 @@ restriction is in force:
 * Subprogram declaration only allowed in package spec (unless followed by import)
 * Access types not allowed
 * Incomplete type declaration not allowed
-* Object and subtype declarations must respect SPARK restrictions
+* Object and subtype declarations must respect SPARK 2005 restrictions
 * Digits or delta constraint not allowed
 * Decimal fixed point type not allowed
 * Aliasing of objects not allowed
@@ -1002,8 +1102,8 @@ restriction is in force:
 * Unary operators not allowed on modular types (except not)
 * Untagged record cannot be null
 * No class-wide operations
-* Initialization expressions must respect SPARK restrictions
-* Non-static ranges not allowed except in iteration schemes
+* Initialization expressions must respect SPARK 2005 restrictions
+* Nonstatic ranges not allowed except in iteration schemes
 * String subtypes must have lower bound of 1
 * Subtype of Boolean cannot have constraint
 * At most one tagged type or extension per package
@@ -1026,7 +1126,7 @@ strict that the latest SPARK 2005 language definition:
 This list summarises the main SPARK 2005 language rules that are not
 currently checked by the SPARK_05 restriction:
 
-* SPARK annotations are treated as comments so are not checked at all
+* SPARK 2005 annotations are treated as comments so are not checked at all
 * Based real literals not allowed
 * Objects cannot be initialized at declaration by calls to user-defined functions
 * Objects cannot be initialized at declaration by assignments from variables
@@ -1051,7 +1151,6 @@ currently checked by the SPARK_05 restriction:
 * Pragma import must be immediately after entity it names
 * No mutual recursion between multiple units (this can be checked with gnatcheck)
 
-Note that if a unit is compiled in Ada 95 mode with the SPARK restriction,
+Note that if a unit is compiled in Ada 95 mode with the SPARK 2005 restriction,
 violations will be reported for constructs forbidden in SPARK 95,
 instead of SPARK 2005.
-

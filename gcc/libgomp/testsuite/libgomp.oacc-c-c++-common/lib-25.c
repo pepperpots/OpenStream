@@ -1,4 +1,4 @@
-/* { dg-do run } */
+/* Exercise acc_create and acc_delete.  */
 
 #include <stdlib.h>
 #include <openacc.h>
@@ -22,9 +22,17 @@ main (int argc, char **argv)
 
   acc_delete (h, N);
 
+  if (!acc_is_present (h, N))
+    abort ();
+
+  acc_delete (h, N);
+
+#if !ACC_MEM_SHARED
+  if (acc_is_present (h, N))
+    abort ();
+#endif
+
   free (h);
 
   return 0;
 }
-
-/* { dg-shouldfail "libgomp: \[\h+,256\] already mapped to \[\h+,256\]" } */

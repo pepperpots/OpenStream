@@ -1,6 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 2007-2015 Free Software Foundation, Inc.
+// Copyright (C) 2007-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -236,9 +236,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__dt[1] = _M_data->_M_date_time_era_format;
       }
 
+#if !_GLIBCXX_INLINE_VERSION
       void
-      _M_am_pm_format(const _CharT* __ampm) const
-      { __ampm = _M_data->_M_am_pm_format; }
+      _M_am_pm_format(const _CharT*) const
+      { /* Kept for ABI compatibility, see PR65927 */ }
+#endif
 
       void
       _M_am_pm(const _CharT** __ampm) const
@@ -709,7 +711,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
        *
        *  @param __s        Start of string to parse.
        *  @param __end      End of string to parse.
-       *  @param __io       Source of the locale.
+       *  @param __f        Source of the locale.
        *  @param __err      Error flags to set.
        *  @param __tm       Pointer to struct tm to fill in.
        *  @param __format   Format specifier.
@@ -898,7 +900,7 @@ _GLIBCXX_END_NAMESPACE_CXX11
       explicit
       time_put_byname(const char*, size_t __refs = 0)
       : time_put<_CharT, _OutIter>(__refs)
-      { };
+      { }
 
 #if __cplusplus >= 201103L
       explicit

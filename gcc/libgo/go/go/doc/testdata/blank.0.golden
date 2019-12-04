@@ -4,14 +4,40 @@ PACKAGE blank
 IMPORTPATH
 	testdata/blank
 
+IMPORTS
+	os
+
 FILENAMES
 	testdata/blank.go
 
 CONSTANTS
+	// T constants counting from unexported constants. 
+	const (
+		C1	T
+		C2
+	
+		C3
+	
+		C4	int
+	)
+
+	// Constants with a single type that is not propagated. 
+	const (
+		Default		= 0644
+		Useless		= 0312
+		WideOpen	= 0777
+	)
+
+	// Constants with an imported type that is propagated. 
+	const (
+		M1	os.FileMode
+		M2
+		M3
+	)
+
 	// Package constants. 
 	const (
-		_	int	= iota
-		I1
+		I1	int
 		I2
 	)
 
@@ -28,10 +54,9 @@ TYPES
 	// 
 	type T int
 
-	// T constants. 
+	// T constants counting from a blank constant. 
 	const (
-		_	T	= iota
-		T1
+		T1	T
 		T2
 	)
 

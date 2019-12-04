@@ -1,5 +1,5 @@
 /* Output xcoff-format symbol table information from GNU compiler.
-   Copyright (C) 1992-2015 Free Software Foundation, Inc.
+   Copyright (C) 1992-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -20,30 +20,19 @@ along with GCC; see the file COPYING3.  If not see
 /* Output xcoff-format symbol table data.  The main functionality is contained
    in dbxout.c.  This file implements the sdbout-like parts of the xcoff
    interface.  Many functions are very similar to their counterparts in
-   sdbout.c.  */
+   the former sdbout.c file.  */
 
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
-#include "varasm.h"
-#include "rtl.h"
-#include "flags.h"
-#include "diagnostic-core.h"
-#include "output.h"
-#include "ggc.h"
 #include "target.h"
+#include "rtl.h"
+#include "tree.h"
+#include "diagnostic-core.h"
+#include "varasm.h"
+#include "output.h"
 #include "debug.h"
+#include "file-prefix-map.h" /* remap_debug_filename()  */
 
 #ifdef XCOFF_DEBUGGING_INFO
 
@@ -75,6 +64,7 @@ static const char *xcoff_current_function_file;
 
 char *xcoff_bss_section_name;
 char *xcoff_private_data_section_name;
+char *xcoff_private_rodata_section_name;
 char *xcoff_tls_data_section_name;
 char *xcoff_tbss_section_name;
 char *xcoff_read_only_section_name;
@@ -155,7 +145,7 @@ static const struct xcoff_type_number xcoff_type_numbers[] = {
   { "float", -12 },
   { "double", -13 },
   { "long double", -14 },
-  /* Pascal and Fortran types run from -15 to -29.  */
+  /* Fortran types run from -15 to -29.  */
   { "wchar", -30 },  /* XXX Should be "wchar_t" ? */
   { "long long int", -31 },
   { "long long unsigned int", -32 },
@@ -339,8 +329,8 @@ xcoffout_source_file (FILE *file, const char *filename, int inline_p)
 /* Output a line number symbol entry for location (FILENAME, LINE).  */
 
 void
-xcoffout_source_line (unsigned int line, const char *filename,
-                      int discriminator ATTRIBUTE_UNUSED,
+xcoffout_source_line (unsigned int line, unsigned int column ATTRIBUTE_UNUSED,
+		      const char *filename, int discriminator ATTRIBUTE_UNUSED,
                       bool is_stmt ATTRIBUTE_UNUSED)
 {
   bool inline_p = (strcmp (xcoff_current_function_file, filename) != 0
@@ -356,7 +346,7 @@ xcoffout_source_line (unsigned int line, const char *filename,
    This function works by walking the tree structure of blocks,
    counting blocks until it finds the desired block.  */
 
-static int do_block = 0;
+static unsigned int do_block = 0;
 
 static void
 xcoffout_block (tree block, int depth, tree args)
@@ -458,12 +448,13 @@ xcoffout_declare_function (FILE *file, tree decl, const char *name)
 
 void
 xcoffout_begin_prologue (unsigned int line,
+			 unsigned int column ATTRIBUTE_UNUSED,
 			 const char *file ATTRIBUTE_UNUSED)
 {
   ASM_OUTPUT_LFB (asm_out_file, line);
   dbxout_parms (DECL_ARGUMENTS (current_function_decl));
 
-  /* Emit the symbols for the outermost BLOCK's variables.  sdbout.c does this
+  /* Emit the symbols for the outermost BLOCK's variables.  sdbout.c did this
      in sdbout_begin_block, but there is no guarantee that there will be any
      inner block 1, so we must do it here.  This gives a result similar to
      dbxout, so it does make some sense.  */

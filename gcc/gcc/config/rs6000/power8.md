@@ -1,5 +1,5 @@
 ;; Scheduling description for IBM POWER8 processor.
-;; Copyright (C) 2013-2015 Free Software Foundation, Inc.
+;; Copyright (C) 2013-2019 Free Software Foundation, Inc.
 ;;
 ;; Contributed by Pat Haugen (pthaugen@us.ibm.com).
 
@@ -281,7 +281,7 @@
   "DU_first_power8,cru_power8+FXU_power8")
 
 (define_insn_reservation "power8-crlogical" 3
-  (and (eq_attr "type" "cr_logical,delayed_cr")
+  (and (eq_attr "type" "cr_logical")
        (eq_attr "cpu" "power8"))
   "DU_first_power8,cru_power8")
 
@@ -317,7 +317,7 @@
 
 ; VS Unit (includes FP/VSX/VMX/DFP/Crypto)
 (define_insn_reservation "power8-fp" 6
-  (and (eq_attr "type" "fp,dmul")
+  (and (eq_attr "type" "fp,fpsimple,dmul,dfp")
        (eq_attr "cpu" "power8"))
   "DU_any_power8,VSU_power8")
 
@@ -350,7 +350,8 @@
   "DU_any_power8,VSU_power8")
 
 (define_insn_reservation "power8-vecsimple" 2
-  (and (eq_attr "type" "vecperm,vecsimple,veccmp")
+  (and (eq_attr "type" "vecperm,vecsimple,veclogical,vecmove,veccmp,
+			veccmpfx")
        (eq_attr "cpu" "power8"))
   "DU_any_power8,VSU_power8")
 

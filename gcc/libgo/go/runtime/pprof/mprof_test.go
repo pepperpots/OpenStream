@@ -1,15 +1,15 @@
-// Copyright 2014 The Go Authors.  All rights reserved.
+// Copyright 2014 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package pprof_test
+package pprof
 
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"regexp"
 	"runtime"
-	. "runtime/pprof"
 	"testing"
 	"unsafe"
 )
@@ -22,11 +22,8 @@ func allocateTransient1M() {
 	}
 }
 
+//go:noinline
 func allocateTransient2M() {
-	// prevent inlining
-	if memSink == nil {
-		panic("bad")
-	}
 	memSink = make([]byte, 2<<20)
 }
 
@@ -43,6 +40,17 @@ func allocatePersistent1K() {
 		obj := &Obj32{link: persistentMemSink}
 		persistentMemSink = obj
 	}
+}
+
+// Allocate transient memory using reflect.Call.
+
+func allocateReflectTransient() {
+	memSink = make([]byte, 3<<20)
+}
+
+func allocateReflect() {
+	rv := reflect.ValueOf(allocateReflectTransient)
+	rv.Call(nil)
 }
 
 var memoryProfilerRun = 0
@@ -64,6 +72,7 @@ func TestMemoryProfiler(t *testing.T) {
 	allocateTransient1M()
 	allocateTransient2M()
 	allocatePersistent1K()
+	allocateReflect()
 	memSink = nil
 
 	runtime.GC() // materialize stats
@@ -75,22 +84,29 @@ func TestMemoryProfiler(t *testing.T) {
 	memoryProfilerRun++
 
 	tests := []string{
+
 		fmt.Sprintf(`%v: %v \[%v: %v\] @ 0x[0-9,a-f x]+
-#	0x[0-9,a-f]+	pprof_test\.allocatePersistent1K\+0x[0-9,a-f]+	.*/mprof_test\.go:43
-#	0x[0-9,a-f]+	runtime_pprof_test\.TestMemoryProfiler\+0x[0-9,a-f]+	.*/mprof_test\.go:66
+#	0x[0-9,a-f]+	pprof\.allocatePersistent1K\+0x[0-9,a-f]+	.*/mprof_test\.go:40
+#	0x[0-9,a-f]+	runtime/pprof\.TestMemoryProfiler\+0x[0-9,a-f]+	.*/mprof_test\.go:74
 `, 32*memoryProfilerRun, 1024*memoryProfilerRun, 32*memoryProfilerRun, 1024*memoryProfilerRun),
 
 		fmt.Sprintf(`0: 0 \[%v: %v\] @ 0x[0-9,a-f x]+
-#	0x[0-9,a-f]+	pprof_test\.allocateTransient1M\+0x[0-9,a-f]+	.*/mprof_test.go:21
-#	0x[0-9,a-f]+	runtime_pprof_test\.TestMemoryProfiler\+0x[0-9,a-f]+	.*/mprof_test.go:64
+#	0x[0-9,a-f]+	pprof\.allocateTransient1M\+0x[0-9,a-f]+	.*/mprof_test.go:21
+#	0x[0-9,a-f]+	runtime/pprof\.TestMemoryProfiler\+0x[0-9,a-f]+	.*/mprof_test.go:72
 `, (1<<10)*memoryProfilerRun, (1<<20)*memoryProfilerRun),
 
 		// This should start with "0: 0" but gccgo's imprecise
 		// GC means that sometimes the value is not collected.
 		fmt.Sprintf(`(0|%v): (0|%v) \[%v: %v\] @ 0x[0-9,a-f x]+
-#	0x[0-9,a-f]+	pprof_test\.allocateTransient2M\+0x[0-9,a-f]+	.*/mprof_test.go:30
-#	0x[0-9,a-f]+	runtime_pprof_test\.TestMemoryProfiler\+0x[0-9,a-f]+	.*/mprof_test.go:65
+#	0x[0-9,a-f]+	pprof\.allocateTransient2M\+0x[0-9,a-f]+	.*/mprof_test.go:27
+#	0x[0-9,a-f]+	runtime/pprof\.TestMemoryProfiler\+0x[0-9,a-f]+	.*/mprof_test.go:73
 `, memoryProfilerRun, (2<<20)*memoryProfilerRun, memoryProfilerRun, (2<<20)*memoryProfilerRun),
+
+		// This should start with "0: 0" but gccgo's imprecise
+		// GC means that sometimes the value is not collected.
+		fmt.Sprintf(`(0|%v): (0|%v) \[%v: %v\] @( 0x[0-9,a-f]+)+
+#	0x[0-9,a-f]+	pprof\.allocateReflectTransient\+0x[0-9,a-f]+	.*/mprof_test.go:48
+`, memoryProfilerRun, (3<<20)*memoryProfilerRun, memoryProfilerRun, (3<<20)*memoryProfilerRun),
 	}
 
 	for _, test := range tests {

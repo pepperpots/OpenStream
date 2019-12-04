@@ -20,7 +20,7 @@
 ! F2008: C4106
   u2 = [u1] ! { dg-error "shall not be unlimited polymorphic" }
 
-  i = u2 ! { dg-error "Can\\'t convert CLASS\\(\\*\\)" }
+  i = u2 ! { dg-error "Cannot convert CLASS\\(\\*\\)" }
 
 ! Repeats same_type_as_1.f03 for unlimited polymorphic u2
   flag = same_type_as (i, u2) ! { dg-error "cannot be of type INTEGER" }
@@ -48,7 +48,7 @@ contains
     call foo (y)
 
     y => tgt ! This is OK, of course.
-    tgt => y ! { dg-error "must be unlimited polymorphic" }
+    tgt => y ! { dg-error "Data-pointer-object at .1. must be unlimited polymorphic" }
 
     select type (y) ! This is the correct way to accomplish the previous
       type is (integer)

@@ -1,5 +1,6 @@
-! { dg-do compile }
-! { dg-options "-fcoarray=lib" }
+! { dg-do run }
+! { dg-options "-fcoarray=lib -lcaf_single" }
+! { dg-additional-options "-latomic" { target libatomic_available } }
 !
 ! Contributed by Reinhold Bader
 !
@@ -30,14 +31,14 @@ program pmup
           !WRITE(*,*) 'OK'
         ELSE
           WRITE(*,*) 'FAIL'
-          call abort()
+          STOP 1
         END IF
       TYPE IS (t)
         ii = a(1)[1]%a
-        call abort()
+        STOP 2
       CLASS IS (t)
         ii = a(1)[1]%a
-        call abort()
+        STOP 3
     END SELECT
   END IF
 
@@ -46,8 +47,8 @@ program pmup
   allocate(t :: a(3)[*])
   IF (this_image() == num_images()) THEN
     SELECT TYPE (a)
-      TYPE IS (t)     ! FIXME: When implemented, turn into "do-do run"
-      a(:)[1]%a = 4.0 ! { dg-error "Sorry, coindexed access at \\(1\\) to a scalar component with an array partref is not yet supported" }
+      TYPE IS (t)
+      a(:)[1]%a = 4.0
     END SELECT
   END IF
   SYNC ALL
@@ -56,17 +57,17 @@ program pmup
     SELECT TYPE (a)
    TYPE IS (real)
       ii = a(1)[1]
-      call abort()
-    TYPE IS (t)                       ! FIXME: When implemented, turn into "do-do run"
-      IF (ALL(A(:)[1]%a == 4.0)) THEN ! { dg-error "Sorry, coindexed access at \\(1\\) to a scalar component with an array partref is not yet supported" }
+      STOP 4
+    TYPE IS (t)
+      IF (ALL(A(:)[1]%a == 4.0)) THEN
         !WRITE(*,*) 'OK'
       ELSE
         WRITE(*,*) 'FAIL'
-        call abort()
+        STOP 5
       END IF
     CLASS IS (t)
       ii = a(1)[1]%a
-      call abort()
+      STOP 6
     END SELECT
   END IF
 end program

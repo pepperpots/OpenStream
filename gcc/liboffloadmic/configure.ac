@@ -28,7 +28,6 @@
 # Process this file with autoconf to produce a configure script, like so:
 # aclocal -I .. -I ../config && autoconf && automake
 
-AC_PREREQ([2.64])
 AC_INIT([MIC Offload Runtime Library], [1.0], ,[liboffloadmic])
 
 AC_CANONICAL_SYSTEM
@@ -127,6 +126,9 @@ else
 fi
 AC_SUBST(link_offloadmic_host)
 AC_SUBST(link_offloadmic_target)
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 # Must be last
 AC_OUTPUT

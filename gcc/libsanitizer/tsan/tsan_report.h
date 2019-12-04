@@ -12,8 +12,8 @@
 #define TSAN_REPORT_H
 
 #include "sanitizer_common/sanitizer_symbolizer.h"
+#include "sanitizer_common/sanitizer_vector.h"
 #include "tsan_defs.h"
-#include "tsan_vector.h"
 
 namespace __tsan {
 
@@ -22,9 +22,11 @@ enum ReportType {
   ReportTypeVptrRace,
   ReportTypeUseAfterFree,
   ReportTypeVptrUseAfterFree,
+  ReportTypeExternalRace,
   ReportTypeThreadLeak,
   ReportTypeMutexDestroyLocked,
   ReportTypeMutexDoubleLock,
+  ReportTypeMutexInvalidAccess,
   ReportTypeMutexBadUnlock,
   ReportTypeMutexBadReadLock,
   ReportTypeMutexBadReadUnlock,
@@ -34,10 +36,9 @@ enum ReportType {
 };
 
 struct ReportStack {
-  ReportStack *next;
-  AddressInfo info;
+  SymbolizedStack *frames;
   bool suppressable;
-  static ReportStack *New(uptr addr);
+  static ReportStack *New();
 
  private:
   ReportStack();
@@ -54,6 +55,7 @@ struct ReportMop {
   int size;
   bool write;
   bool atomic;
+  uptr external_tag;
   Vector<ReportMopMutex> mset;
   ReportStack *stack;
 
@@ -73,6 +75,7 @@ struct ReportLocation {
   DataInfo global;
   uptr heap_chunk_start;
   uptr heap_chunk_size;
+  uptr external_tag;
   int tid;
   int fd;
   bool suppressable;
@@ -85,10 +88,11 @@ struct ReportLocation {
 
 struct ReportThread {
   int id;
-  uptr pid;
+  tid_t os_id;
   bool running;
+  bool workerthread;
   char *name;
-  int parent_tid;
+  u32 parent_tid;
   ReportStack *stack;
 };
 
@@ -102,6 +106,7 @@ struct ReportMutex {
 class ReportDesc {
  public:
   ReportType typ;
+  uptr tag;
   Vector<ReportStack*> stacks;
   Vector<ReportMop*> mops;
   Vector<ReportLocation*> locs;

@@ -1,5 +1,5 @@
 /* Integrated Register Allocator.  Changing code and generating moves.
-   Copyright (C) 2006-2015 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -68,50 +68,21 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "regs.h"
+#include "backend.h"
 #include "rtl.h"
-#include "tm_p.h"
-#include "target.h"
-#include "flags.h"
-#include "obstack.h"
-#include "bitmap.h"
-#include "hard-reg-set.h"
+#include "tree.h"
 #include "predict.h"
-#include "vec.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
+#include "df.h"
+#include "insn-config.h"
+#include "regs.h"
+#include "memmodel.h"
+#include "ira.h"
+#include "ira-int.h"
 #include "cfgrtl.h"
 #include "cfgbuild.h"
-#include "basic-block.h"
-#include "symtab.h"
-#include "statistics.h"
-#include "double-int.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "alias.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
-#include "insn-config.h"
-#include "expmed.h"
-#include "dojump.h"
-#include "explow.h"
-#include "calls.h"
-#include "emit-rtl.h"
-#include "varasm.h"
-#include "stmt.h"
 #include "expr.h"
-#include "recog.h"
-#include "params.h"
 #include "reload.h"
-#include "df.h"
-#include "ira-int.h"
+#include "cfgloop.h"
 
 
 /* Data used to emit live range split insns and to flattening IR.  */
@@ -812,7 +783,7 @@ modify_move_list (move_t list)
       to = move->to;
       if ((hard_regno = ALLOCNO_HARD_REGNO (to)) < 0)
 	continue;
-      nregs = hard_regno_nregs[hard_regno][ALLOCNO_MODE (to)];
+      nregs = hard_regno_nregs (hard_regno, ALLOCNO_MODE (to));
       for (i = 0; i < nregs; i++)
 	{
 	  hard_regno_last_set[hard_regno + i] = move;
@@ -825,7 +796,7 @@ modify_move_list (move_t list)
       to = move->to;
       if ((hard_regno = ALLOCNO_HARD_REGNO (from)) >= 0)
 	{
-	  nregs = hard_regno_nregs[hard_regno][ALLOCNO_MODE (from)];
+	  nregs = hard_regno_nregs (hard_regno, ALLOCNO_MODE (from));
 	  for (n = i = 0; i < nregs; i++)
 	    if (hard_regno_last_set_check[hard_regno + i] == curr_tick
 		&& (ALLOCNO_REGNO (hard_regno_last_set[hard_regno + i]->to)
@@ -863,7 +834,7 @@ modify_move_list (move_t list)
       to = move->to;
       if ((hard_regno = ALLOCNO_HARD_REGNO (from)) >= 0)
 	{
-	  nregs = hard_regno_nregs[hard_regno][ALLOCNO_MODE (from)];
+	  nregs = hard_regno_nregs (hard_regno, ALLOCNO_MODE (from));
 	  for (i = 0; i < nregs; i++)
 	    if (hard_regno_last_set_check[hard_regno + i] == curr_tick
 		&& ALLOCNO_HARD_REGNO
@@ -915,7 +886,7 @@ modify_move_list (move_t list)
 	}
       if ((hard_regno = ALLOCNO_HARD_REGNO (to)) < 0)
 	continue;
-      nregs = hard_regno_nregs[hard_regno][ALLOCNO_MODE (to)];
+      nregs = hard_regno_nregs (hard_regno, ALLOCNO_MODE (to));
       for (i = 0; i < nregs; i++)
 	{
 	  hard_regno_last_set[hard_regno + i] = move;

@@ -24,8 +24,6 @@ bar (long a)
   return r;
 }
 
-/* { dg-final { scan-rtl-dump "Will split live ranges of parameters" "ira"  } } */
-/* { dg-final { scan-rtl-dump "Split live-range of register" "ira"  } } */
-/* { dg-final { scan-rtl-dump "Performing shrink-wrapping" "pro_and_epilogue"  } } */
-/* { dg-final { cleanup-rtl-dump "ira" } } */
-/* { dg-final { cleanup-rtl-dump "pro_and_epilogue" } } */
+/* { dg-final { scan-rtl-dump "Will split live ranges of parameters" "ira" } } */
+/* { dg-final { scan-rtl-dump "Split live-range of register" "ira" { xfail *-*-* } } } */
+/* { dg-final { scan-rtl-dump "Performing shrink-wrapping" "pro_and_epilogue" { xfail powerpc*-*-* } } } */

@@ -2,7 +2,7 @@
 /* { dg-options "-O3 -fno-ipa-cp -fdump-ipa-inline-details -fno-early-inlining" } */
 struct A {
   virtual int foo () {return 1;}
-  int wrapfoo () {foo();}
+  void wrapfoo () {foo();}
   A() {wrapfoo();}
 };
 struct B:A {virtual int foo () {return 2;}};
@@ -17,7 +17,7 @@ test (struct A *a)
     __builtin_abort ();
 }
 
-main()
+int main()
 {
   struct B a;
   dostuff (&a);
@@ -29,4 +29,3 @@ main()
 /* { dg-final { scan-ipa-dump "Second type is base of first" "inline"  } } */
 /* { dg-final { scan-ipa-dump-times "Discovered a virtual call to a known target\[^\\n\]*A::foo" 1 "inline"  } } */
 /* { dg-final { scan-ipa-dump-times "Discovered a virtual call to a known target\[^\\n\]*B::foo" 1 "inline"  } } */
-/* { dg-final { cleanup-ipa-dump "inline" } } */

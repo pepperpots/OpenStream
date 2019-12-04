@@ -1,5 +1,5 @@
 /* Internals of libgccjit: classes for recording calls made to the JIT API.
-   Copyright (C) 2013-2015 Free Software Foundation, Inc.
+   Copyright (C) 2013-2019 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -23,6 +23,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "jit-common.h"
 #include "jit-logging.h"
+
+class timer;
 
 namespace gcc {
 
@@ -147,6 +149,11 @@ public:
   new_string_literal (const char *value);
 
   rvalue *
+  new_rvalue_from_vector (location *loc,
+			  vector_type *type,
+			  rvalue **elements);
+
+  rvalue *
   new_unary_op (location *loc,
 		enum gcc_jit_unary_op op,
 		type *result_type,
@@ -209,6 +216,12 @@ public:
 
   void
   append_command_line_options (vec <char *> *argvec);
+
+  void
+  add_driver_option (const char *optname);
+
+  void
+  append_driver_options (auto_string_vec *argvec);
 
   void
   enable_dump (const char *dumpname,
@@ -276,6 +289,9 @@ public:
   void
   get_all_requested_dumps (vec <recording::requested_dump> *out);
 
+  void set_timer (timer *t) { m_timer = t; }
+  timer *get_timer () const { return m_timer; }
+
 private:
   void log_all_options () const;
   void log_str_option (enum gcc_jit_str_option opt) const;
@@ -292,6 +308,8 @@ private:
      contexts.  This has itself as its own m_toplevel_ctxt.  */
   context *m_toplevel_ctxt;
 
+  timer *m_timer;
+
   int m_error_count;
 
   char *m_first_error_str;
@@ -305,6 +323,7 @@ private:
   bool m_bool_options[GCC_JIT_NUM_BOOL_OPTIONS];
   bool m_inner_bool_options[NUM_INNER_BOOL_OPTIONS];
   auto_vec <char *> m_command_line_options;
+  auto_vec <char *> m_driver_options;
 
   /* Dumpfiles that were requested via gcc_jit_context_enable_dump.  */
   auto_vec<requested_dump> m_requested_dumps;
@@ -394,11 +413,11 @@ public:
   static string * from_printf (context *ctxt, const char *fmt, ...)
     GNU_PRINTF(2, 3);
 
-  void replay_into (replayer *) {}
+  void replay_into (replayer *) FINAL OVERRIDE {}
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   size_t m_len;
@@ -417,7 +436,7 @@ public:
     m_created_by_user (created_by_user)
  {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
   playback::location *
   playback_location (replayer *r)
@@ -446,12 +465,12 @@ public:
     return static_cast <playback::location *> (m_playback_obj);
   }
 
-  location *dyn_cast_location () { return this; }
+  location *dyn_cast_location () FINAL OVERRIDE { return this; }
   bool created_by_user () const { return m_created_by_user; }
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   string *m_filename;
@@ -466,6 +485,8 @@ public:
   type *get_pointer ();
   type *get_const ();
   type *get_volatile ();
+  type *get_aligned (size_t alignment_in_bytes);
+  type *get_vector (size_t num_units);
 
   /* Get the type obtained when dereferencing this type.
 
@@ -477,12 +498,18 @@ public:
   virtual function_type *dyn_cast_function_type () { return NULL; }
   virtual function_type *as_a_function_type() { gcc_unreachable (); return NULL; }
   virtual struct_ *dyn_cast_struct () { return NULL; }
+  virtual vector_type *dyn_cast_vector_type () { return NULL; }
 
   /* Is it typesafe to copy to this type from rtype?  */
   virtual bool accepts_writes_from (type *rtype)
   {
     gcc_assert (rtype);
-    return this == rtype->unqualified ();
+    return this->unqualified ()->is_same_type_as (rtype->unqualified ());
+  }
+
+  virtual bool is_same_type_as (type *other)
+  {
+    return this == other;
   }
 
   /* Strip off "const" etc */
@@ -497,6 +524,7 @@ public:
   virtual type *is_pointer () = 0;
   virtual type *is_array () = 0;
   virtual bool is_void () const { return false; }
+  virtual bool has_known_size () const { return true; }
 
   bool is_numeric () const
   {
@@ -530,9 +558,9 @@ public:
   : type (ctxt),
     m_kind (kind) {}
 
-  type *dereference ();
+  type *dereference () FINAL OVERRIDE;
 
-  bool accepts_writes_from (type *rtype)
+  bool accepts_writes_from (type *rtype) FINAL OVERRIDE
   {
     if (m_kind == GCC_JIT_TYPE_VOID_PTR)
       if (rtype->is_pointer ())
@@ -545,19 +573,19 @@ public:
     return type::accepts_writes_from (rtype);
   }
 
-  bool is_int () const;
-  bool is_float () const;
-  bool is_bool () const;
-  type *is_pointer () { return dereference (); }
-  type *is_array () { return NULL; }
-  bool is_void () const { return m_kind == GCC_JIT_TYPE_VOID; }
+  bool is_int () const FINAL OVERRIDE;
+  bool is_float () const FINAL OVERRIDE;
+  bool is_bool () const FINAL OVERRIDE;
+  type *is_pointer () FINAL OVERRIDE { return dereference (); }
+  type *is_array () FINAL OVERRIDE { return NULL; }
+  bool is_void () const FINAL OVERRIDE { return m_kind == GCC_JIT_TYPE_VOID; }
 
 public:
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   enum gcc_jit_types m_kind;
@@ -571,88 +599,131 @@ public:
   : type (other_type->m_ctxt),
     m_other_type (other_type) {}
 
-  type *dereference () { return m_other_type; }
+  type *dereference () FINAL OVERRIDE { return m_other_type; }
 
-  bool accepts_writes_from (type *rtype);
+  bool accepts_writes_from (type *rtype) FINAL OVERRIDE;
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  bool is_int () const { return false; }
-  bool is_float () const { return false; }
-  bool is_bool () const { return false; }
-  type *is_pointer () { return m_other_type; }
-  type *is_array () { return NULL; }
+  bool is_int () const FINAL OVERRIDE { return false; }
+  bool is_float () const FINAL OVERRIDE { return false; }
+  bool is_bool () const FINAL OVERRIDE { return false; }
+  type *is_pointer () FINAL OVERRIDE { return m_other_type; }
+  type *is_array () FINAL OVERRIDE { return NULL; }
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   type *m_other_type;
 };
 
-/* Result of "gcc_jit_type_get_const".  */
-class memento_of_get_const : public type
+/* A decorated version of a type, for get_const, get_volatile,
+   get_aligned, and get_vector.  */
+
+class decorated_type : public type
 {
 public:
-  memento_of_get_const (type *other_type)
+  decorated_type (type *other_type)
   : type (other_type->m_ctxt),
     m_other_type (other_type) {}
 
-  type *dereference () { return m_other_type->dereference (); }
+  type *dereference () FINAL OVERRIDE { return m_other_type->dereference (); }
 
-  bool accepts_writes_from (type */*rtype*/)
+  bool is_int () const FINAL OVERRIDE { return m_other_type->is_int (); }
+  bool is_float () const FINAL OVERRIDE { return m_other_type->is_float (); }
+  bool is_bool () const FINAL OVERRIDE { return m_other_type->is_bool (); }
+  type *is_pointer () FINAL OVERRIDE { return m_other_type->is_pointer (); }
+  type *is_array () FINAL OVERRIDE { return m_other_type->is_array (); }
+
+protected:
+  type *m_other_type;
+};
+
+/* Result of "gcc_jit_type_get_const".  */
+class memento_of_get_const : public decorated_type
+{
+public:
+  memento_of_get_const (type *other_type)
+  : decorated_type (other_type) {}
+
+  bool accepts_writes_from (type */*rtype*/) FINAL OVERRIDE
   {
     /* Can't write to a "const".  */
     return false;
   }
 
   /* Strip off the "const", giving the underlying type.  */
-  type *unqualified () { return m_other_type; }
+  type *unqualified () FINAL OVERRIDE { return m_other_type; }
 
-  bool is_int () const { return m_other_type->is_int (); }
-  bool is_float () const { return m_other_type->is_float (); }
-  bool is_bool () const { return m_other_type->is_bool (); }
-  type *is_pointer () { return m_other_type->is_pointer (); }
-  type *is_array () { return m_other_type->is_array (); }
-
-  void replay_into (replayer *);
+  void replay_into (replayer *) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-
-private:
-  type *m_other_type;
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 };
 
 /* Result of "gcc_jit_type_get_volatile".  */
-class memento_of_get_volatile : public type
+class memento_of_get_volatile : public decorated_type
 {
 public:
   memento_of_get_volatile (type *other_type)
-  : type (other_type->m_ctxt),
-    m_other_type (other_type) {}
-
-  type *dereference () { return m_other_type->dereference (); }
+  : decorated_type (other_type) {}
 
   /* Strip off the "volatile", giving the underlying type.  */
-  type *unqualified () { return m_other_type; }
+  type *unqualified () FINAL OVERRIDE { return m_other_type; }
 
-  bool is_int () const { return m_other_type->is_int (); }
-  bool is_float () const { return m_other_type->is_float (); }
-  bool is_bool () const { return m_other_type->is_bool (); }
-  type *is_pointer () { return m_other_type->is_pointer (); }
-  type *is_array () { return m_other_type->is_array (); }
-
-  void replay_into (replayer *);
+  void replay_into (replayer *) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+};
+
+/* Result of "gcc_jit_type_get_aligned".  */
+class memento_of_get_aligned : public decorated_type
+{
+public:
+  memento_of_get_aligned (type *other_type, size_t alignment_in_bytes)
+  : decorated_type (other_type),
+    m_alignment_in_bytes (alignment_in_bytes) {}
+
+  /* Strip off the alignment, giving the underlying type.  */
+  type *unqualified () FINAL OVERRIDE { return m_other_type; }
+
+  void replay_into (replayer *) FINAL OVERRIDE;
 
 private:
-  type *m_other_type;
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+
+private:
+  size_t m_alignment_in_bytes;
+};
+
+/* Result of "gcc_jit_type_get_vector".  */
+class vector_type : public decorated_type
+{
+public:
+  vector_type (type *other_type, size_t num_units)
+  : decorated_type (other_type),
+    m_num_units (num_units) {}
+
+  size_t get_num_units () const { return m_num_units; }
+
+  vector_type *dyn_cast_vector_type () FINAL OVERRIDE { return this; }
+
+  type *get_element_type () { return m_other_type; }
+
+  void replay_into (replayer *) FINAL OVERRIDE;
+
+private:
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+
+private:
+  size_t m_num_units;
 };
 
 class array_type : public type
@@ -668,19 +739,19 @@ class array_type : public type
     m_num_elements (num_elements)
   {}
 
-  type *dereference ();
+  type *dereference () FINAL OVERRIDE;
 
-  bool is_int () const { return false; }
-  bool is_float () const { return false; }
-  bool is_bool () const { return false; }
-  type *is_pointer () { return NULL; }
-  type *is_array () { return m_element_type; }
+  bool is_int () const FINAL OVERRIDE { return false; }
+  bool is_float () const FINAL OVERRIDE { return false; }
+  bool is_bool () const FINAL OVERRIDE { return false; }
+  type *is_pointer () FINAL OVERRIDE { return NULL; }
+  type *is_array () FINAL OVERRIDE { return m_element_type; }
 
-  void replay_into (replayer *);
+  void replay_into (replayer *) FINAL OVERRIDE;
 
  private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
  private:
   location *m_loc;
@@ -697,17 +768,19 @@ public:
 		 type **param_types,
 		 int is_variadic);
 
-  type *dereference ();
-  function_type *dyn_cast_function_type () { return this; }
-  function_type *as_a_function_type () { return this; }
+  type *dereference () FINAL OVERRIDE;
+  function_type *dyn_cast_function_type () FINAL OVERRIDE { return this; }
+  function_type *as_a_function_type () FINAL OVERRIDE { return this; }
 
-  bool is_int () const { return false; }
-  bool is_float () const { return false; }
-  bool is_bool () const { return false; }
-  type *is_pointer () { return NULL; }
-  type *is_array () { return NULL; }
+  bool is_same_type_as (type *other) FINAL OVERRIDE;
 
-  void replay_into (replayer *);
+  bool is_int () const FINAL OVERRIDE { return false; }
+  bool is_float () const FINAL OVERRIDE { return false; }
+  bool is_bool () const FINAL OVERRIDE { return false; }
+  type *is_pointer () FINAL OVERRIDE { return NULL; }
+  type *is_array () FINAL OVERRIDE { return NULL; }
+
+  void replay_into (replayer *) FINAL OVERRIDE;
 
   type * get_return_type () const { return m_return_type; }
   const vec<type *> &get_param_types () const { return m_param_types; }
@@ -720,9 +793,9 @@ public:
 			     memento *ptr_type);
 
  private:
-  string * make_debug_string ();
+  string * make_debug_string () FINAL OVERRIDE;
   string * make_debug_string_with (const char *);
-  void write_reproducer (reproducer &r);
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   type *m_return_type;
@@ -749,9 +822,9 @@ public:
   compound_type * get_container () const { return m_container; }
   void set_container (compound_type *c) { m_container = c; }
 
-  void replay_into (replayer *);
+  void replay_into (replayer *) FINAL OVERRIDE;
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
   playback::field *
   playback_field () const
@@ -760,8 +833,8 @@ public:
   }
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   location *m_loc;
@@ -787,13 +860,15 @@ public:
 	      int num_fields,
 	      field **fields);
 
-  type *dereference ();
+  type *dereference () FINAL OVERRIDE;
 
-  bool is_int () const { return false; }
-  bool is_float () const { return false; }
-  bool is_bool () const { return false; }
-  type *is_pointer () { return NULL; }
-  type *is_array () { return NULL; }
+  bool is_int () const FINAL OVERRIDE { return false; }
+  bool is_float () const FINAL OVERRIDE { return false; }
+  bool is_bool () const FINAL OVERRIDE { return false; }
+  type *is_pointer () FINAL OVERRIDE { return NULL; }
+  type *is_array () FINAL OVERRIDE { return NULL; }
+
+  bool has_known_size () const FINAL OVERRIDE { return m_fields != NULL; }
 
   playback::compound_type *
   playback_compound_type ()
@@ -814,18 +889,18 @@ public:
 	   location *loc,
 	   string *name);
 
-  struct_ *dyn_cast_struct () { return this; }
+  struct_ *dyn_cast_struct () FINAL OVERRIDE { return this; }
 
   type *
   as_type () { return this; }
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  const char *access_as_type (reproducer &r);
+  const char *access_as_type (reproducer &r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 };
 
 // memento of struct_::set_fields
@@ -836,16 +911,16 @@ public:
 	  int num_fields,
 	  field **fields);
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
   int length () const { return m_fields.length (); }
   field *get_field (int i) const { return m_fields[i]; }
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   compound_type *m_struct_or_union;
@@ -859,15 +934,11 @@ public:
 	  location *loc,
 	  string *name);
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-
-private:
-  location *m_loc;
-  string *m_name;
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 };
 
 /* An abstract base class for operations that visit all rvalues within an
@@ -950,8 +1021,9 @@ public:
   void set_scope (function *scope);
   function *get_scope () const { return m_scope; }
 
-  /* Dynamic cast.  */
+  /* Dynamic casts.  */
   virtual param *dyn_cast_param () { return NULL; }
+  virtual base_call *dyn_cast_base_call () { return NULL; }
 
   virtual const char *access_as_rvalue (reproducer &r);
 
@@ -999,7 +1071,7 @@ public:
   rvalue *
   as_rvalue () { return this; }
 
-  const char *access_as_rvalue (reproducer &r);
+  const char *access_as_rvalue (reproducer &r) OVERRIDE;
   virtual const char *access_as_lvalue (reproducer &r);
 };
 
@@ -1016,9 +1088,9 @@ public:
   lvalue *
   as_lvalue () { return this; }
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *) {}
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE {}
 
   playback::param *
   playback_param () const
@@ -1026,15 +1098,18 @@ public:
     return static_cast <playback::param *> (m_playback_obj);
   }
 
-  param *dyn_cast_param () { return this; }
+  param *dyn_cast_param () FINAL OVERRIDE { return this; }
 
-  const char *access_as_rvalue (reproducer &r);
-  const char *access_as_lvalue (reproducer &r);
+  const char *access_as_rvalue (reproducer &r) FINAL OVERRIDE;
+  const char *access_as_lvalue (reproducer &r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string () { return m_name; }
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_PRIMARY; }
+  string * make_debug_string () FINAL OVERRIDE { return m_name; }
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
 
 private:
   string *m_name;
@@ -1053,7 +1128,7 @@ public:
 	    int is_variadic,
 	    enum built_in_function builtin_id);
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
   playback::function *
   playback_function () const
@@ -1083,15 +1158,17 @@ public:
 
   bool is_variadic () const { return m_is_variadic; }
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
   void validate ();
 
   void dump_to_dot (const char *path);
 
+  rvalue *get_address (location *loc);
+
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   location *m_loc;
@@ -1103,6 +1180,7 @@ private:
   enum built_in_function m_builtin_id;
   auto_vec<local *> m_locals;
   auto_vec<block *> m_blocks;
+  type *m_fn_ptr_type;
 };
 
 class block : public memento
@@ -1173,7 +1251,7 @@ public:
     return static_cast <playback::block *> (m_playback_obj);
   }
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
   bool validate ();
 
@@ -1185,10 +1263,10 @@ public:
   vec <block *> get_successor_blocks () const;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
   void dump_to_dot (pretty_printer *pp);
   void dump_edges_to_dot (pretty_printer *pp);
@@ -1217,16 +1295,19 @@ public:
     m_name (name)
   {}
 
-  void replay_into (replayer *);
+  void replay_into (replayer *) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *) {}
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE {}
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string () { return m_name; }
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_PRIMARY; }
+  string * make_debug_string () FINAL OVERRIDE { return m_name; }
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
 
 private:
   enum gcc_jit_global_kind m_kind;
@@ -1244,18 +1325,21 @@ public:
   : rvalue (ctxt, loc, type),
     m_value (value) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *) {}
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE {}
 
-  bool is_constant () const { return true; }
+  bool is_constant () const FINAL OVERRIDE { return true; }
 
-  bool get_wide_int (wide_int *out) const;
+  bool get_wide_int (wide_int *out) const FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_PRIMARY; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
 
 private:
   HOST_TYPE m_value;
@@ -1270,17 +1354,45 @@ public:
   : rvalue (ctxt, loc, ctxt->get_type (GCC_JIT_TYPE_CONST_CHAR_PTR)),
     m_value (value) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *) {}
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE {}
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_PRIMARY; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
 
 private:
   string *m_value;
+};
+
+class memento_of_new_rvalue_from_vector : public rvalue
+{
+public:
+  memento_of_new_rvalue_from_vector (context *ctxt,
+				     location *loc,
+				     vector_type *type,
+				     rvalue **elements);
+
+  void replay_into (replayer *r) FINAL OVERRIDE;
+
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE;
+
+private:
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
+
+private:
+  vector_type *m_vector_type;
+  auto_vec<rvalue *> m_elements;
 };
 
 class unary_op : public rvalue
@@ -1296,14 +1408,17 @@ public:
     m_a (a)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const {return PRECEDENCE_UNARY;}
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_UNARY;
+  }
 
 private:
   enum gcc_jit_unary_op m_op;
@@ -1323,14 +1438,14 @@ public:
     m_a (a),
     m_b (b) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const;
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE;
 
 private:
   enum gcc_jit_binary_op m_op;
@@ -1351,14 +1466,14 @@ public:
     m_b (b)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const;
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE;
 
 private:
   enum gcc_jit_comparison m_op;
@@ -1377,20 +1492,52 @@ public:
     m_rvalue (a)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_CAST; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_CAST;
+  }
 
 private:
   rvalue *m_rvalue;
 };
 
-class call : public rvalue
+class base_call : public rvalue
+{
+ public:
+  base_call (context *ctxt,
+	     location *loc,
+	     type *type_,
+	     int numargs,
+	     rvalue **args);
+
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_POSTFIX;
+  }
+
+  base_call *dyn_cast_base_call () FINAL OVERRIDE { return this; }
+
+  void set_require_tail_call (bool require_tail_call)
+  {
+    m_require_tail_call = require_tail_call;
+  }
+
+ protected:
+  void write_reproducer_tail_call (reproducer &r, const char *id);
+
+ protected:
+  auto_vec<rvalue *> m_args;
+  bool m_require_tail_call;
+};
+
+class call : public base_call
 {
 public:
   call (context *ctxt,
@@ -1399,21 +1546,19 @@ public:
 	int numargs,
 	rvalue **args);
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_POSTFIX; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   function *m_func;
-  auto_vec<rvalue *> m_args;
 };
 
-class call_through_ptr : public rvalue
+class call_through_ptr : public base_call
 {
 public:
   call_through_ptr (context *ctxt,
@@ -1422,18 +1567,16 @@ public:
 		    int numargs,
 		    rvalue **args);
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_POSTFIX; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   rvalue *m_fn_ptr;
-  auto_vec<rvalue *> m_args;
 };
 
 class array_access : public lvalue
@@ -1448,14 +1591,17 @@ public:
     m_index (index)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_POSTFIX; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_POSTFIX;
+  }
 
 private:
   rvalue *m_ptr;
@@ -1474,14 +1620,17 @@ public:
     m_field (field)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_POSTFIX; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_POSTFIX;
+  }
 
 private:
   lvalue *m_lvalue;
@@ -1500,14 +1649,17 @@ public:
     m_field (field)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_POSTFIX; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_POSTFIX;
+  }
 
 private:
   rvalue *m_rvalue;
@@ -1526,14 +1678,17 @@ public:
     m_field (field)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_POSTFIX; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_POSTFIX;
+  }
 
 private:
   rvalue *m_rvalue;
@@ -1549,14 +1704,17 @@ public:
   : lvalue (ctxt, loc, val->get_type ()->dereference ()),
     m_rvalue (val) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_UNARY; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_UNARY;
+  }
 
 private:
   rvalue *m_rvalue;
@@ -1572,17 +1730,46 @@ public:
     m_lvalue (val)
   {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *v);
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_UNARY; }
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_UNARY;
+  }
 
 private:
   lvalue *m_lvalue;
+};
+
+class function_pointer : public rvalue
+{
+public:
+  function_pointer (context *ctxt,
+		    location *loc,
+		    function *fn,
+		    type *type)
+  : rvalue (ctxt, loc, type),
+    m_fn (fn) {}
+
+  void replay_into (replayer *r) FINAL OVERRIDE;
+
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
+
+private:
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_UNARY;
+  }
+
+private:
+  function *m_fn;
 };
 
 class local : public lvalue
@@ -1596,16 +1783,19 @@ public:
     set_scope (func);
   }
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  void visit_children (rvalue_visitor *) {}
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE {}
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string () { return m_name; }
-  void write_reproducer (reproducer &r);
-  enum precedence get_precedence () const { return PRECEDENCE_PRIMARY; }
+  string * make_debug_string () FINAL OVERRIDE { return m_name; }
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
 
 private:
   function *m_func;
@@ -1617,7 +1807,7 @@ class statement : public memento
 public:
   virtual vec <block *> get_successor_blocks () const;
 
-  void write_to_dump (dump &d);
+  void write_to_dump (dump &d) FINAL OVERRIDE;
 
   block *get_block () const { return m_block; }
   location *get_loc () const { return m_loc; }
@@ -1648,11 +1838,11 @@ public:
   : statement (b, loc),
     m_rvalue (rvalue) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   rvalue *m_rvalue;
@@ -1669,11 +1859,11 @@ public:
     m_lvalue (lvalue),
     m_rvalue (rvalue) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   lvalue *m_lvalue;
@@ -1693,11 +1883,11 @@ public:
     m_op (op),
     m_rvalue (rvalue) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   lvalue *m_lvalue;
@@ -1714,11 +1904,11 @@ public:
   : statement (b, loc),
     m_text (text) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   string *m_text;
@@ -1737,13 +1927,13 @@ public:
     m_on_true (on_true),
     m_on_false (on_false) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  vec <block *> get_successor_blocks () const;
+  vec <block *> get_successor_blocks () const FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   rvalue *m_boolval;
@@ -1760,13 +1950,13 @@ public:
   : statement (b, loc),
     m_target (target) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  vec <block *> get_successor_blocks () const;
+  vec <block *> get_successor_blocks () const FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   block *m_target;
@@ -1781,13 +1971,13 @@ public:
   : statement (b, loc),
     m_rvalue (rvalue) {}
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  vec <block *> get_successor_blocks () const;
+  vec <block *> get_successor_blocks () const FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   rvalue *m_rvalue;
@@ -1810,12 +2000,12 @@ class case_ : public memento
   rvalue *get_max_value () const { return m_max_value; }
   block *get_dest_block () const { return m_dest_block; }
 
-  void replay_into (replayer *) { /* empty */ }
+  void replay_into (replayer *) FINAL OVERRIDE { /* empty */ }
 
-  void write_reproducer (reproducer &r);
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
+  string * make_debug_string () FINAL OVERRIDE;
 
  private:
   rvalue *m_min_value;
@@ -1833,13 +2023,13 @@ public:
 	   int num_cases,
 	   case_ **cases);
 
-  void replay_into (replayer *r);
+  void replay_into (replayer *r) FINAL OVERRIDE;
 
-  vec <block *> get_successor_blocks () const;
+  vec <block *> get_successor_blocks () const FINAL OVERRIDE;
 
 private:
-  string * make_debug_string ();
-  void write_reproducer (reproducer &r);
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
 
 private:
   rvalue *m_expr;

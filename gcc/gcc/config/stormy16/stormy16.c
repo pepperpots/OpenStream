@@ -1,5 +1,5 @@
 /* Xstormy16 target functions.
-   Copyright (C) 1997-2015 Free Software Foundation, Inc.
+   Copyright (C) 1997-2019 Free Software Foundation, Inc.
    Contributed by Red Hat, Inc.
 
    This file is part of GCC.
@@ -18,77 +18,41 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "insn-config.h"
-#include "conditions.h"
-#include "insn-flags.h"
-#include "output.h"
-#include "insn-attr.h"
-#include "flags.h"
+#include "tree.h"
+#include "stringpool.h"
+#include "attribs.h"
+#include "gimple.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "stringpool.h"
+#include "optabs.h"
+#include "emit-rtl.h"
 #include "recog.h"
 #include "diagnostic-core.h"
-#include "obstack.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
+#include "output.h"
 #include "fold-const.h"
-#include "stringpool.h"
 #include "stor-layout.h"
 #include "varasm.h"
 #include "calls.h"
-#include "hashtab.h"
-#include "function.h"
-#include "statistics.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "expmed.h"
-#include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
-#include "stmt.h"
 #include "expr.h"
-#include "insn-codes.h"
-#include "optabs.h"
-#include "except.h"
-#include "target.h"
-#include "target-def.h"
-#include "tm_p.h"
 #include "langhooks.h"
-#include "hash-table.h"
-#include "ggc.h"
-#include "predict.h"
-#include "dominance.h"
-#include "cfg.h"
 #include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "basic-block.h"
-#include "tree-ssa-alias.h"
-#include "internal-fn.h"
-#include "gimple-fold.h"
-#include "tree-eh.h"
-#include "gimple-expr.h"
-#include "is-a.h"
-#include "gimple.h"
 #include "gimplify.h"
-#include "df.h"
 #include "reload.h"
 #include "builtins.h"
+
+/* This file should be included last.  */
+#include "target-def.h"
 
 static rtx emit_addhi3_postreload (rtx, rtx, rtx);
 static void xstormy16_asm_out_constructor (rtx, int);
@@ -98,7 +62,6 @@ static void xstormy16_asm_output_mi_thunk (FILE *, tree, HOST_WIDE_INT,
 
 static void xstormy16_init_builtins (void);
 static rtx xstormy16_expand_builtin (tree, rtx, rtx, machine_mode, int);
-static bool xstormy16_rtx_costs (rtx, int, int, int, int *, bool);
 static int xstormy16_address_cost (rtx, machine_mode, addr_space_t, bool);
 static bool xstormy16_return_in_memory (const_tree, const_tree);
 
@@ -109,10 +72,13 @@ static GTY(()) section *bss100_section;
    scanned.  In either case, *TOTAL contains the cost result.  */
 
 static bool
-xstormy16_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED,
+xstormy16_rtx_costs (rtx x, machine_mode mode ATTRIBUTE_UNUSED,
+		     int outer_code ATTRIBUTE_UNUSED,
 		     int opno ATTRIBUTE_UNUSED, int *total,
 		     bool speed ATTRIBUTE_UNUSED)
 {
+  int code = GET_CODE (x);
+
   switch (code)
     {
     case CONST_INT:
@@ -256,7 +222,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
 
   condition_rtx = gen_rtx_fmt_ee (code, mode, op0, op1);
   loc_ref = gen_rtx_LABEL_REF (VOIDmode, loc);
-  branch = gen_rtx_SET (VOIDmode, pc_rtx,
+  branch = gen_rtx_SET (pc_rtx,
 			gen_rtx_IF_THEN_ELSE (VOIDmode, condition_rtx,
 					      loc_ref, pc_rtx));
 
@@ -270,7 +236,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
     {
       rtx sub;
 #if 0
-      sub = gen_rtx_SET (VOIDmode, op0, gen_rtx_MINUS (SImode, op0, op1));
+      sub = gen_rtx_SET (op0, gen_rtx_MINUS (SImode, op0, op1));
 #else
       sub = gen_rtx_CLOBBER (SImode, op0);
 #endif
@@ -865,7 +831,7 @@ xstormy16_split_move (machine_mode mode, rtx dest, rtx src)
       gcc_assert (GET_CODE (w_src) != SUBREG
 		  && GET_CODE (w_dest) != SUBREG);
 
-      insn = emit_insn (gen_rtx_SET (VOIDmode, w_dest, w_src));
+      insn = emit_insn (gen_rtx_SET (w_dest, w_src));
       if (auto_inc_reg_rtx)
         REG_NOTES (insn) = alloc_EXPR_LIST (REG_INC,
                                             auto_inc_reg_rtx,
@@ -884,7 +850,7 @@ xstormy16_expand_move (machine_mode mode, rtx dest, rtx src)
       rtx pmv      = XEXP (dest, 0);
       rtx dest_reg = XEXP (pmv, 0);
       rtx dest_mod = XEXP (pmv, 1);
-      rtx set      = gen_rtx_SET (Pmode, dest_reg, dest_mod);
+      rtx set      = gen_rtx_SET (dest_reg, dest_mod);
       rtx clobber  = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
 
       dest = gen_rtx_MEM (mode, dest_reg);
@@ -895,7 +861,7 @@ xstormy16_expand_move (machine_mode mode, rtx dest, rtx src)
       rtx pmv     = XEXP (src, 0);
       rtx src_reg = XEXP (pmv, 0);
       rtx src_mod = XEXP (pmv, 1);
-      rtx set     = gen_rtx_SET (Pmode, src_reg, src_mod);
+      rtx set     = gen_rtx_SET (src_reg, src_mod);
       rtx clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
 
       src = gen_rtx_MEM (mode, src_reg);
@@ -921,7 +887,7 @@ xstormy16_expand_move (machine_mode mode, rtx dest, rtx src)
       return;
     }
 
-  emit_insn (gen_rtx_SET (VOIDmode, dest, src));
+  emit_insn (gen_rtx_SET (dest, src));
 }
 
 /* Stack Layout:
@@ -1047,7 +1013,7 @@ emit_addhi3_postreload (rtx dest, rtx src0, rtx src1)
 {
   rtx set, clobber, insn;
 
-  set = gen_rtx_SET (VOIDmode, dest, gen_rtx_PLUS (HImode, src0, src1));
+  set = gen_rtx_SET (dest, gen_rtx_PLUS (HImode, src0, src1));
   clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
   insn = emit_insn (gen_rtx_PARALLEL (VOIDmode, gen_rtvec (2, set, clobber)));
   return insn;
@@ -1098,10 +1064,9 @@ xstormy16_expand_prologue (void)
 
 	dwarf = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (2));
 
-	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (VOIDmode,
-					     gen_rtx_MEM (Pmode, stack_pointer_rtx),
+	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (gen_rtx_MEM (Pmode, stack_pointer_rtx),
 					     reg);
-	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (Pmode, stack_pointer_rtx,
+	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (stack_pointer_rtx,
 					     plus_constant (Pmode,
 							    stack_pointer_rtx,
 							    GET_MODE_SIZE (Pmode)));
@@ -1122,10 +1087,9 @@ xstormy16_expand_prologue (void)
 
 	dwarf = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (2));
 
-	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (VOIDmode,
-					     gen_rtx_MEM (Pmode, stack_pointer_rtx),
+	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (gen_rtx_MEM (Pmode, stack_pointer_rtx),
 					     reg);
-	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (Pmode, stack_pointer_rtx,
+	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (stack_pointer_rtx,
 					     plus_constant (Pmode,
 							    stack_pointer_rtx,
 							    GET_MODE_SIZE (Pmode)));
@@ -1658,7 +1622,7 @@ static void
 xstormy16_asm_out_destructor (rtx symbol, int priority)
 {
   const char *section = ".dtors";
-  char buf[16];
+  char buf[18];
 
   /* ??? This only works reliably with the GNU linker.  */
   if (priority != DEFAULT_INIT_PRIORITY)
@@ -1680,7 +1644,7 @@ static void
 xstormy16_asm_out_constructor (rtx symbol, int priority)
 {
   const char *section = ".ctors";
-  char buf[16];
+  char buf[18];
 
   /* ??? This only works reliably with the GNU linker.  */
   if (priority != DEFAULT_INIT_PRIORITY)
@@ -1703,7 +1667,8 @@ xstormy16_asm_out_constructor (rtx symbol, int priority)
    Print a memory address as an operand to reference that memory location.  */
 
 static void
-xstormy16_print_operand_address (FILE *file, rtx address)
+xstormy16_print_operand_address (FILE *file, machine_mode /*mode*/,
+				 rtx address)
 {
   HOST_WIDE_INT offset;
   int pre_dec, post_inc;
@@ -1810,7 +1775,7 @@ xstormy16_print_operand (FILE *file, rtx x, int code)
       else if (LABEL_P (x))
 	output_asm_label (x);
       else
-	xstormy16_print_operand_address (file, x);
+	xstormy16_print_operand_address (file, VOIDmode, x);
       return;
 
     case 'o':
@@ -1866,7 +1831,7 @@ xstormy16_print_operand (FILE *file, rtx x, int code)
       break;
 
     case MEM:
-      xstormy16_print_operand_address (file, XEXP (x, 0));
+      xstormy16_print_operand_address (file, GET_MODE (x), XEXP (x, 0));
       break;
 
     default:
@@ -1960,7 +1925,7 @@ xstormy16_expand_call (rtx retval, rtx dest, rtx counter)
   call = gen_rtx_CALL (mode, gen_rtx_MEM (FUNCTION_MODE, dest),
 		       counter);
   if (retval)
-    call = gen_rtx_SET (VOIDmode, retval, call);
+    call = gen_rtx_SET (retval, call);
 
   if (! CONSTANT_P (dest))
     {
@@ -2028,10 +1993,10 @@ xstormy16_expand_arith (machine_mode mode, enum rtx_code code,
 
 	      sub_1 = gen_rtx_MINUS (HImode, w_src0,
 				     gen_rtx_ZERO_EXTEND (HImode, gen_rtx_REG (BImode, CARRY_REGNUM)));
-	      sub = gen_rtx_SET (VOIDmode, w_dest,
+	      sub = gen_rtx_SET (w_dest,
 				 gen_rtx_MINUS (HImode, sub_1, w_src1));
 	      clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
-	      branch = gen_rtx_SET (VOIDmode, pc_rtx,
+	      branch = gen_rtx_SET (pc_rtx,
 				    gen_rtx_IF_THEN_ELSE (VOIDmode,
 							  gen_rtx_EQ (HImode,
 								      sub_1,
@@ -2059,12 +2024,12 @@ xstormy16_expand_arith (machine_mode mode, enum rtx_code code,
 	      && INTVAL (w_src1) == -(code == AND))
 	    continue;
 
-	  insn = gen_rtx_SET (VOIDmode, w_dest, gen_rtx_fmt_ee (code, mode,
-								w_src0, w_src1));
+	  insn = gen_rtx_SET (w_dest, gen_rtx_fmt_ee (code, mode,
+						      w_src0, w_src1));
 	  break;
 
 	case NOT:
-	  insn = gen_rtx_SET (VOIDmode, w_dest, gen_rtx_NOT (mode, w_src0));
+	  insn = gen_rtx_SET (w_dest, gen_rtx_NOT (mode, w_src0));
 	  break;
 
 	default:
@@ -2226,15 +2191,15 @@ static tree xstormy16_handle_below100_attribute
 
 static const struct attribute_spec xstormy16_attribute_table[] =
 {
-  /* name, min_len, max_len, decl_req, type_req, fn_type_req, handler,
-     affects_type_identity.  */
-  { "interrupt", 0, 0, false, true,  true,
-    xstormy16_handle_interrupt_attribute , false },
-  { "BELOW100",  0, 0, false, false, false,
-    xstormy16_handle_below100_attribute, false },
-  { "below100",  0, 0, false, false, false,
-    xstormy16_handle_below100_attribute, false },
-  { NULL,        0, 0, false, false, false, NULL, false }
+  /* name, min_len, max_len, decl_req, type_req, fn_type_req,
+     affects_type_identity, handler, exclude.  */
+  { "interrupt", 0, 0, false, true,  true, false,
+    xstormy16_handle_interrupt_attribute, NULL },
+  { "BELOW100",  0, 0, false, false, false, false,
+    xstormy16_handle_below100_attribute, NULL },
+  { "below100",  0, 0, false, false, false, false,
+    xstormy16_handle_below100_attribute, NULL },
+  { NULL,        0, 0, false, false, false, false, NULL, NULL }
 };
 
 /* Handle an "interrupt" attribute;
@@ -2654,6 +2619,30 @@ xstormy16_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
   const HOST_WIDE_INT size = int_size_in_bytes (type);
   return (size == -1 || size > UNITS_PER_WORD * NUM_ARGUMENT_REGISTERS);
 }
+
+/* Implement TARGET_HARD_REGNO_MODE_OK.  */
+
+static bool
+xstormy16_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
+{
+  return regno != 16 || mode == BImode;
+}
+
+/* Implement TARGET_MODES_TIEABLE_P.  */
+
+static bool
+xstormy16_modes_tieable_p (machine_mode mode1, machine_mode mode2)
+{
+  return mode1 != BImode && mode2 != BImode;
+}
+
+/* Implement PUSH_ROUNDING.  */
+
+poly_int64
+xstormy16_push_rounding (poly_int64 bytes)
+{
+  return (bytes + 1) & ~1;
+}
 
 #undef  TARGET_ASM_ALIGNED_HI_OP
 #define TARGET_ASM_ALIGNED_HI_OP "\t.hword\t"
@@ -2717,6 +2706,9 @@ xstormy16_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
 #undef  TARGET_PREFERRED_OUTPUT_RELOAD_CLASS
 #define TARGET_PREFERRED_OUTPUT_RELOAD_CLASS xstormy16_preferred_reload_class
 
+#undef TARGET_LRA_P
+#define TARGET_LRA_P hook_bool_void_false
+
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	xstormy16_legitimate_address_p
 #undef TARGET_MODE_DEPENDENT_ADDRESS_P
@@ -2727,6 +2719,17 @@ xstormy16_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
 
 #undef TARGET_TRAMPOLINE_INIT
 #define TARGET_TRAMPOLINE_INIT xstormy16_trampoline_init
+
+#undef TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK xstormy16_hard_regno_mode_ok
+#undef TARGET_MODES_TIEABLE_P
+#define TARGET_MODES_TIEABLE_P xstormy16_modes_tieable_p
+
+#undef TARGET_CONSTANT_ALIGNMENT
+#define TARGET_CONSTANT_ALIGNMENT constant_alignment_word_strings
+
+#undef  TARGET_HAVE_SPECULATION_SAFE_VALUE
+#define TARGET_HAVE_SPECULATION_SAFE_VALUE speculation_safe_value_not_needed
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

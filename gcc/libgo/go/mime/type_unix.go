@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris
+// +build aix darwin dragonfly freebsd hurd js,wasm linux nacl netbsd openbsd solaris
 
 package mime
 
@@ -11,6 +11,10 @@ import (
 	"os"
 	"strings"
 )
+
+func init() {
+	osInitMime = initMimeUnix
+}
 
 var typeFiles = []string{
 	"/etc/mime.types",
@@ -44,7 +48,7 @@ func loadMimeFile(filename string) {
 	}
 }
 
-func initMime() {
+func initMimeUnix() {
 	for _, filename := range typeFiles {
 		loadMimeFile(filename)
 	}

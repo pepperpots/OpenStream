@@ -1,5 +1,5 @@
 /* Utilities for ipa analysis.
-   Copyright (C) 2005-2015 Free Software Foundation, Inc.
+   Copyright (C) 2005-2019 Free Software Foundation, Inc.
    Contributed by Kenneth Zadeck <zadeck@naturalbridge.com>
 
 This file is part of GCC.
@@ -21,50 +21,20 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
 #include "tree.h"
-#include "fold-const.h"
-#include "predict.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "basic-block.h"
-#include "tree-ssa-alias.h"
-#include "internal-fn.h"
-#include "gimple-expr.h"
-#include "is-a.h"
 #include "gimple.h"
-#include "tree-inline.h"
-#include "dumpfile.h"
-#include "langhooks.h"
-#include "splay-tree.h"
-#include "hash-map.h"
-#include "plugin-api.h"
-#include "ipa-ref.h"
-#include "cgraph.h"
-#include "ipa-utils.h"
-#include "bitmap.h"
-#include "ipa-reference.h"
-#include "flags.h"
-#include "diagnostic.h"
-#include "langhooks.h"
-#include "lto-streamer.h"
+#include "predict.h"
 #include "alloc-pool.h"
+#include "cgraph.h"
+#include "lto-streamer.h"
+#include "dumpfile.h"
+#include "splay-tree.h"
+#include "ipa-utils.h"
 #include "symbol-summary.h"
+#include "tree-vrp.h"
 #include "ipa-prop.h"
-#include "ipa-inline.h"
+#include "ipa-fnsummary.h"
 
 /* Debugging function for postorder and inorder code. NOTE is a string
    that is printed before the nodes are printed.  ORDER is an array of
@@ -88,12 +58,11 @@ ipa_print_order (FILE* out,
 
 struct searchc_env {
   struct cgraph_node **stack;
-  int stack_size;
   struct cgraph_node **result;
+  int stack_size;
   int order_pos;
   splay_tree nodes_marked_new;
   bool reduce;
-  bool allow_overwritable;
   int count;
 };
 
@@ -116,7 +85,7 @@ searchc (struct searchc_env* env, struct cgraph_node *v,
 
   /* mark node as old */
   v_info->new_node = false;
-  splay_tree_remove (env->nodes_marked_new, v->uid);
+  splay_tree_remove (env->nodes_marked_new, v->get_uid ());
 
   v_info->dfn_number = env->count;
   v_info->low_link = env->count;
@@ -135,7 +104,7 @@ searchc (struct searchc_env* env, struct cgraph_node *v,
 
       if (w->aux
 	  && (avail > AVAIL_INTERPOSABLE
-	      || (env->allow_overwritable && avail == AVAIL_INTERPOSABLE)))
+	      || avail == AVAIL_INTERPOSABLE))
 	{
 	  w_info = (struct ipa_dfs_info *) w->aux;
 	  if (w_info->new_node)
@@ -192,7 +161,7 @@ searchc (struct searchc_env* env, struct cgraph_node *v,
 
 int
 ipa_reduced_postorder (struct cgraph_node **order,
-		       bool reduce, bool allow_overwritable,
+		       bool reduce,
 		       bool (*ignore_edge) (struct cgraph_edge *))
 {
   struct cgraph_node *node;
@@ -205,15 +174,13 @@ ipa_reduced_postorder (struct cgraph_node **order,
   env.nodes_marked_new = splay_tree_new (splay_tree_compare_ints, 0, 0);
   env.count = 1;
   env.reduce = reduce;
-  env.allow_overwritable = allow_overwritable;
 
   FOR_EACH_DEFINED_FUNCTION (node)
     {
       enum availability avail = node->get_availability ();
 
       if (avail > AVAIL_INTERPOSABLE
-	  || (allow_overwritable
-	      && (avail == AVAIL_INTERPOSABLE)))
+	  || avail == AVAIL_INTERPOSABLE)
 	{
 	  /* Reuse the info if it is already there.  */
 	  struct ipa_dfs_info *info = (struct ipa_dfs_info *) node->aux;
@@ -225,7 +192,7 @@ ipa_reduced_postorder (struct cgraph_node **order,
 	  node->aux = info;
 
 	  splay_tree_insert (env.nodes_marked_new,
-			     (splay_tree_key)node->uid,
+			     (splay_tree_key)node->get_uid (),
 			     (splay_tree_value)node);
 	}
       else
@@ -405,6 +372,20 @@ get_base_var (tree t)
   return t;
 }
 
+/* Scale function of calls in NODE by ratio ORIG_COUNT/NODE->count.  */
+
+void
+scale_ipa_profile_for_fn (struct cgraph_node *node, profile_count orig_count)
+{
+  profile_count to = node->count;
+  profile_count::adjust_for_ipa_scaling (&to, &orig_count);
+  struct cgraph_edge *e;
+  
+  for (e = node->callees; e; e = e->next_callee)
+    e->count = e->count.apply_scale (to, orig_count);
+  for (e = node->indirect_calls; e; e = e->next_callee)
+    e->count = e->count.apply_scale (to, orig_count);
+}
 
 /* SRC and DST are going to be merged.  Take SRC's profile and merge it into
    DST so it is not going to be lost.  Possibly destroy SRC's body on the way
@@ -422,6 +403,7 @@ ipa_merge_profiles (struct cgraph_node *dst,
   if (!src->definition
       || !dst->definition)
     return;
+
   if (src->frequency < dst->frequency)
     src->frequency = dst->frequency;
 
@@ -432,15 +414,34 @@ ipa_merge_profiles (struct cgraph_node *dst,
   if (src->profile_id && !dst->profile_id)
     dst->profile_id = src->profile_id;
 
-  if (!dst->count)
+  /* Merging zero profile to dst is no-op.  */
+  if (src->count.ipa () == profile_count::zero ())
+    return;
+
+  /* FIXME when we merge in unknown profile, we ought to set counts as
+     unsafe.  */
+  if (!src->count.initialized_p ()
+      || !(src->count.ipa () == src->count))
     return;
   if (symtab->dump_file)
     {
-      fprintf (symtab->dump_file, "Merging profiles of %s/%i to %s/%i\n",
-	       xstrdup_for_dump (src->name ()), src->order,
-	       xstrdup_for_dump (dst->name ()), dst->order);
+      fprintf (symtab->dump_file, "Merging profiles of %s to %s\n",
+	       src->dump_name (), dst->dump_name ());
     }
-  dst->count += src->count;
+  profile_count orig_count = dst->count;
+
+  if (dst->count.initialized_p () && dst->count.ipa () == dst->count)
+    dst->count += src->count.ipa ();
+  else 
+    dst->count = src->count.ipa ();
+
+  /* First handle functions with no gimple body.  */
+  if (dst->thunk.thunk_p || dst->alias
+      || src->thunk.thunk_p || src->alias)
+    {
+      scale_ipa_profile_for_fn (dst, orig_count);
+      return;
+    }
 
   /* This is ugly.  We need to get both function bodies into memory.
      If declaration is merged, we need to duplicate it to be able
@@ -550,16 +551,40 @@ ipa_merge_profiles (struct cgraph_node *dst,
 	  unsigned int i;
 
 	  dstbb = BASIC_BLOCK_FOR_FN (dstcfun, srcbb->index);
-	  dstbb->count += srcbb->count;
-	  for (i = 0; i < EDGE_COUNT (srcbb->succs); i++)
+
+	  /* Either sum the profiles if both are IPA and not global0, or
+	     pick more informative one (that is nonzero IPA if other is
+	     uninitialized, guessed or global0).   */
+	  if (!dstbb->count.ipa ().initialized_p ()
+	      || (dstbb->count.ipa () == profile_count::zero ()
+		  && (srcbb->count.ipa ().initialized_p ()
+		      && !(srcbb->count.ipa () == profile_count::zero ()))))
 	    {
-	      edge srce = EDGE_SUCC (srcbb, i);
-	      edge dste = EDGE_SUCC (dstbb, i);
-	      dste->count += srce->count;
+	      dstbb->count = srcbb->count;
+	      for (i = 0; i < EDGE_COUNT (srcbb->succs); i++)
+		{
+		  edge srce = EDGE_SUCC (srcbb, i);
+		  edge dste = EDGE_SUCC (dstbb, i);
+		  if (srce->probability.initialized_p ())
+		    dste->probability = srce->probability;
+		}
+	    }	
+	  else if (srcbb->count.ipa ().initialized_p ()
+		   && !(srcbb->count.ipa () == profile_count::zero ()))
+	    {
+	      for (i = 0; i < EDGE_COUNT (srcbb->succs); i++)
+		{
+		  edge srce = EDGE_SUCC (srcbb, i);
+		  edge dste = EDGE_SUCC (dstbb, i);
+		  dste->probability = 
+		    dste->probability * dstbb->count.probability_in (dstbb->count + srcbb->count)
+		    + srce->probability * srcbb->count.probability_in (dstbb->count + srcbb->count);
+		}
+	      dstbb->count += srcbb->count;
 	    }
 	}
       push_cfun (dstcfun);
-      counts_to_freqs ();
+      update_max_bb_count ();
       compute_function_frequency ();
       pop_cfun ();
       for (e = dst->callees; e; e = e->next_callee)
@@ -567,17 +592,11 @@ ipa_merge_profiles (struct cgraph_node *dst,
 	  if (e->speculative)
 	    continue;
 	  e->count = gimple_bb (e->call_stmt)->count;
-	  e->frequency = compute_call_stmt_bb_frequency
-			     (dst->decl,
-			      gimple_bb (e->call_stmt));
 	}
       for (e = dst->indirect_calls, e2 = src->indirect_calls; e;
 	   e2 = (e2 ? e2->next_callee : NULL), e = e->next_callee)
 	{
-	  gcov_type count = gimple_bb (e->call_stmt)->count;
-	  int freq = compute_call_stmt_bb_frequency
-			(dst->decl,
-			 gimple_bb (e->call_stmt));
+	  profile_count count = gimple_bb (e->call_stmt)->count;
 	  /* When call is speculative, we need to re-distribute probabilities
 	     the same way as they was.  This is not really correct because
 	     in the other copy the speculation may differ; but probably it
@@ -592,7 +611,8 @@ ipa_merge_profiles (struct cgraph_node *dst,
 	      gcc_assert (e == indirect);
 	      if (e2 && e2->speculative)
 	        e2->speculative_call_info (direct2, indirect2, ref);
-	      if (indirect->count || direct->count)
+	      if (indirect->count > profile_count::zero ()
+		  || direct->count > profile_count::zero ())
 		{
 		  /* We should mismatch earlier if there is no matching
 		     indirect edge.  */
@@ -625,11 +645,6 @@ ipa_merge_profiles (struct cgraph_node *dst,
 			   indirect->count += indirect2->count;
 			}
 		    }
-		  int  prob = RDIV (direct->count * REG_BR_PROB_BASE ,
-				    direct->count + indirect->count);
-		  direct->frequency = RDIV (freq * prob, REG_BR_PROB_BASE);
-		  indirect->frequency = RDIV (freq * (REG_BR_PROB_BASE - prob),
-					      REG_BR_PROB_BASE);
 		}
 	      else
 		/* At the moment we should have only profile feedback based
@@ -643,22 +658,20 @@ ipa_merge_profiles (struct cgraph_node *dst,
 
 	      e2->speculative_call_info (direct, indirect, ref);
 	      e->count = count;
-	      e->frequency = freq;
-	      int prob = RDIV (direct->count * REG_BR_PROB_BASE, e->count);
-	      e->make_speculative (direct->callee, direct->count,
-				   RDIV (freq * prob, REG_BR_PROB_BASE));
+	      e->make_speculative (direct->callee, direct->count);
 	    }
 	  else
-	    {
-	      e->count = count;
-	      e->frequency = freq;
-	    }
+	    e->count = count;
 	}
       if (!preserve_body)
         src->release_body ();
-      inline_update_overall_summary (dst);
+      /* Update summary.  */
+      compute_fn_summary (dst, 0);
     }
-  /* TODO: if there is no match, we can scale up.  */
+  /* We can't update CFG profile, but we can scale IPA profile. CFG
+     will be scaled according to dst->count after IPA passes.  */
+  else
+    scale_ipa_profile_for_fn (dst, orig_count);
   src->decl = oldsrcdecl;
 }
 
@@ -669,6 +682,20 @@ recursive_call_p (tree func, tree dest)
 {
   struct cgraph_node *dest_node = cgraph_node::get_create (dest);
   struct cgraph_node *cnode = cgraph_node::get_create (func);
+  ipa_ref *alias;
+  enum availability avail;
 
-  return dest_node->semantically_equivalent_p (cnode);
+  gcc_assert (!cnode->alias);
+  if (cnode != dest_node->ultimate_alias_target (&avail))
+    return false;
+  if (avail >= AVAIL_AVAILABLE)
+    return true;
+  if (!dest_node->semantically_equivalent_p (cnode))
+    return false;
+  /* If there is only one way to call the fuction or we know all of them
+     are semantically equivalent, we still can consider call recursive.  */
+  FOR_EACH_ALIAS (cnode, alias)
+    if (!dest_node->semantically_equivalent_p (alias->referring))
+      return false;
+  return true;
 }

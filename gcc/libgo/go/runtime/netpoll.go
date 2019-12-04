@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris windows
+// +build aix darwin dragonfly freebsd hurd js,wasm linux nacl netbsd openbsd solaris windows
 
 package runtime
 
-import "unsafe"
+import (
+	"runtime/internal/atomic"
+	"unsafe"
+)
+
+// Export temporarily for gccgo's C code to call:
+//go:linkname netpoll runtime.netpoll
 
 // Integrated network poller (platform-independent part).
 // A particular implementation (epoll/kqueue) must define the following functions:
@@ -36,6 +42,10 @@ const (
 const pollBlockSize = 4 * 1024
 
 // Network poller descriptor.
+//
+// No heap pointers.
+//
+//go:notinheap
 type pollDesc struct {
 	link *pollDesc // in pollcache, protected by pollcache.lock
 
@@ -46,17 +56,18 @@ type pollDesc struct {
 	// in a lock-free way by all operations.
 	// NOTE(dvyukov): the following code uses uintptr to store *g (rg/wg),
 	// that will blow up when GC starts moving objects.
-	lock    mutex // protectes the following fields
+	lock    mutex // protects the following fields
 	fd      uintptr
 	closing bool
-	seq     uintptr        // protects from stale timers and ready notifications
-	rg      uintptr        // pdReady, pdWait, G waiting for read or nil
-	rt      timer          // read deadline timer (set if rt.f != nil)
-	rd      int64          // read deadline
-	wg      uintptr        // pdReady, pdWait, G waiting for write or nil
-	wt      timer          // write deadline timer
-	wd      int64          // write deadline
-	user    unsafe.Pointer // user settable cookie
+	user    uint32  // user settable cookie
+	rseq    uintptr // protects from stale read timers
+	rg      uintptr // pdReady, pdWait, G waiting for read or nil
+	rt      timer   // read deadline timer (set if rt.f != nil)
+	rd      int64   // read deadline
+	wseq    uintptr // protects from stale write timers
+	wg      uintptr // pdReady, pdWait, G waiting for write or nil
+	wt      timer   // write deadline timer
+	wd      int64   // write deadline
 }
 
 type pollCache struct {
@@ -69,50 +80,75 @@ type pollCache struct {
 	// seq is incremented when deadlines are changed or descriptor is reused.
 }
 
-var pollcache pollCache
+var (
+	netpollInited  uint32
+	pollcache      pollCache
+	netpollWaiters uint32
+)
 
-func netpollServerInit() {
-	onM(netpollinit)
+//go:linkname poll_runtime_pollServerInit internal..z2fpoll.runtime_pollServerInit
+func poll_runtime_pollServerInit() {
+	netpollinit()
+	atomic.Store(&netpollInited, 1)
 }
 
-func netpollOpen(fd uintptr) (*pollDesc, int) {
+func netpollinited() bool {
+	return atomic.Load(&netpollInited) != 0
+}
+
+//go:linkname poll_runtime_isPollServerDescriptor internal..z2fpoll.runtime_isPollServerDescriptor
+
+// poll_runtime_isPollServerDescriptor reports whether fd is a
+// descriptor being used by netpoll.
+func poll_runtime_isPollServerDescriptor(fd uintptr) bool {
+	fds := netpolldescriptor()
+	if GOOS != "aix" && GOOS != "hurd" {
+		return fd == fds
+	} else {
+		// AIX have a pipe in its netpoll implementation.
+		// Therefore, two fd are returned by netpolldescriptor using a mask.
+		return fd == fds&0xFFFF || fd == (fds>>16)&0xFFFF
+	}
+}
+
+//go:linkname poll_runtime_pollOpen internal..z2fpoll.runtime_pollOpen
+func poll_runtime_pollOpen(fd uintptr) (uintptr, int) {
 	pd := pollcache.alloc()
 	lock(&pd.lock)
 	if pd.wg != 0 && pd.wg != pdReady {
-		gothrow("netpollOpen: blocked write on free descriptor")
+		throw("runtime: blocked write on free polldesc")
 	}
 	if pd.rg != 0 && pd.rg != pdReady {
-		gothrow("netpollOpen: blocked read on free descriptor")
+		throw("runtime: blocked read on free polldesc")
 	}
 	pd.fd = fd
 	pd.closing = false
-	pd.seq++
+	pd.rseq++
 	pd.rg = 0
 	pd.rd = 0
+	pd.wseq++
 	pd.wg = 0
 	pd.wd = 0
 	unlock(&pd.lock)
 
 	var errno int32
-	onM(func() {
-		errno = netpollopen(fd, pd)
-	})
-	return pd, int(errno)
+	errno = netpollopen(fd, pd)
+	return uintptr(unsafe.Pointer(pd)), int(errno)
 }
 
-func netpollClose(pd *pollDesc) {
+//go:linkname poll_runtime_pollClose internal..z2fpoll.runtime_pollClose
+func poll_runtime_pollClose(ctx uintptr) {
+	pd := (*pollDesc)(unsafe.Pointer(ctx))
 	if !pd.closing {
-		gothrow("netpollClose: close w/o unblock")
+		throw("runtime: close polldesc w/o unblock")
 	}
 	if pd.wg != 0 && pd.wg != pdReady {
-		gothrow("netpollClose: blocked write on closing descriptor")
+		throw("runtime: blocked write on closing polldesc")
 	}
 	if pd.rg != 0 && pd.rg != pdReady {
-		gothrow("netpollClose: blocked read on closing descriptor")
+		throw("runtime: blocked read on closing polldesc")
 	}
-	onM(func() {
-		netpollclose(uintptr(pd.fd))
-	})
+	netpollclose(pd.fd)
 	pollcache.free(pd)
 }
 
@@ -123,7 +159,9 @@ func (c *pollCache) free(pd *pollDesc) {
 	unlock(&c.lock)
 }
 
-func netpollReset(pd *pollDesc, mode int) int {
+//go:linkname poll_runtime_pollReset internal..z2fpoll.runtime_pollReset
+func poll_runtime_pollReset(ctx uintptr, mode int) int {
+	pd := (*pollDesc)(unsafe.Pointer(ctx))
 	err := netpollcheckerr(pd, int32(mode))
 	if err != 0 {
 		return err
@@ -136,16 +174,16 @@ func netpollReset(pd *pollDesc, mode int) int {
 	return 0
 }
 
-func netpollWait(pd *pollDesc, mode int) int {
+//go:linkname poll_runtime_pollWait internal..z2fpoll.runtime_pollWait
+func poll_runtime_pollWait(ctx uintptr, mode int) int {
+	pd := (*pollDesc)(unsafe.Pointer(ctx))
 	err := netpollcheckerr(pd, int32(mode))
 	if err != 0 {
 		return err
 	}
-	// As for now only Solaris uses level-triggered IO.
-	if GOOS == "solaris" {
-		onM(func() {
-			netpollarm(pd, mode)
-		})
+	// As for now only Solaris, AIX and Hurd use level-triggered IO.
+	if GOOS == "solaris" || GOOS == "aix" || GOOS == "hurd" {
+		netpollarm(pd, mode)
 	}
 	for !netpollblock(pd, int32(mode), false) {
 		err = netpollcheckerr(pd, int32(mode))
@@ -159,32 +197,32 @@ func netpollWait(pd *pollDesc, mode int) int {
 	return 0
 }
 
-func netpollWaitCanceled(pd *pollDesc, mode int) {
+//go:linkname poll_runtime_pollWaitCanceled internal..z2fpoll.runtime_pollWaitCanceled
+func poll_runtime_pollWaitCanceled(ctx uintptr, mode int) {
+	pd := (*pollDesc)(unsafe.Pointer(ctx))
 	// This function is used only on windows after a failed attempt to cancel
 	// a pending async IO operation. Wait for ioready, ignore closing or timeouts.
 	for !netpollblock(pd, int32(mode), true) {
 	}
 }
 
-func netpollSetDeadline(pd *pollDesc, d int64, mode int) {
+//go:linkname poll_runtime_pollSetDeadline internal..z2fpoll.runtime_pollSetDeadline
+func poll_runtime_pollSetDeadline(ctx uintptr, d int64, mode int) {
+	pd := (*pollDesc)(unsafe.Pointer(ctx))
 	lock(&pd.lock)
 	if pd.closing {
 		unlock(&pd.lock)
 		return
 	}
-	pd.seq++ // invalidate current timers
-	// Reset current timers.
-	if pd.rt.f != nil {
-		deltimer(&pd.rt)
-		pd.rt.f = nil
-	}
-	if pd.wt.f != nil {
-		deltimer(&pd.wt)
-		pd.wt.f = nil
-	}
-	// Setup new timers.
-	if d != 0 && d <= nanotime() {
-		d = -1
+	rd0, wd0 := pd.rd, pd.wd
+	combo0 := rd0 > 0 && rd0 == wd0
+	if d > 0 {
+		d += nanotime()
+		if d <= 0 {
+			// If the user has a deadline in the future, but the delay calculation
+			// overflows, then set the deadline to the maximum possible value.
+			d = 1<<63 - 1
+		}
 	}
 	if mode == 'r' || mode == 'r'+'w' {
 		pd.rd = d
@@ -192,58 +230,80 @@ func netpollSetDeadline(pd *pollDesc, d int64, mode int) {
 	if mode == 'w' || mode == 'r'+'w' {
 		pd.wd = d
 	}
-	if pd.rd > 0 && pd.rd == pd.wd {
-		pd.rt.f = netpollDeadline
-		pd.rt.when = pd.rd
-		// Copy current seq into the timer arg.
-		// Timer func will check the seq against current descriptor seq,
-		// if they differ the descriptor was reused or timers were reset.
-		pd.rt.arg = pd
-		pd.rt.seq = pd.seq
-		addtimer(&pd.rt)
-	} else {
+	combo := pd.rd > 0 && pd.rd == pd.wd
+	rtf := netpollReadDeadline
+	if combo {
+		rtf = netpollDeadline
+	}
+	if pd.rt.f == nil {
 		if pd.rd > 0 {
-			pd.rt.f = netpollReadDeadline
+			pd.rt.f = rtf
 			pd.rt.when = pd.rd
+			// Copy current seq into the timer arg.
+			// Timer func will check the seq against current descriptor seq,
+			// if they differ the descriptor was reused or timers were reset.
 			pd.rt.arg = pd
-			pd.rt.seq = pd.seq
+			pd.rt.seq = pd.rseq
 			addtimer(&pd.rt)
 		}
-		if pd.wd > 0 {
+	} else if pd.rd != rd0 || combo != combo0 {
+		pd.rseq++ // invalidate current timers
+		if pd.rd > 0 {
+			modtimer(&pd.rt, pd.rd, 0, rtf, pd, pd.rseq)
+		} else {
+			deltimer(&pd.rt)
+			pd.rt.f = nil
+		}
+	}
+	if pd.wt.f == nil {
+		if pd.wd > 0 && !combo {
 			pd.wt.f = netpollWriteDeadline
 			pd.wt.when = pd.wd
 			pd.wt.arg = pd
-			pd.wt.seq = pd.seq
+			pd.wt.seq = pd.wseq
 			addtimer(&pd.wt)
+		}
+	} else if pd.wd != wd0 || combo != combo0 {
+		pd.wseq++ // invalidate current timers
+		if pd.wd > 0 && !combo {
+			modtimer(&pd.wt, pd.wd, 0, netpollWriteDeadline, pd, pd.wseq)
+		} else {
+			deltimer(&pd.wt)
+			pd.wt.f = nil
 		}
 	}
 	// If we set the new deadline in the past, unblock currently pending IO if any.
 	var rg, wg *g
-	atomicstorep(unsafe.Pointer(&wg), nil) // full memory barrier between stores to rd/wd and load of rg/wg in netpollunblock
-	if pd.rd < 0 {
-		rg = netpollunblock(pd, 'r', false)
-	}
-	if pd.wd < 0 {
-		wg = netpollunblock(pd, 'w', false)
+	if pd.rd < 0 || pd.wd < 0 {
+		atomic.StorepNoWB(noescape(unsafe.Pointer(&wg)), nil) // full memory barrier between stores to rd/wd and load of rg/wg in netpollunblock
+		if pd.rd < 0 {
+			rg = netpollunblock(pd, 'r', false)
+		}
+		if pd.wd < 0 {
+			wg = netpollunblock(pd, 'w', false)
+		}
 	}
 	unlock(&pd.lock)
 	if rg != nil {
-		goready(rg)
+		netpollgoready(rg, 3)
 	}
 	if wg != nil {
-		goready(wg)
+		netpollgoready(wg, 3)
 	}
 }
 
-func netpollUnblock(pd *pollDesc) {
+//go:linkname poll_runtime_pollUnblock internal..z2fpoll.runtime_pollUnblock
+func poll_runtime_pollUnblock(ctx uintptr) {
+	pd := (*pollDesc)(unsafe.Pointer(ctx))
 	lock(&pd.lock)
 	if pd.closing {
-		gothrow("netpollUnblock: already closing")
+		throw("runtime: unblock on closing polldesc")
 	}
 	pd.closing = true
-	pd.seq++
+	pd.rseq++
+	pd.wseq++
 	var rg, wg *g
-	atomicstorep(unsafe.Pointer(&rg), nil) // full memory barrier between store to closing and read of rg/wg in netpollunblock
+	atomic.StorepNoWB(noescape(unsafe.Pointer(&rg)), nil) // full memory barrier between store to closing and read of rg/wg in netpollunblock
 	rg = netpollunblock(pd, 'r', false)
 	wg = netpollunblock(pd, 'w', false)
 	if pd.rt.f != nil {
@@ -256,35 +316,17 @@ func netpollUnblock(pd *pollDesc) {
 	}
 	unlock(&pd.lock)
 	if rg != nil {
-		goready(rg)
+		netpollgoready(rg, 3)
 	}
 	if wg != nil {
-		goready(wg)
+		netpollgoready(wg, 3)
 	}
 }
 
-func netpollfd(pd *pollDesc) uintptr {
-	return pd.fd
-}
-
-func netpolluser(pd *pollDesc) *unsafe.Pointer {
-	return &pd.user
-}
-
-func netpollclosing(pd *pollDesc) bool {
-	return pd.closing
-}
-
-func netpolllock(pd *pollDesc) {
-	lock(&pd.lock)
-}
-
-func netpollunlock(pd *pollDesc) {
-	unlock(&pd.lock)
-}
-
-// make pd ready, newly runnable goroutines (if any) are returned in rg/wg
-func netpollready(gpp **g, pd *pollDesc, mode int32) {
+// make pd ready, newly runnable goroutines (if any) are added to toRun.
+// May run during STW, so write barriers are not allowed.
+//go:nowritebarrier
+func netpollready(toRun *gList, pd *pollDesc, mode int32) {
 	var rg, wg *g
 	if mode == 'r' || mode == 'r'+'w' {
 		rg = netpollunblock(pd, 'r', true)
@@ -293,12 +335,10 @@ func netpollready(gpp **g, pd *pollDesc, mode int32) {
 		wg = netpollunblock(pd, 'w', true)
 	}
 	if rg != nil {
-		rg.schedlink = *gpp
-		*gpp = rg
+		toRun.push(rg)
 	}
 	if wg != nil {
-		wg.schedlink = *gpp
-		*gpp = wg
+		toRun.push(wg)
 	}
 }
 
@@ -313,7 +353,19 @@ func netpollcheckerr(pd *pollDesc, mode int32) int {
 }
 
 func netpollblockcommit(gp *g, gpp unsafe.Pointer) bool {
-	return casuintptr((*uintptr)(gpp), pdWait, uintptr(unsafe.Pointer(gp)))
+	r := atomic.Casuintptr((*uintptr)(gpp), pdWait, uintptr(unsafe.Pointer(gp)))
+	if r {
+		// Bump the count of goroutines waiting for the poller.
+		// The scheduler uses this to decide whether to block
+		// waiting for the poller if there is nothing else to do.
+		atomic.Xadd(&netpollWaiters, 1)
+	}
+	return r
+}
+
+func netpollgoready(gp *g, traceskip int) {
+	atomic.Xadd(&netpollWaiters, -1)
+	goready(gp, traceskip+1)
 }
 
 // returns true if IO is ready, or false if timedout or closed
@@ -332,9 +384,9 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 			return true
 		}
 		if old != 0 {
-			gothrow("netpollblock: double wait")
+			throw("runtime: double wait")
 		}
-		if casuintptr(gpp, 0, pdWait) {
+		if atomic.Casuintptr(gpp, 0, pdWait) {
 			break
 		}
 	}
@@ -343,13 +395,12 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
 	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
 	if waitio || netpollcheckerr(pd, mode) == 0 {
-		f := netpollblockcommit
-		gopark(**(**unsafe.Pointer)(unsafe.Pointer(&f)), unsafe.Pointer(gpp), "IO wait")
+		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
 	}
 	// be careful to not lose concurrent READY notification
-	old := xchguintptr(gpp, 0)
+	old := atomic.Xchguintptr(gpp, 0)
 	if old > pdWait {
-		gothrow("netpollblock: corrupted state")
+		throw("runtime: corrupted polldesc")
 	}
 	return old == pdReady
 }
@@ -374,7 +425,7 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 		if ioready {
 			new = pdReady
 		}
-		if casuintptr(gpp, old, new) {
+		if atomic.Casuintptr(gpp, old, new) {
 			if old == pdReady || old == pdWait {
 				old = 0
 			}
@@ -387,7 +438,11 @@ func netpolldeadlineimpl(pd *pollDesc, seq uintptr, read, write bool) {
 	lock(&pd.lock)
 	// Seq arg is seq when the timer was set.
 	// If it's stale, ignore the timer event.
-	if seq != pd.seq {
+	currentSeq := pd.rseq
+	if !read {
+		currentSeq = pd.wseq
+	}
+	if seq != currentSeq {
 		// The descriptor was reused or timers were reset.
 		unlock(&pd.lock)
 		return
@@ -395,27 +450,27 @@ func netpolldeadlineimpl(pd *pollDesc, seq uintptr, read, write bool) {
 	var rg *g
 	if read {
 		if pd.rd <= 0 || pd.rt.f == nil {
-			gothrow("netpolldeadlineimpl: inconsistent read deadline")
+			throw("runtime: inconsistent read deadline")
 		}
 		pd.rd = -1
-		atomicstorep(unsafe.Pointer(&pd.rt.f), nil) // full memory barrier between store to rd and load of rg in netpollunblock
+		atomic.StorepNoWB(unsafe.Pointer(&pd.rt.f), nil) // full memory barrier between store to rd and load of rg in netpollunblock
 		rg = netpollunblock(pd, 'r', false)
 	}
 	var wg *g
 	if write {
 		if pd.wd <= 0 || pd.wt.f == nil && !read {
-			gothrow("netpolldeadlineimpl: inconsistent write deadline")
+			throw("runtime: inconsistent write deadline")
 		}
 		pd.wd = -1
-		atomicstorep(unsafe.Pointer(&pd.wt.f), nil) // full memory barrier between store to wd and load of wg in netpollunblock
+		atomic.StorepNoWB(unsafe.Pointer(&pd.wt.f), nil) // full memory barrier between store to wd and load of wg in netpollunblock
 		wg = netpollunblock(pd, 'w', false)
 	}
 	unlock(&pd.lock)
 	if rg != nil {
-		goready(rg)
+		netpollgoready(rg, 0)
 	}
 	if wg != nil {
-		goready(wg)
+		netpollgoready(wg, 0)
 	}
 }
 

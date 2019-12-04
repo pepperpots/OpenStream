@@ -1,6 +1,6 @@
 // The  -*- C++ -*- type traits classes for internal use in libstdc++
 
-// Copyright (C) 2000-2015 Free Software Foundation, Inc.
+// Copyright (C) 2000-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -48,7 +48,7 @@
 // so function return values won't work:  We need compile-time entities.
 // We're left with types and constant  integral expressions.
 // Secondly, from the point of view of ease of use, type-based compile-time
-// information is -not- *that* convenient.  On has to write lots of
+// information is -not- *that* convenient.  One has to write lots of
 // overloaded functions and to hope that the compiler will select the right
 // one. As a net effect, the overall structure isn't very clear at first
 // glance.
@@ -64,16 +64,7 @@
 // removed.
 //
 
-// Forward declaration hack, should really include this from somewhere.
-namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
-{
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
-
-  template<typename _Iterator, typename _Container>
-    class __normal_iterator;
-
-_GLIBCXX_END_NAMESPACE_VERSION
-} // namespace
+extern "C++" {
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -179,6 +170,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef __true_type __type;
     };
 # endif
+
+#ifdef _GLIBCXX_USE_CHAR8_T
+  template<>
+    struct __is_integer<char8_t>
+    {
+      enum { __value = 1 };
+      typedef __true_type __type;
+    };
+#endif
 
 #if __cplusplus >= 201103L
   template<>
@@ -331,24 +331,6 @@ __INT_N(__GLIBCXX_TYPE_INT_N_3)
     };
 
   //
-  // Normal iterator type
-  //
-  template<typename _Tp>
-    struct __is_normal_iterator
-    {
-      enum { __value = 0 };
-      typedef __false_type __type;
-    };
-
-  template<typename _Iterator, typename _Container>
-    struct __is_normal_iterator< __gnu_cxx::__normal_iterator<_Iterator,
-							      _Container> >
-    {
-      enum { __value = 1 };
-      typedef __true_type __type;
-    };
-
-  //
   // An arithmetic type is an integer type or a floating point type
   //
   template<typename _Tp>
@@ -418,6 +400,17 @@ __INT_N(__GLIBCXX_TYPE_INT_N_3)
       typedef __true_type __type;
     };
 
+#if __cplusplus >= 201703L
+  enum class byte : unsigned char;
+
+  template<>
+    struct __is_byte<byte>
+    {
+      enum { __value = 1 };
+      typedef __true_type __type;
+    };
+#endif // C++17
+
   //
   // Move iterator type
   //
@@ -428,19 +421,15 @@ __INT_N(__GLIBCXX_TYPE_INT_N_3)
       typedef __false_type __type;
     };
 
-#if __cplusplus >= 201103L
+  // Fallback implementation of the function in bits/stl_iterator.h used to
+  // remove the move_iterator wrapper.
   template<typename _Iterator>
-    class move_iterator;
-
-  template<typename _Iterator>
-    struct __is_move_iterator< move_iterator<_Iterator> >
-    {
-      enum { __value = 1 };
-      typedef __true_type __type;
-    };
-#endif
+    inline _Iterator
+    __miter_base(_Iterator __it)
+    { return __it; }
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
+} // extern "C++"
 
 #endif //_CPP_TYPE_TRAITS_H

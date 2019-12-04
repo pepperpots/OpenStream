@@ -1,4 +1,4 @@
-// Copyright 2014 The Go Authors.  All rights reserved.
+// Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -6,95 +6,80 @@ package runtime
 
 import "unsafe"
 
-func setitimer(mode int32, new, old unsafe.Pointer)
-func sigaction(sig int32, new, old unsafe.Pointer)
-func sigaltstack(new, old unsafe.Pointer)
-func sigprocmask(mode int32, new, old unsafe.Pointer)
-func sysctl(mib *uint32, miblen uint32, out *byte, size *uintptr, dst *byte, ndst uintptr) int32
-func getrlimit(kind int32, limit unsafe.Pointer)
-func miniterrno(fn unsafe.Pointer)
-func raise(sig int32)
-func getcontext(ctxt unsafe.Pointer)
-func tstart_sysvicall(mm unsafe.Pointer) uint32
-func nanotime1() int64
-func usleep1(usec uint32)
-func osyield1()
-func netpollinit()
-func netpollopen(fd uintptr, pd *pollDesc) int32
-func netpollclose(fd uintptr) int32
-func netpollarm(pd *pollDesc, mode int)
+type mOS struct {
+	waitsema uintptr // semaphore for parking on locks
+}
 
-type libcFunc byte
+//extern malloc
+func libc_malloc(uintptr) unsafe.Pointer
 
-var asmsysvicall6 libcFunc
+//go:noescape
+//extern sem_init
+func sem_init(sem *semt, pshared int32, value uint32) int32
+
+//go:noescape
+//extern sem_wait
+func sem_wait(sem *semt) int32
+
+//go:noescape
+//extern sem_post
+func sem_post(sem *semt) int32
+
+//go:noescape
+//extern sem_reltimedwait_np
+func sem_reltimedwait_np(sem *semt, timeout *timespec) int32
 
 //go:nosplit
-func sysvicall0(fn *libcFunc) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 0
-	// TODO(rsc): Why is noescape necessary here and below?
-	libcall.args = uintptr(noescape(unsafe.Pointer(&fn))) // it's unused but must be non-nil, otherwise crashes
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
+func semacreate(mp *m) {
+	if mp.mos.waitsema != 0 {
+		return
+	}
+
+	var sem *semt
+
+	// Call libc's malloc rather than malloc. This will
+	// allocate space on the C heap. We can't call malloc
+	// here because it could cause a deadlock.
+	sem = (*semt)(libc_malloc(unsafe.Sizeof(*sem)))
+	if sem_init(sem, 0, 0) != 0 {
+		throw("sem_init")
+	}
+	mp.mos.waitsema = uintptr(unsafe.Pointer(sem))
 }
 
 //go:nosplit
-func sysvicall1(fn *libcFunc, a1 uintptr) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 1
-	libcall.args = uintptr(noescape(unsafe.Pointer(&a1)))
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
+func semasleep(ns int64) int32 {
+	_m_ := getg().m
+	if ns >= 0 {
+		var ts timespec
+		ts.set_sec(ns / 1000000000)
+		ts.set_nsec(int32(ns % 1000000000))
+
+		if sem_reltimedwait_np((*semt)(unsafe.Pointer(_m_.mos.waitsema)), &ts) != 0 {
+			err := errno()
+			if err == _ETIMEDOUT || err == _EAGAIN || err == _EINTR {
+				return -1
+			}
+			throw("sem_reltimedwait_np")
+		}
+		return 0
+	}
+	for {
+		r1 := sem_wait((*semt)(unsafe.Pointer(_m_.mos.waitsema)))
+		if r1 == 0 {
+			break
+		}
+		if errno() == _EINTR {
+			continue
+		}
+		throw("sem_wait")
+	}
+	return 0
 }
 
 //go:nosplit
-func sysvicall2(fn *libcFunc, a1, a2 uintptr) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 2
-	libcall.args = uintptr(noescape(unsafe.Pointer(&a1)))
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
-}
-
-//go:nosplit
-func sysvicall3(fn *libcFunc, a1, a2, a3 uintptr) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 3
-	libcall.args = uintptr(noescape(unsafe.Pointer(&a1)))
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
-}
-
-//go:nosplit
-func sysvicall4(fn *libcFunc, a1, a2, a3, a4 uintptr) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 4
-	libcall.args = uintptr(noescape(unsafe.Pointer(&a1)))
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
-}
-
-//go:nosplit
-func sysvicall5(fn *libcFunc, a1, a2, a3, a4, a5 uintptr) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 5
-	libcall.args = uintptr(noescape(unsafe.Pointer(&a1)))
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
-}
-
-//go:nosplit
-func sysvicall6(fn *libcFunc, a1, a2, a3, a4, a5, a6 uintptr) uintptr {
-	libcall := &getg().m.libcall
-	libcall.fn = uintptr(unsafe.Pointer(fn))
-	libcall.n = 6
-	libcall.args = uintptr(noescape(unsafe.Pointer(&a1)))
-	asmcgocall(unsafe.Pointer(&asmsysvicall6), unsafe.Pointer(libcall))
-	return libcall.r1
+func semawakeup(mp *m) {
+	if sem_post((*semt)(unsafe.Pointer(mp.mos.waitsema))) != 0 {
+		throw("sem_post")
+	}
 }

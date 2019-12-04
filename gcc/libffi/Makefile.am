@@ -1,6 +1,6 @@
 ## Process this with automake to create Makefile.in
 
-AUTOMAKE_OPTIONS = foreign subdir-objects
+AUTOMAKE_OPTIONS = foreign subdir-objects info-in-builddir
 
 ACLOCAL_AMFLAGS = -I .. -I ../config
 
@@ -52,7 +52,7 @@ stamp-build-info: doc/libffi.texi $(srcdir)/doc/version.texi doc/$(am__dirstamp)
 	$(MAKEINFO) $(AM_MAKEINFOFLAGS) $(MAKEINFOFLAGS) -I $(srcdir)/doc -o doc/libffi.info $(srcdir)/doc/libffi.texi
 	@touch $@
 
-CLEANFILES = $(STAMP_GENINSRC) $(STAMP_BUILD_INFO) doc/libffi.info
+CLEANFILES = $(STAMP_GENINSRC) $(STAMP_BUILD_INFO)
 MAINTAINERCLEANFILES = $(srcdir)/doc/libffi.info
 
 ## ################################################################
@@ -138,6 +138,7 @@ noinst_HEADERS = \
 	src/or1k/ffitarget.h						\
 	src/pa/ffitarget.h						\
 	src/powerpc/ffitarget.h src/powerpc/asm.h src/powerpc/ffi_powerpc.h \
+	src/riscv/ffitarget.h			  			\
 	src/s390/ffitarget.h						\
 	src/sh/ffitarget.h						\
 	src/sh64/ffitarget.h						\
@@ -173,6 +174,7 @@ EXTRA_libffi_la_SOURCES = \
 	 src/powerpc/linux64_closure.S src/powerpc/ppc_closure.S	\
 	 src/powerpc/aix.S src/powerpc/darwin.S src/powerpc/aix_closure.S \
 	 src/powerpc/darwin_closure.S src/powerpc/ffi_darwin.c		\
+	src/riscv/ffi.c src/riscv/sysv.S				\
 	src/s390/ffi.c src/s390/sysv.S					\
 	src/sh/ffi.c src/sh/sysv.S					\
 	src/sh64/ffi.c src/sh64/sysv.S					\
@@ -188,7 +190,6 @@ EXTRA_libffi_la_SOURCES = \
 
 TARGET_OBJ = @TARGET_OBJ@
 libffi_la_LIBADD = $(TARGET_OBJ)
-libffi_la_DEPENDENCIES = $(TARGET_OBJ)
 
 libffi_convenience_la_SOURCES = $(libffi_la_SOURCES)
 EXTRA_libffi_convenience_la_SOURCES = $(EXTRA_libffi_la_SOURCES)
@@ -205,7 +206,32 @@ if FFI_DEBUG
 AM_CFLAGS += -DFFI_DEBUG
 endif
 
-libffi_la_LDFLAGS = -no-undefined -version-info `grep -v '^\#' $(srcdir)/libtool-version` $(LTLDFLAGS) $(AM_LTLDFLAGS)
+if LIBAT_BUILD_VERSIONED_SHLIB
+if LIBAT_BUILD_VERSIONED_SHLIB_GNU
+libffi_version_script = -Wl,--version-script,libffi.map
+libffi_version_dep = libffi.map
+endif
+if LIBAT_BUILD_VERSIONED_SHLIB_SUN
+libffi_version_script = -Wl,-M,libffi.map-sun
+libffi_version_dep = libffi.map-sun
+libffi.map-sun : libffi.map $(top_srcdir)/../contrib/make_sunver.pl \
+                $(libffi_la_OBJECTS) $(libffi_la_LIBADD)
+	perl $(top_srcdir)/../contrib/make_sunver.pl libffi.map \
+	 `echo $(libffi_la_OBJECTS) $(libffi_la_LIBADD) | \
+	    sed 's,\([^/        ]*\)\.l\([ao]\),.libs/\1.\2,g'` \
+	 > $@ || (rm -f $@ ; exit 1)
+endif
+else
+libffi_version_script =
+libffi_version_dep =
+endif
+libffi_version_info = -version-info `grep -v '^\#' $(srcdir)/libtool-version`
+
+libffi.map: $(top_srcdir)/libffi.map.in
+	$(COMPILE) -D$(TARGET) -E -x assembler-with-cpp -o $@ $<
+
+libffi_la_LDFLAGS = -no-undefined $(libffi_version_info) $(libffi_version_script) $(LTLDFLAGS) $(AM_LTLDFLAGS)
+libffi_la_DEPENDENCIES = $(libffi_la_LIBADD) $(libffi_version_dep)
 
 AM_CPPFLAGS = -I. -I$(top_srcdir)/include -Iinclude -I$(top_srcdir)/src
 AM_CCASFLAGS = $(AM_CPPFLAGS)
@@ -217,3 +243,5 @@ mostlyclean-recursive: mostlyclean-multi
 clean-recursive: clean-multi
 distclean-recursive: distclean-multi
 maintainer-clean-recursive: maintainer-clean-multi
+
+include $(top_srcdir)/../multilib.am

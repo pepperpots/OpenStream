@@ -1,5 +1,5 @@
 /* IRA hard register and memory cost calculation for allocnos or pseudos.
-   Copyright (C) 2006-2015 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -21,48 +21,19 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-table.h"
-#include "hard-reg-set.h"
-#include "rtl.h"
-#include "symtab.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "vec.h"
-#include "machmode.h"
-#include "input.h"
-#include "function.h"
-#include "flags.h"
-#include "statistics.h"
-#include "double-int.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "alias.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
-#include "insn-config.h"
-#include "expmed.h"
-#include "dojump.h"
-#include "explow.h"
-#include "calls.h"
-#include "emit-rtl.h"
-#include "varasm.h"
-#include "stmt.h"
-#include "expr.h"
-#include "tm_p.h"
-#include "predict.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "basic-block.h"
-#include "regs.h"
-#include "addresses.h"
-#include "recog.h"
-#include "reload.h"
-#include "diagnostic-core.h"
+#include "backend.h"
 #include "target.h"
-#include "params.h"
+#include "rtl.h"
+#include "tree.h"
+#include "predict.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "insn-config.h"
+#include "regs.h"
+#include "ira.h"
 #include "ira-int.h"
+#include "addresses.h"
+#include "reload.h"
 
 /* The flags is set up every time when we calculate pseudo register
    classes through function ira_set_pseudo_classes.  */
@@ -103,7 +74,7 @@ static struct costs *costs;
 static struct costs *total_allocno_costs;
 
 /* It is the current size of struct costs.  */
-static int struct_costs_size;
+static size_t struct_costs_size;
 
 /* Return pointer to structure containing costs of allocno or pseudo
    with given NUM in array ARR.  */
@@ -159,25 +130,23 @@ static cost_classes_t *regno_cost_classes;
 
 /* Helper for cost_classes hashing.  */
 
-struct cost_classes_hasher
+struct cost_classes_hasher : pointer_hash <cost_classes>
 {
-  typedef cost_classes value_type;
-  typedef cost_classes compare_type;
-  static inline hashval_t hash (const value_type *);
-  static inline bool equal (const value_type *, const compare_type *);
-  static inline void remove (value_type *);
+  static inline hashval_t hash (const cost_classes *);
+  static inline bool equal (const cost_classes *, const cost_classes *);
+  static inline void remove (cost_classes *);
 };
 
 /* Returns hash value for cost classes info HV.  */
 inline hashval_t
-cost_classes_hasher::hash (const value_type *hv)
+cost_classes_hasher::hash (const cost_classes *hv)
 {
   return iterative_hash (&hv->classes, sizeof (enum reg_class) * hv->num, 0);
 }
 
 /* Compares cost classes info HV1 and HV2.  */
 inline bool
-cost_classes_hasher::equal (const value_type *hv1, const compare_type *hv2)
+cost_classes_hasher::equal (const cost_classes *hv1, const cost_classes *hv2)
 {
   return (hv1->num == hv2->num
 	  && memcmp (hv1->classes, hv2->classes,
@@ -186,7 +155,7 @@ cost_classes_hasher::equal (const value_type *hv1, const compare_type *hv2)
 
 /* Delete cost classes info V from the hash table.  */
 inline void
-cost_classes_hasher::remove (value_type *v)
+cost_classes_hasher::remove (cost_classes *v)
 {
   ira_free (v);
 }
@@ -420,8 +389,8 @@ setup_regno_cost_classes_by_aclass (int regno, enum reg_class aclass)
 
 /* Setup cost classes for pseudo REGNO with MODE.  Usage of MODE can
    decrease number of cost classes for the pseudo, if hard registers
-   of some important classes can not hold a value of MODE.  So the
-   pseudo can not get hard register of some important classes and cost
+   of some important classes cannot hold a value of MODE.  So the
+   pseudo cannot get hard register of some important classes and cost
    calculation for such important classes is only wasting CPU
    time.  */
 static void
@@ -474,6 +443,9 @@ copy_cost (rtx x, machine_mode mode, reg_class_t rclass, bool to_p,
      copy it.  */
   sri.prev_sri = prev_sri;
   sri.extra_cost = 0;
+  /* PR 68770: Secondary reload might examine the t_icode field.  */
+  sri.t_icode = CODE_FOR_nothing;
+
   secondary_class = targetm.secondary_reload (to_p, x, rclass, mode, &sri);
 
   if (secondary_class != NO_REGS)
@@ -812,6 +784,12 @@ record_reg_classes (int n_alts, int n_ops, rtx *ops,
 			win = 1;
 		      break;
 
+		    case CT_SPECIAL_MEMORY:
+		      insn_allows_mem[i] = allows_mem[i] = 1;
+		      if (MEM_P (op) && constraint_satisfied_p (op, cn))
+			win = 1;
+		      break;
+
 		    case CT_ADDRESS:
 		      /* Every address can be reloaded to fit.  */
 		      allows_addr = 1;
@@ -841,6 +819,9 @@ record_reg_classes (int n_alts, int n_ops, rtx *ops,
 	    }
 
 	  constraints[i] = p;
+
+	  if (alt_fail)
+	    break;
 
 	  /* How we account for this operand now depends on whether it
 	     is a pseudo register or not.  If it is, we first check if
@@ -1021,10 +1002,21 @@ record_reg_classes (int n_alts, int n_ops, rtx *ops,
 	    alt_cost += ira_memory_move_cost[mode][classes[i]][1];
 	  else
 	    alt_fail = 1;
+
+	  if (alt_fail)
+	    break;
 	}
 
       if (alt_fail)
-	continue;
+	{
+	  /* The loop above might have exited early once the failure
+	     was seen.  Skip over the constraints for the remaining
+	     operands.  */
+	  i += 1;
+	  for (; i < n_ops; ++i)
+	    constraints[i] = skip_alternative (constraints[i]);
+	  continue;
+	}
 
       op_cost_add = alt_cost * frequency;
       /* Finally, update the costs with the information we've
@@ -1146,17 +1138,12 @@ record_address_regs (machine_mode mode, addr_space_t as, rtx x,
 	if (code1 == SUBREG)
 	  arg1 = SUBREG_REG (arg1), code1 = GET_CODE (arg1);
 
-	/* If this machine only allows one register per address, it
-	   must be in the first operand.  */
-	if (MAX_REGS_PER_ADDRESS == 1)
-	  record_address_regs (mode, as, arg0, 0, PLUS, code1, scale);
-
-	/* If index and base registers are the same on this machine,
+	/* If index registers do not appear, or coincide with base registers,
 	   just record registers in any non-constant operands.  We
 	   assume here, as well as in the tests below, that all
 	   addresses are in canonical form.  */
-	else if (INDEX_REG_CLASS
-		 == base_reg_class (VOIDmode, as, PLUS, SCRATCH))
+	if (MAX_REGS_PER_ADDRESS == 1
+	    || INDEX_REG_CLASS == base_reg_class (VOIDmode, as, PLUS, SCRATCH))
 	  {
 	    record_address_regs (mode, as, arg0, context, PLUS, code1, scale);
 	    if (! CONSTANT_P (arg1))
@@ -1270,7 +1257,7 @@ record_address_regs (machine_mode mode, addr_space_t as, rtx x,
 	    add_cost = (move_in_cost[i][rclass] * scale) / 2;
 	    if (INT_MAX - add_cost < pp_costs[k])
 	      pp_costs[k] = INT_MAX;
-	    else 
+	    else
 	      pp_costs[k] += add_cost;
 	  }
       }
@@ -1296,9 +1283,111 @@ record_operand_costs (rtx_insn *insn, enum reg_class *pref)
 {
   const char *constraints[MAX_RECOG_OPERANDS];
   machine_mode modes[MAX_RECOG_OPERANDS];
-  rtx ops[MAX_RECOG_OPERANDS];
   rtx set;
   int i;
+
+  if ((set = single_set (insn)) != NULL_RTX
+      /* In rare cases the single set insn might have less 2 operands
+	 as the source can be a fixed special reg.  */
+      && recog_data.n_operands > 1
+      && recog_data.operand[0] == SET_DEST (set)
+      && recog_data.operand[1] == SET_SRC (set))
+    {
+      int regno, other_regno;
+      rtx dest = SET_DEST (set);
+      rtx src = SET_SRC (set);
+
+      if (GET_CODE (dest) == SUBREG
+	  && known_eq (GET_MODE_SIZE (GET_MODE (dest)),
+		       GET_MODE_SIZE (GET_MODE (SUBREG_REG (dest)))))
+	dest = SUBREG_REG (dest);
+      if (GET_CODE (src) == SUBREG
+	  && known_eq (GET_MODE_SIZE (GET_MODE (src)),
+		       GET_MODE_SIZE (GET_MODE (SUBREG_REG (src)))))
+	src = SUBREG_REG (src);
+      if (REG_P (src) && REG_P (dest)
+	  && (((regno = REGNO (src)) >= FIRST_PSEUDO_REGISTER
+	       && (other_regno = REGNO (dest)) < FIRST_PSEUDO_REGISTER)
+	      || ((regno = REGNO (dest)) >= FIRST_PSEUDO_REGISTER
+		  && (other_regno = REGNO (src)) < FIRST_PSEUDO_REGISTER)))
+	{
+	  machine_mode mode = GET_MODE (SET_SRC (set));
+	  cost_classes_t cost_classes_ptr = regno_cost_classes[regno];
+	  enum reg_class *cost_classes = cost_classes_ptr->classes;
+	  reg_class_t rclass, hard_reg_class, pref_class, bigger_hard_reg_class;
+	  int cost, k;
+	  move_table *move_costs;
+	  bool dead_p = find_regno_note (insn, REG_DEAD, REGNO (src));
+
+	  ira_init_register_move_cost_if_necessary (mode);
+	  move_costs = ira_register_move_cost[mode];
+	  hard_reg_class = REGNO_REG_CLASS (other_regno);
+	  bigger_hard_reg_class = ira_pressure_class_translate[hard_reg_class];
+	  /* Target code may return any cost for mode which does not
+	     fit the the hard reg class (e.g. DImode for AREG on
+	     i386).  Check this and use a bigger class to get the
+	     right cost.  */
+	  if (bigger_hard_reg_class != NO_REGS
+	      && ! ira_hard_reg_in_set_p (other_regno, mode,
+					  reg_class_contents[hard_reg_class]))
+	    hard_reg_class = bigger_hard_reg_class;
+	  i = regno == (int) REGNO (src) ? 1 : 0;
+	  for (k = cost_classes_ptr->num - 1; k >= 0; k--)
+	    {
+	      rclass = cost_classes[k];
+	      cost = (i == 0
+		      ? move_costs[hard_reg_class][rclass]
+		      : move_costs[rclass][hard_reg_class]);
+	      
+	      op_costs[i]->cost[k] = cost * frequency;
+	      /* If we have assigned a class to this allocno in our
+		 first pass, add a cost to this alternative
+		 corresponding to what we would add if this allocno
+		 were not in the appropriate class.  */
+	      if (pref)
+		{
+		  if ((pref_class = pref[COST_INDEX (regno)]) == NO_REGS)
+		    op_costs[i]->cost[k]
+		      += ((i == 0 ? ira_memory_move_cost[mode][rclass][0] : 0)
+			  + (i == 1 ? ira_memory_move_cost[mode][rclass][1] : 0)
+			  * frequency);
+		  else if (ira_reg_class_intersect[pref_class][rclass]
+			   == NO_REGS)
+		    op_costs[i]->cost[k]
+		      += (move_costs[pref_class][rclass]
+			  * frequency);
+		}
+	      /* If this insn is a single set copying operand 1 to
+		 operand 0 and one operand is an allocno with the
+		 other a hard reg or an allocno that prefers a hard
+		 register that is in its own register class then we
+		 may want to adjust the cost of that register class to
+		 -1.
+
+		 Avoid the adjustment if the source does not die to
+		 avoid stressing of register allocator by preferencing
+		 two colliding registers into single class.  */
+	      if (dead_p
+		  && TEST_HARD_REG_BIT (reg_class_contents[rclass], other_regno)
+		  && (reg_class_size[(int) rclass]
+		      == (ira_reg_class_max_nregs
+			  [(int) rclass][(int) GET_MODE(src)])))
+		{
+		  if (reg_class_size[rclass] == 1)
+		    op_costs[i]->cost[k] = -frequency;
+		  else if (in_hard_reg_set_p (reg_class_contents[rclass],
+					      GET_MODE(src), other_regno))
+		    op_costs[i]->cost[k] = -frequency;
+		}
+	    }
+	  op_costs[i]->mem_cost
+	    = ira_memory_move_cost[mode][hard_reg_class][i] * frequency;
+	  if (pref && (pref_class = pref[COST_INDEX (regno)]) != NO_REGS)
+	    op_costs[i]->mem_cost
+	      += ira_memory_move_cost[mode][pref_class][i] * frequency;
+	  return;
+	}
+    }
 
   for (i = 0; i < recog_data.n_operands; i++)
     {
@@ -1315,7 +1404,6 @@ record_operand_costs (rtx_insn *insn, enum reg_class *pref)
     {
       memcpy (op_costs[i], init_cost, struct_costs_size);
 
-      ops[i] = recog_data.operand[i];
       if (GET_CODE (recog_data.operand[i]) == SUBREG)
 	recog_data.operand[i] = SUBREG_REG (recog_data.operand[i]);
 
@@ -1331,7 +1419,7 @@ record_operand_costs (rtx_insn *insn, enum reg_class *pref)
 			     recog_data.operand[i], 0, ADDRESS, SCRATCH,
 			     frequency * 2);
     }
-  
+
   /* Check for commutative in a separate loop so everything will have
      been initialized.  We must do this even if one operand is a
      constant--see addsi3 in m68k.md.  */
@@ -1341,8 +1429,8 @@ record_operand_costs (rtx_insn *insn, enum reg_class *pref)
 	const char *xconstraints[MAX_RECOG_OPERANDS];
 	int j;
 
-	/* Handle commutative operands by swapping the constraints.
-	   We assume the modes are the same.  */
+	/* Handle commutative operands by swapping the
+	   constraints.  We assume the modes are the same.  */
 	for (j = 0; j < recog_data.n_operands; j++)
 	  xconstraints[j] = constraints[j];
 
@@ -1355,80 +1443,6 @@ record_operand_costs (rtx_insn *insn, enum reg_class *pref)
   record_reg_classes (recog_data.n_alternatives, recog_data.n_operands,
 		      recog_data.operand, modes,
 		      constraints, insn, pref);
-
-  /* If this insn is a single set copying operand 1 to operand 0 and
-     one operand is an allocno with the other a hard reg or an allocno
-     that prefers a hard register that is in its own register class
-     then we may want to adjust the cost of that register class to -1.
-
-     Avoid the adjustment if the source does not die to avoid
-     stressing of register allocator by preferencing two colliding
-     registers into single class.
-
-     Also avoid the adjustment if a copy between hard registers of the
-     class is expensive (ten times the cost of a default copy is
-     considered arbitrarily expensive).  This avoids losing when the
-     preferred class is very expensive as the source of a copy
-     instruction.  */
-  if ((set = single_set (insn)) != NULL_RTX
-      /* In rare cases the single set insn might have less 2 operands
-	 as the source can be a fixed special reg.  */
-      && recog_data.n_operands > 1
-      && ops[0] == SET_DEST (set) && ops[1] == SET_SRC (set))
-    {
-      int regno, other_regno;
-      rtx dest = SET_DEST (set);
-      rtx src = SET_SRC (set);
-
-      dest = SET_DEST (set);
-      src = SET_SRC (set);
-      if (GET_CODE (dest) == SUBREG
-	  && (GET_MODE_SIZE (GET_MODE (dest))
-	      == GET_MODE_SIZE (GET_MODE (SUBREG_REG (dest)))))
-	dest = SUBREG_REG (dest);
-      if (GET_CODE (src) == SUBREG
-	  && (GET_MODE_SIZE (GET_MODE (src))
-	      == GET_MODE_SIZE (GET_MODE (SUBREG_REG (src)))))
-	src = SUBREG_REG (src);
-      if (REG_P (src) && REG_P (dest)
-	  && find_regno_note (insn, REG_DEAD, REGNO (src))
-	  && (((regno = REGNO (src)) >= FIRST_PSEUDO_REGISTER
-	       && (other_regno = REGNO (dest)) < FIRST_PSEUDO_REGISTER)
-	      || ((regno = REGNO (dest)) >= FIRST_PSEUDO_REGISTER
-		  && (other_regno = REGNO (src)) < FIRST_PSEUDO_REGISTER)))
-	{
-	  machine_mode mode = GET_MODE (src);
-	  cost_classes_t cost_classes_ptr = regno_cost_classes[regno];
-	  enum reg_class *cost_classes = cost_classes_ptr->classes;
-	  reg_class_t rclass;
-	  int k, nr;
-
-	  i = regno == (int) REGNO (src) ? 1 : 0;
-	  for (k = cost_classes_ptr->num - 1; k >= 0; k--)
-	    {
-	      rclass = cost_classes[k];
-	      if (TEST_HARD_REG_BIT (reg_class_contents[rclass], other_regno)
-		  && (reg_class_size[(int) rclass]
-		      == ira_reg_class_max_nregs [(int) rclass][(int) mode]))
-		{
-		  if (reg_class_size[rclass] == 1)
-		    op_costs[i]->cost[k] = -frequency;
-		  else
-		    {
-		      for (nr = 0;
-			   nr < hard_regno_nregs[other_regno][mode];
-			   nr++)
-			if (! TEST_HARD_REG_BIT (reg_class_contents[rclass],
-						 other_regno + nr))
-			  break;
-		      
-		      if (nr == hard_regno_nregs[other_regno][mode])
-			op_costs[i]->cost[k] = -frequency;
-		    }
-		}
-	    }
-	}
-    }
 }
 
 
@@ -1448,8 +1462,32 @@ scan_one_insn (rtx_insn *insn)
     return insn;
 
   pat_code = GET_CODE (PATTERN (insn));
-  if (pat_code == USE || pat_code == CLOBBER || pat_code == ASM_INPUT)
+  if (pat_code == ASM_INPUT)
     return insn;
+
+  /* If INSN is a USE/CLOBBER of a pseudo in a mode M then go ahead
+     and initialize the register move costs of mode M.
+
+     The pseudo may be related to another pseudo via a copy (implicit or
+     explicit) and if there are no mode M uses/sets of the original
+     pseudo, then we may leave the register move costs uninitialized for
+     mode M. */
+  if (pat_code == USE || pat_code == CLOBBER)
+    {
+      rtx x = XEXP (PATTERN (insn), 0);
+      if (GET_CODE (x) == REG
+	  && REGNO (x) >= FIRST_PSEUDO_REGISTER
+	  && have_regs_of_mode[GET_MODE (x)])
+        ira_init_register_move_cost_if_necessary (GET_MODE (x));
+      return insn;
+    }
+
+  if (pat_code == CLOBBER_HIGH)
+    {
+      gcc_assert (REG_P (XEXP (PATTERN (insn), 0))
+		  && HARD_REGISTER_P (XEXP (PATTERN (insn), 0)));
+      return insn;
+    }
 
   counted_mem = false;
   set = single_set (insn);
@@ -1457,7 +1495,7 @@ scan_one_insn (rtx_insn *insn)
 
   /* If this insn loads a parameter from its stack slot, then it
      represents a savings, rather than a cost, if the parameter is
-     stored in memory.  Record this fact. 
+     stored in memory.  Record this fact.
 
      Similarly if we're loading other constants from memory (constant
      pool, TOC references, small data areas, etc) and this is the only
@@ -1468,7 +1506,7 @@ scan_one_insn (rtx_insn *insn)
      mem_cost might result in it being loaded using the specialized
      instruction into a register, then stored into stack and loaded
      again from the stack.  See PR52208.
-     
+
      Don't do this if SET_SRC (set) has side effect.  See PR56124.  */
   if (set != 0 && REG_P (SET_DEST (set)) && MEM_P (SET_SRC (set))
       && (note = find_reg_note (insn, REG_EQUIV, NULL_RTX)) != NULL_RTX
@@ -1478,7 +1516,10 @@ scan_one_insn (rtx_insn *insn)
 	      && targetm.legitimate_constant_p (GET_MODE (SET_DEST (set)),
 						XEXP (note, 0))
 	      && REG_N_SETS (REGNO (SET_DEST (set))) == 1))
-      && general_operand (SET_SRC (set), GET_MODE (SET_SRC (set))))
+      && general_operand (SET_SRC (set), GET_MODE (SET_SRC (set)))
+      /* LRA does not use equiv with a symbol for PIC code.  */
+      && (! ira_use_lra_p || ! pic_offset_table_rtx
+	  || ! contains_symbol_ref_p (XEXP (note, 0))))
     {
       enum reg_class cl = GENERAL_REGS;
       rtx reg = SET_DEST (set);
@@ -1498,36 +1539,40 @@ scan_one_insn (rtx_insn *insn)
   /* Now add the cost for each operand to the total costs for its
      allocno.  */
   for (i = 0; i < recog_data.n_operands; i++)
-    if (REG_P (recog_data.operand[i])
-	&& REGNO (recog_data.operand[i]) >= FIRST_PSEUDO_REGISTER)
-      {
-	int regno = REGNO (recog_data.operand[i]);
-	struct costs *p = COSTS (costs, COST_INDEX (regno));
-	struct costs *q = op_costs[i];
-	int *p_costs = p->cost, *q_costs = q->cost;
-	cost_classes_t cost_classes_ptr = regno_cost_classes[regno];
-	int add_cost;
-
-	/* If the already accounted for the memory "cost" above, don't
-	   do so again.  */
-	if (!counted_mem)
-	  {
-	    add_cost = q->mem_cost;
-	    if (add_cost > 0 && INT_MAX - add_cost < p->mem_cost)
-	      p->mem_cost = INT_MAX;
-	    else
-	      p->mem_cost += add_cost;
-	  }
-	for (k = cost_classes_ptr->num - 1; k >= 0; k--)
-	  {
-	    add_cost = q_costs[k];
-	    if (add_cost > 0 && INT_MAX - add_cost < p_costs[k])
-	      p_costs[k] = INT_MAX;
-	    else
-	      p_costs[k] += add_cost;
-	  }
-      }
-
+    {
+      rtx op = recog_data.operand[i];
+      
+      if (GET_CODE (op) == SUBREG)
+	op = SUBREG_REG (op);
+      if (REG_P (op) && REGNO (op) >= FIRST_PSEUDO_REGISTER)
+	{
+	  int regno = REGNO (op);
+	  struct costs *p = COSTS (costs, COST_INDEX (regno));
+	  struct costs *q = op_costs[i];
+	  int *p_costs = p->cost, *q_costs = q->cost;
+	  cost_classes_t cost_classes_ptr = regno_cost_classes[regno];
+	  int add_cost;
+	  
+	  /* If the already accounted for the memory "cost" above, don't
+	     do so again.  */
+	  if (!counted_mem)
+	    {
+	      add_cost = q->mem_cost;
+	      if (add_cost > 0 && INT_MAX - add_cost < p->mem_cost)
+		p->mem_cost = INT_MAX;
+	      else
+		p->mem_cost += add_cost;
+	    }
+	  for (k = cost_classes_ptr->num - 1; k >= 0; k--)
+	    {
+	      add_cost = q_costs[k];
+	      if (add_cost > 0 && INT_MAX - add_cost < p_costs[k])
+		p_costs[k] = INT_MAX;
+	      else
+		p_costs[k] += add_cost;
+	    }
+	}
+    }
   return insn;
 }
 
@@ -1638,7 +1683,7 @@ find_costs_and_classes (FILE *dump_file)
   int i, k, start, max_cost_classes_num;
   int pass;
   basic_block bb;
-  enum reg_class *regno_best_class;
+  enum reg_class *regno_best_class, new_class;
 
   init_recog ();
   regno_best_class
@@ -1737,7 +1782,7 @@ find_costs_and_classes (FILE *dump_file)
 	  int best_cost, allocno_cost;
 	  enum reg_class best, alt_class;
 	  cost_classes_t cost_classes_ptr = regno_cost_classes[i];
-	  enum reg_class *cost_classes = cost_classes_ptr->classes;
+	  enum reg_class *cost_classes;
 	  int *i_costs = temp_costs->cost;
 	  int i_mem_cost;
 	  int equiv_savings = regno_equiv_gains[i];
@@ -1748,6 +1793,7 @@ find_costs_and_classes (FILE *dump_file)
 		continue;
 	      memcpy (temp_costs, COSTS (costs, i), struct_costs_size);
 	      i_mem_cost = temp_costs->mem_cost;
+	      cost_classes = cost_classes_ptr->classes;
 	    }
 	  else
 	    {
@@ -1755,13 +1801,14 @@ find_costs_and_classes (FILE *dump_file)
 		continue;
 	      memset (temp_costs, 0, struct_costs_size);
 	      i_mem_cost = 0;
+	      cost_classes = cost_classes_ptr->classes;
 	      /* Find cost of all allocnos with the same regno.  */
 	      for (a = ira_regno_allocno_map[i];
 		   a != NULL;
 		   a = ALLOCNO_NEXT_REGNO_ALLOCNO (a))
 		{
 		  int *a_costs, *p_costs;
-		      
+
 		  a_num = ALLOCNO_NUM (a);
 		  if ((flag_ira_region == IRA_REGION_ALL
 		       || flag_ira_region == IRA_REGION_MIXED)
@@ -1855,7 +1902,8 @@ find_costs_and_classes (FILE *dump_file)
 		alt_class = reg_class_subunion[alt_class][rclass];
 	    }
 	  alt_class = ira_allocno_class_translate[alt_class];
-	  if (best_cost > i_mem_cost)
+	  if (best_cost > i_mem_cost
+	      && ! non_spilled_static_chain_regno_p (i))
 	    regno_aclass[i] = NO_REGS;
 	  else if (!optimize && !targetm.class_likely_spilled_p (best))
 	    /* Registers in the alternative class are likely to need
@@ -1869,20 +1917,40 @@ find_costs_and_classes (FILE *dump_file)
 	       short in -O0 code and so register pressure tends to be low.
 
 	       Avoid that by ignoring the alternative class if the best
-	       class has plenty of registers.  */
-	    regno_aclass[i] = best;
+	       class has plenty of registers.
+
+	       The union class arrays give important classes and only
+	       part of it are allocno classes.  So translate them into
+	       allocno classes.  */
+	    regno_aclass[i] = ira_allocno_class_translate[best];
 	  else
 	    {
 	      /* Make the common class the biggest class of best and
-		 alt_class.  */
-	      regno_aclass[i]
-		= ira_reg_class_superunion[best][alt_class];
+		 alt_class.  Translate the common class into an
+		 allocno class too.  */
+	      regno_aclass[i] = (ira_allocno_class_translate
+				 [ira_reg_class_superunion[best][alt_class]]);
 	      ira_assert (regno_aclass[i] != NO_REGS
 			  && ira_reg_allocno_class_p[regno_aclass[i]]);
 	    }
+	  if ((new_class
+	       = (reg_class) (targetm.ira_change_pseudo_allocno_class
+			      (i, regno_aclass[i], best))) != regno_aclass[i])
+	    {
+	      regno_aclass[i] = new_class;
+	      if (hard_reg_set_subset_p (reg_class_contents[new_class],
+					 reg_class_contents[best]))
+		best = new_class;
+	      if (hard_reg_set_subset_p (reg_class_contents[new_class],
+					 reg_class_contents[alt_class]))
+		alt_class = new_class;
+	    }
 	  if (pass == flag_expensive_optimizations)
 	    {
-	      if (best_cost > i_mem_cost)
+	      if (best_cost > i_mem_cost
+		  /* Do not assign NO_REGS to static chain pointer
+		     pseudo when non-local goto is used.  */
+		  && ! non_spilled_static_chain_regno_p (i))
 		best = alt_class = NO_REGS;
 	      else if (best == alt_class)
 		alt_class = NO_REGS;
@@ -1897,7 +1965,9 @@ find_costs_and_classes (FILE *dump_file)
 	  regno_best_class[i] = best;
 	  if (! allocno_p)
 	    {
-	      pref[i] = best_cost > i_mem_cost ? NO_REGS : best;
+	      pref[i] = (best_cost > i_mem_cost
+			 && ! non_spilled_static_chain_regno_p (i)
+			 ? NO_REGS : best);
 	      continue;
 	    }
 	  for (a = ira_regno_allocno_map[i];
@@ -1908,7 +1978,7 @@ find_costs_and_classes (FILE *dump_file)
 	      int a_num = ALLOCNO_NUM (a);
 	      int *total_a_costs = COSTS (total_allocno_costs, a_num)->cost;
 	      int *a_costs = COSTS (costs, a_num)->cost;
-	
+
 	      if (aclass == NO_REGS)
 		best = NO_REGS;
 	      else
@@ -1970,7 +2040,7 @@ find_costs_and_classes (FILE *dump_file)
 		}
 	    }
 	}
-      
+
       if (internal_flag_ira_verbose > 4 && dump_file)
 	{
 	  if (allocno_p)
@@ -2037,6 +2107,13 @@ process_bb_node_for_hard_reg_moves (ira_loop_tree_node_t loop_tree_node)
 	}
       else
 	continue;
+      if (reg_class_size[(int) REGNO_REG_CLASS (hard_regno)]
+	  == (ira_reg_class_max_nregs
+	      [REGNO_REG_CLASS (hard_regno)][(int) ALLOCNO_MODE(a)]))
+	/* If the class can provide only one hard reg to the allocno,
+	   we processed the insn record_operand_costs already and we
+	   actually updated the hard reg cost there.  */
+	continue;
       rclass = ALLOCNO_CLASS (a);
       if (! TEST_HARD_REG_BIT (reg_class_contents[rclass], hard_regno))
 	continue;
@@ -2053,7 +2130,7 @@ process_bb_node_for_hard_reg_moves (ira_loop_tree_node_t loop_tree_node)
 	int cost;
 	enum reg_class hard_reg_class;
 	machine_mode mode;
-	
+
 	mode = ALLOCNO_MODE (a);
 	hard_reg_class = REGNO_REG_CLASS (hard_regno);
 	ira_init_register_move_cost_if_necessary (mode);
@@ -2309,7 +2386,8 @@ ira_tune_allocno_costs (void)
 						   *crossed_calls_clobber_regs)
 		  && (ira_hard_reg_set_intersection_p (regno, mode,
 						       call_used_reg_set)
-		      || HARD_REGNO_CALL_PART_CLOBBERED (regno, mode)))
+		      || targetm.hard_regno_call_part_clobbered (NULL, regno,
+								 mode)))
 		cost += (ALLOCNO_CALL_FREQ (a)
 			 * (ira_memory_move_cost[mode][rclass][0]
 			    + ira_memory_move_cost[mode][rclass][1]));

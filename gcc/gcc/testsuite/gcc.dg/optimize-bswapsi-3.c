@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-require-effective-target bswap32 } */
+/* { dg-require-effective-target bswap } */
 /* { dg-require-effective-target stdint_types } */
 /* { dg-options "-O2 -fdump-tree-bswap" } */
 /* { dg-additional-options "-march=z900" { target s390-*-* } } */
@@ -21,4 +21,3 @@ swap32 (SItype in)
 }
 
 /* { dg-final { scan-tree-dump-not "32 bit bswap implementation found at" "bswap" } } */
-/* { dg-final { cleanup-tree-dump "bswap" } } */

@@ -1,5 +1,5 @@
 /* Post reload partially redundant load elimination
-   Copyright (C) 2004-2015 Free Software Foundation, Inc.
+   Copyright (C) 2004-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -20,54 +20,24 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "diagnostic-core.h"
-
-#include "hash-table.h"
-#include "rtl.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
-#include "tm_p.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "flags.h"
-#include "insn-config.h"
-#include "recog.h"
-#include "predict.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfgrtl.h"
-#include "basic-block.h"
-#include "profile.h"
-#include "hashtab.h"
-#include "statistics.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "expmed.h"
-#include "dojump.h"
-#include "explow.h"
-#include "calls.h"
-#include "emit-rtl.h"
-#include "varasm.h"
-#include "stmt.h"
-#include "expr.h"
-#include "except.h"
-#include "intl.h"
-#include "obstack.h"
-#include "params.h"
+#include "backend.h"
 #include "target.h"
+#include "rtl.h"
+#include "tree.h"
+#include "predict.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "insn-config.h"
+#include "emit-rtl.h"
+#include "recog.h"
+
+#include "cfgrtl.h"
+#include "profile.h"
+#include "expr.h"
+#include "params.h"
 #include "tree-pass.h"
 #include "dbgcnt.h"
-#include "df.h"
 #include "gcse-common.h"
 
 /* The following code implements gcse after reload, the purpose of this
@@ -132,12 +102,10 @@ struct expr
 
 /* Hashtable helpers.  */
 
-struct expr_hasher : typed_noop_remove <expr>
+struct expr_hasher : nofree_ptr_hash <expr>
 {
-  typedef expr value_type;
-  typedef expr compare_type;
-  static inline hashval_t hash (const value_type *);
-  static inline bool equal (const value_type *, const compare_type *);
+  static inline hashval_t hash (const expr *);
+  static inline bool equal (const expr *, const expr *);
 };
 
 
@@ -159,7 +127,7 @@ hash_expr (rtx x, int *do_not_record_p)
    here, we just return the cached hash value.  */
 
 inline hashval_t
-expr_hasher::hash (const value_type *exp)
+expr_hasher::hash (const expr *exp)
 {
   return exp->hash;
 }
@@ -168,7 +136,7 @@ expr_hasher::hash (const value_type *exp)
    Return nonzero if exp1 is equivalent to exp2.  */
 
 inline bool
-expr_hasher::equal (const value_type *exp1, const compare_type *exp2)
+expr_hasher::equal (const expr *exp1, const expr *exp2)
 {
   int equiv_p = exp_equiv_p (exp1->expr, exp2->expr, 0, true);
 
@@ -381,6 +349,8 @@ free_mem (void)
   BITMAP_FREE (blocks_with_calls);
   BITMAP_FREE (modify_mem_list_set);
   free (reg_avail_info);
+  free (modify_mem_list);
+  free (canon_modify_mem_list);
 }
 
 
@@ -551,7 +521,7 @@ reg_changed_after_insn_p (rtx x, int cuid)
   unsigned int regno, end_regno;
 
   regno = REGNO (x);
-  end_regno = END_HARD_REGNO (x);
+  end_regno = END_REGNO (x);
   do
     if (reg_avail_info[regno] > cuid)
       return true;
@@ -720,7 +690,7 @@ record_last_reg_set_info (rtx_insn *insn, rtx reg)
   unsigned int regno, end_regno;
 
   regno = REGNO (reg);
-  end_regno = END_HARD_REGNO (reg);
+  end_regno = END_REGNO (reg);
   do
     reg_avail_info[regno] = INSN_CUID (insn);
   while (++regno < end_regno);
@@ -821,15 +791,18 @@ record_opr_changes (rtx_insn *insn)
 	record_last_reg_set_info_regno (insn, regno);
 
       for (link = CALL_INSN_FUNCTION_USAGE (insn); link; link = XEXP (link, 1))
-	if (GET_CODE (XEXP (link, 0)) == CLOBBER)
-	  {
-	    x = XEXP (XEXP (link, 0), 0);
-	    if (REG_P (x))
-	      {
-		gcc_assert (HARD_REGISTER_P (x));
-		record_last_reg_set_info (insn, x);
-	      }
-	  }
+	{
+	  gcc_assert (GET_CODE (XEXP (link, 0)) != CLOBBER_HIGH);
+	  if (GET_CODE (XEXP (link, 0)) == CLOBBER)
+	    {
+	      x = XEXP (XEXP (link, 0), 0);
+	      if (REG_P (x))
+		{
+		  gcc_assert (HARD_REGISTER_P (x));
+		  record_last_reg_set_info (insn, x);
+		}
+	    }
+	}
 
       if (! RTL_CONST_OR_PURE_CALL_P (insn))
 	record_last_mem_set_info (insn);
@@ -993,7 +966,9 @@ bb_has_well_behaved_predecessors (basic_block bb)
 
   FOR_EACH_EDGE (pred, ei, bb->preds)
     {
-      if ((pred->flags & EDGE_ABNORMAL) && EDGE_CRITICAL_P (pred))
+      /* commit_one_edge_insertion refuses to insert on abnormal edges even if
+	 the source has only one successor so EDGE_CRITICAL_P is too weak.  */
+      if ((pred->flags & EDGE_ABNORMAL) && !single_pred_p (pred->dest))
 	return false;
 
       if ((pred->flags & EDGE_ABNORMAL_CALL) && cfun->has_nonlocal_label)
@@ -1073,14 +1048,16 @@ eliminate_partially_redundant_load (basic_block bb, rtx_insn *insn,
   struct unoccr *occr, *avail_occrs = NULL;
   struct unoccr *unoccr, *unavail_occrs = NULL, *rollback_unoccr = NULL;
   int npred_ok = 0;
-  gcov_type ok_count = 0; /* Redundant load execution count.  */
-  gcov_type critical_count = 0; /* Execution count of critical edges.  */
+  profile_count ok_count = profile_count::zero ();
+		 /* Redundant load execution count.  */
+  profile_count critical_count = profile_count::zero ();
+		 /* Execution count of critical edges.  */
   edge_iterator ei;
   bool critical_edge_split = false;
 
   /* The execution count of the loads to be added to make the
      load fully redundant.  */
-  gcov_type not_ok_count = 0;
+  profile_count not_ok_count = profile_count::zero ();
   basic_block pred_bb;
 
   pat = PATTERN (insn);
@@ -1115,8 +1092,8 @@ eliminate_partially_redundant_load (basic_block bb, rtx_insn *insn,
 
 	  /* Make sure we can generate a move from register avail_reg to
 	     dest.  */
-	  rtx_insn *move = as_a <rtx_insn *>
-	    (gen_move_insn (copy_rtx (dest), copy_rtx (avail_reg)));
+	  rtx_insn *move = gen_move_insn (copy_rtx (dest),
+					  copy_rtx (avail_reg));
 	  extract_insn (move);
 	  if (! constrain_operands (1, get_preferred_alternatives (insn,
 								   pred_bb))
@@ -1134,13 +1111,14 @@ eliminate_partially_redundant_load (basic_block bb, rtx_insn *insn,
 	    avail_insn = NULL;
 	}
 
-      if (EDGE_CRITICAL_P (pred))
-	critical_count += pred->count;
+      if (EDGE_CRITICAL_P (pred) && pred->count ().initialized_p ())
+	critical_count += pred->count ();
 
       if (avail_insn != NULL_RTX)
 	{
 	  npred_ok++;
-	  ok_count += pred->count;
+	  if (pred->count ().initialized_p ())
+	    ok_count = ok_count + pred->count ();
 	  if (! set_noop_p (PATTERN (gen_move_insn (copy_rtx (dest),
 						    copy_rtx (avail_reg)))))
 	    {
@@ -1164,7 +1142,8 @@ eliminate_partially_redundant_load (basic_block bb, rtx_insn *insn,
 	  /* Adding a load on a critical edge will cause a split.  */
 	  if (EDGE_CRITICAL_P (pred))
 	    critical_edge_split = true;
-	  not_ok_count += pred->count;
+	  if (pred->count ().initialized_p ())
+	    not_ok_count = not_ok_count + pred->count ();
 	  unoccr = (struct unoccr *) obstack_alloc (&unoccr_obstack,
 						    sizeof (struct unoccr));
 	  unoccr->insn = NULL;
@@ -1182,15 +1161,27 @@ eliminate_partially_redundant_load (basic_block bb, rtx_insn *insn,
       || (optimize_bb_for_size_p (bb) && npred_ok > 1)
       /* If we don't have profile information we cannot tell if splitting
          a critical edge is profitable or not so don't do it.  */
-      || ((! profile_info || ! flag_branch_probabilities
+      || ((!profile_info || profile_status_for_fn (cfun) != PROFILE_READ
 	   || targetm.cannot_modify_jumps_p ())
 	  && critical_edge_split))
     goto cleanup;
 
   /* Check if it's worth applying the partial redundancy elimination.  */
-  if (ok_count < GCSE_AFTER_RELOAD_PARTIAL_FRACTION * not_ok_count)
+  if (ok_count.to_gcov_type ()
+      < GCSE_AFTER_RELOAD_PARTIAL_FRACTION * not_ok_count.to_gcov_type ())
     goto cleanup;
-  if (ok_count < GCSE_AFTER_RELOAD_CRITICAL_FRACTION * critical_count)
+
+  gcov_type threshold;
+#if (GCC_VERSION >= 5000)
+  if (__builtin_mul_overflow (GCSE_AFTER_RELOAD_CRITICAL_FRACTION,
+			      critical_count.to_gcov_type (), &threshold))
+    threshold = profile_count::max_count;
+#else
+  threshold
+    = GCSE_AFTER_RELOAD_CRITICAL_FRACTION * critical_count.to_gcov_type ();
+#endif
+
+  if (ok_count.to_gcov_type () < threshold)
     goto cleanup;
 
   /* Generate moves to the loaded register from where
@@ -1401,7 +1392,7 @@ gcse_after_reload_main (rtx f ATTRIBUTE_UNUSED)
 	 increase the number of redundant loads found.  So compute transparency
 	 information for each memory expression in the hash table.  */
       df_analyze ();
-      /* This can not be part of the normal allocation routine because
+      /* This cannot be part of the normal allocation routine because
 	 we have to know the number of elements in the hash table.  */
       transp = sbitmap_vector_alloc (last_basic_block_for_fn (cfun),
 				     expr_table->elements ());

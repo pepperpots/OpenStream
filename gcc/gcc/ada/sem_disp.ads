@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -48,11 +48,11 @@ package Sem_Disp is
    --  primitive operations (new primitives are only defined in package spec,
    --  overridden operation can be defined in any scope). If Old_Subp is not
    --  Empty we are in the overriding case. If the tagged type associated with
-   --  Subp is a concurrent type (case that occurs when the type is declared in
-   --  a generic because the analysis of generics disables generation of the
-   --  corresponding record) then this routine does does not add Subp to the
-   --  list of primitive operations but leaves Subp decorated as dispatching
-   --  operation to enable checks associated with the Object.Operation notation
+   --  Subp is a concurrent type (case that occurs when the type is declared
+   --  in a generic because the analysis of generics disables generation of the
+   --  corresponding record) then this routine does not add Subp to the list of
+   --  primitive operations but leaves Subp decorated as dispatching operation
+   --  to enable checks associated with the Object.Operation notation.
 
    procedure Check_Operation_From_Incomplete_Type
      (Subp : Entity_Id;
@@ -70,10 +70,9 @@ package Sem_Disp is
    --  full view because it is always this one which has to be called.
    --  What is Subp used for???
 
-   function Covers_Some_Interface (Prim : Entity_Id) return Boolean;
-   --  Returns true if Prim covers some interface primitive of its associated
-   --  tagged type. The tagged type of Prim must be frozen when this function
-   --  is invoked.
+   function Covered_Interface_Op (Prim : Entity_Id) return Entity_Id;
+   --  Returns the interface primitive that Prim covers, when its controlling
+   --  type has progenitors.
 
    function Find_Controlling_Arg (N : Node_Id) return Node_Id;
    --  Returns the actual controlling argument if N is dynamically tagged, and
@@ -101,13 +100,31 @@ package Sem_Disp is
    type Subprogram_List is array (Nat range <>) of Entity_Id;
    --  Type returned by Inherited_Subprograms function
 
+   generic
+      with function Find_DT (Subp : Entity_Id) return Entity_Id;
+   package Inheritance_Utilities is
+
+      --  This package provides generic versions of inheritance utilities
+      --  provided here. These versions are used in GNATprove backend to adapt
+      --  these utilities to GNATprove specific version of visibility of types.
+
+      function Inherited_Subprograms
+        (S               : Entity_Id;
+         No_Interfaces   : Boolean := False;
+         Interfaces_Only : Boolean := False;
+         One_Only        : Boolean := False) return Subprogram_List;
+
+      function Is_Overriding_Subprogram (E : Entity_Id) return Boolean;
+   end Inheritance_Utilities;
+
    function Inherited_Subprograms
      (S               : Entity_Id;
       No_Interfaces   : Boolean := False;
-      Interfaces_Only : Boolean := False) return Subprogram_List;
+      Interfaces_Only : Boolean := False;
+      One_Only        : Boolean := False) return Subprogram_List;
    --  Given the spec of a subprogram, this function gathers any inherited
-   --  subprograms from direct inheritance or via interfaces. The list is a
-   --  list of entity id's of the specs of inherited subprograms. Returns a
+   --  subprograms from direct inheritance or via interfaces. The result is an
+   --  array of Entity_Ids of the specs of inherited subprograms. Returns a
    --  null array if passed an Empty spec id. Note that the returned array
    --  only includes subprograms and generic subprograms (and excludes any
    --  other inherited entities, in particular enumeration literals). If
@@ -117,6 +134,10 @@ package Sem_Disp is
    --  come first, starting with the closest ancestors, and are followed by
    --  subprograms inherited from interfaces. At most one of No_Interfaces
    --  and Interfaces_Only should be True.
+   --
+   --  If One_Only is set, the search is discontinued as soon as one entry
+   --  is found. In this case the resulting array is either null or contains
+   --  exactly one element.
 
    function Is_Dynamically_Tagged (N : Node_Id) return Boolean;
    --  Used to determine whether a call is dispatching, i.e. if it is
@@ -128,6 +149,9 @@ package Sem_Disp is
 
    function Is_Null_Interface_Primitive (E : Entity_Id) return Boolean;
    --  Returns True if E is a null procedure that is an interface primitive
+
+   function Is_Overriding_Subprogram (E : Entity_Id) return Boolean;
+   --  Returns True if E is an overriding subprogram
 
    function Is_Tag_Indeterminate (N : Node_Id) return Boolean;
    --  Returns true if the expression N is tag-indeterminate. An expression

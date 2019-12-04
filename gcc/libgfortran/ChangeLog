@@ -1,126 +1,259 @@
-2015-07-16  Release Manager
+2019-08-12  Release Manager
 
-	* GCC 5.2.0 released.
+	* GCC 9.2.0 released.
 
-2015-07-15  Janne Blomqvist  <jb@gcc.gnu.org>
+2019-07-23  Thomas König  <tkoenig@gcc.gnu.org>
 
-	PR libfortran/66861
-	* io/unix.c (compare_file_filename): Verify that u->filename is
-	non-NULL before strcmp.
-	(find_file0): Likewise.
+	Backport from trunk
+	PR libfortran/91030
+	* io/unix.c (BUFFER_SIZE): Delete.
+	(BUFFER_FORMATTED_SIZE_DEFAULT): New variable.
+	(BUFFER_UNFORMATTED_SIZE_DEFAULT): New variable.
+	(unix_stream): Add buffer_size.
+	(buf_read): Use s->buffer_size instead of BUFFER_SIZE.
+	(buf_write): Likewise.
+	(buf_init): Add argument unformatted.  Handle block sizes
+	for unformatted vs. formatted, using defaults if provided.
+	(fd_to_stream): Add argument unformatted in call to buf_init.
+	* libgfortran.h (options_t): Add buffer_size_formatted and
+	buffer_size_unformatted.
+	* runtime/environ.c (variable_table): Add
+	GFORTRAN_UNFORMATTED_BUFFER_SIZE and
+	GFORTRAN_FORMATTED_BUFFER_SIZE.
 
-2015-04-22  Release Manager
+2019-05-20  Janne Blomqvist  <jb@gcc.gnu.org>
 
-	* GCC 5.1.0 released.
+	Backport from trunk
+        PR libfortran/90038
+        * intrinsics/execute_command_line (sigchld_handler): New function.
+        (execute_command_line): Install handler for SIGCHLD.
+        * configure.ac: Check for presence of sigaction and waitpid.
+        * config.h.in: Regenerated.
+        * configure: Regenerated.
 
-2015-03-28 Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+2019-05-20  Janne Blomqvist  <jb@gcc.gnu.org>
 
-	PR libgfortran/65596
-	* io/transfer.c (data_transfer_init): If in namelist mode and
-	delimiter is not specified, set it to DELIM_QUOTE, independent
-	of -std.
-	* io/unit.c (init_units): Set flags.delim to the correct
-	initial value of DELIM_UNSPECIFIED.
+	Backport from trunk
+	PR libfortran/90038
+	* configure.ac (AC_CHECK_FUNCS_ONCE): Check for posix_spawn.
+	* intrinsics/execute_command_line (execute_command_line): Use
+	posix_spawn.
+	* Makefile.in: Regenerated.
+	* config.h.in: Regenerated.
+	* configure: Regenerated.
 
-2015-03-25 Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+2019-05-17  Jakub Jelinek  <jakub@redhat.com>
 
-	PR libgfortran/65541
-	* io/write.c (nml_write_obj): Convert '+' to '%' before emitting
-	object names in namelists.
+	PR fortran/54613
+	* gfortran.map (GFORTRAN_9.2): Export _gfortran_{,m,s}findloc{0,1}_r10.
+	* Makefile.am (i_findloc0_c): Add $(srcdir)/generated/findloc0_r10.c.
+	(i_findloc1_c): Add $(srcdir)/generated/findloc1_r10.c.
+	* Makefile.in: Regenerated.
+	* generated/findloc0_r10.c: Generated.
+	* generated/findloc1_r10.c: Generated.
 
-2015-03-22 Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	PR fortran/54613
+	* gfortran.map (GFORTRAN_9.2): New symbol version, export
+	_gfortran_{,m,s}findloc0_i2 in it.
 
-	PR libgfortran/59513
-	* io/transfer.c (data_transfer_init): Do not error for
-	-std=legacy.
+2019-05-03  Release Manager
 
-2015-03-16 Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	* GCC 9.1.0 released.
 
-	PR libgfortran/64432
-	* intrinsics/system_clock.c (system_clock4, system_clock8):
-	Cleanup some whitespace.
+2019-05-02  Jakub Jelinek  <jakub@redhat.com>
 
-2015-03-11  Thomas Schwinge  <thomas@codesourcery.com>
+	* Makefile.am (gfor_cdir): Remove $(MULTISUBDIR).
+	* Makefile.in: Regenerated.
 
-	* caf/single.c (caf_runtime_error): Revert 2014-11-28 changes.
-	* runtime/minimal.c (STRERR_MAXSZ): Don't define.
-	(runtime_error_at, sys_abort): Bring more in line with the
-	non-LIBGFOR_MINIMAL code.
-	(runtime_warning_at, internal_error): New functions.
+2019-04-14  Paul Thomas  <pault@gcc.gnu.org>
 
-2015-03-11  Janne Blomqvist  <jb@gcc.gnu.org>
+	PR fortran/89843
+	* runtime/ISO_Fortran_binding.c (cfi_desc_to_gfc_desc): Only
+	return immediately if the source pointer is null. Bring
+	forward the extraction of the gfc type. Extract the kind so
+	that the element size can be correctly computed for sections
+	and components of derived type arrays. Remove the free of the
+	CFI descriptor since this is now done in trans-expr.c.
+	(gfc_desc_to_cfi_desc): Only allocate the CFI descriptor if it
+	is not null.
+	(CFI_section): Normalise the difference between the upper and
+	lower bounds by the stride to correctly calculate the extents
+	of the section.
 
-	PR libfortran/65200
-	* io/open.c (new_unit): Use gf_strerror rather than hardcoding
-	error messages for different errno values.
-	* io/unix.c (regular_file2): Handle EPERM in addition to EACCES.
+	PR fortran/89846
+	* runtime/ISO_Fortran_binding.c (cfi_desc_to_gfc_desc): Use
+	the stride measure for the gfc span if it is not a multiple
+	of the element length. Otherwise use the element length.
 
-2015-03-10  Alessandro Fanfarillo  <fanfarillo.gcc@gmail.com>
-	    Tobias Burnus  <burnus@net-b.de>
+	PR fortran/90022
+	* runtime/ISO_Fortran_binding.c (CFI_is_contiguous) : Return
+	1 for true and 0 otherwise to comply with the standard. Correct
+	the contiguity check for rank 3 and greater by using the stride
+	measure of the lower dimension rather than the element length.
 
-	* caf/libcaf.h (_gfortran_caf_sync_memory): New prototype.
-	* caf/single.c (_gfortran_caf_sync_memory): Implement.
-	(_gfortran_caf_sync_all, _gfortran_caf_sync_image): Add
-	__asm__ __volatile___ ("":::"memory").
+2019-03-25  John David Anglin  <danglin@gcc.gnu.org>
 
-2015-02-10 Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	PR libgfortran/79540
+	* io/write_float.def (build_float_string): Don't copy digits when
+	ndigits is negative.
 
-	PR libgfortran/57822
-	* io/write_float.def (output_float): Apply fix of previous patch
-	to correctly calculate the exponent number of digits and take
-	care of wide character output.
+2019-03-05  Jakub Jelinek  <jakub@redhat.com>
 
-2015-02-09  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	PR libgfortran/89593
+	* caf/single.c (_gfortran_caf_sendget_by_ref): Cast &temp to
+	gfc_descriptor_t * to avoid warning.
 
-	PR libgfortran/57822
-	* io/write_float.def (output_float): If doing g0 editing and
-	exponent is zero, do not emit exponent.
+2019-02-26  Uroš Bizjak  <ubizjak@gmail.com>
 
-2015-02-07  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	* io/transfer.c (transfer_array_inner): Do not
+	cast charlen to index_type.
 
-	PR libgfortran/60956
-	* io/fbuf.c (fbuf_flush_list): New function that only flushes
-	if current fbuf position exceeds a limit.
-	* io/fbuf.h: Declare the new function.
-	* io/io.h (enum unit_mode): Add two new modes.
-	* io/list_read.c (list_formatted_read_scalar): Call new function.
-	* io/write.c: Include fbuf.h. (list_formatted_write_scalar):
-	Call new function.
+2019-02-25  Dominique d'Humieres  <dominiq@gcc.gnu.org>
 
-2015-01-24  Janne Blomqvist  <jb@gcc.gnu.org>
+	PR libfortran/89274
+	* io/write.c (write_integer): Add width for INTEGER(16).
 
-	PR libfortran/64770
-	* io/unit.c (filename_from_unit): Check that u->filename != NULL
-	before calling strdup.
+2019-02-23  Paul Thomas  <pault@gcc.gnu.org>
 
-2015-01-22  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	PR fortran/89385
+	PR fortran/89366
+	* runtime/ISO_Fortran_binding.c (cfi_desc_to_gfc_desc) : In the
+	interchange between character and derived, the character type
+	was being set incorrectly.
+	(gfc_desc_to_cfi_desc) : Eliminate the interchange of types in
+	this function. Do not add the kind and length information to
+	the type field of structures. Lbounds were incorrectly being
+	set to zero for allocatable and pointer descriptors. Should
+	have been non-pointer, non-allocatables that received this
+	treatment.
 
-	PR libgfortran/61933
-	* io/inquire.c (inquire_via_unit): Set existing to true for
-	any negative unit that is currently connected and any positive
-	units within range of KIND=4 value.  The unit value for any out
-	of range case that may occur if the user is using a KIND=8 will
-	have been set to -2 which is reserved and can never be opened,
-	and therefore the unit does not exist.
+2019-01-30  Uroš Bizjak  <ubizjak@gmail.com>
 
-2015-01-14  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+	PR libfortran/88678
+	Revert:
+	2016-11-16  Szabolcs Nagy  <szabolcs.nagy@arm.com>
 
-	PR libgfortran/61933
-	* io/inquire.c (inquire_via_unit): Set existing to true if a
-	gfc_unit stucture was found for the given unit number.
-	* runtime/error.c (translate_error): Add case for
-	LIBERROR_INQUIRE_INTERNAL_UNIT.
+	PR libfortran/78314
+	* config/fpu-glibc.h (support_fpu_trap): Use feenableexcept.
 
-2015-01-05  Jakub Jelinek  <jakub@redhat.com>
+2019-01-30  Uroš Bizjak  <ubizjak@gmail.com>
+
+	PR libfortran/88678
+	* config/fpu-glibc.h (set_fpu_trap_exceptions): Clear stalled
+	exception flags before changing trap mode.  Optimize to call
+	feenableexcept and fedisableexcept only once.
+
+2019-01-28  Sebastian Huber  <sebastian.huber@embedded-brains.de>
+
+	* io/async.c (init_adv_cond): Use __GTHREAD_COND_INIT_FUNCTION().
+
+2019-01-27  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR libfortran/89020
+	* io/close.c (st_close): Simplify text of error message to not
+	presume a specific cause of failure to remove file.
+
+2019-01-26  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR libfortran/89020
+	* io/close.c (st_close): Fix typo.
+
+2019-01-26  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR libfortran/89020
+	* io/close.c (st_close): Generate error if calls to 'remove' return
+	an error.
+
+2019-01-17  Andrew Stubbs  <ams@codesourcery.com>
+	    Kwok Cheung Yeung  <kcy@codesourcery.com>
+	    Julian Brown  <julian@codesourcery.com>
+	    Tom de Vries  <tom@codesourcery.com>
+
+	* configure.ac: Use minimal mode for amdgcn.
+	* configure: Regenerate.
+
+2019-01-13  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR libfortran/88776
+	* io/open.c (newunit): Free format buffer if the unit specified is for
+	stdin, stdout, or stderr.
+
+2019-01-12  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR libfortran/88776
+	* io/list_read.c (namelist_read): Use nml_err_ret path on read error
+	not based on stdin_unit.
+
+2019-01-12  Paul Thomas  <pault@gcc.gnu.org>
+
+	* ISO_Fortran_binding.h : New file.
+	* Makefile.am : Include ISO_Fortran_binding.c in the list of
+	files to compile.
+	* Makefile.in : Regenerated.
+	* gfortran.map : Add _gfortran_cfi_desc_to_gfc_desc,
+	_gfortran_gfc_desc_to_cfi_desc and the CFI API functions.
+	* runtime/ISO_Fortran_binding.c : New file containing the new
+	functions added to the map.
+
+2019-01-12  Jakub Jelinek  <jakub@redhat.com>
+
+	PR libfortran/88807
+	* m4/minloc0.m4: Reindent to avoid -Wmisleading-indentation warnings.
+	* generated/minloc0_4_i1.c: Regenerated.
+	* generated/minloc0_4_i2.c: Regenerated.
+	* generated/minloc0_4_i4.c: Regenerated.
+	* generated/minloc0_4_i8.c: Regenerated.
+	* generated/minloc0_4_i16.c: Regenerated.
+	* generated/minloc0_4_r4.c: Regenerated.
+	* generated/minloc0_4_r8.c: Regenerated.
+	* generated/minloc0_4_r10.c: Regenerated.
+	* generated/minloc0_4_r16.c: Regenerated.
+	* generated/minloc0_8_i1.c: Regenerated.
+	* generated/minloc0_8_i2.c: Regenerated.
+	* generated/minloc0_8_i4.c: Regenerated.
+	* generated/minloc0_8_i8.c: Regenerated.
+	* generated/minloc0_8_i16.c: Regenerated.
+	* generated/minloc0_8_r4.c: Regenerated.
+	* generated/minloc0_8_r8.c: Regenerated.
+	* generated/minloc0_8_r10.c: Regenerated.
+	* generated/minloc0_8_r16.c: Regenerated.
+	* generated/minloc0_16_i1.c: Regenerated.
+	* generated/minloc0_16_i2.c: Regenerated.
+	* generated/minloc0_16_i4.c: Regenerated.
+	* generated/minloc0_16_i8.c: Regenerated.
+	* generated/minloc0_16_i16.c: Regenerated.
+	* generated/minloc0_16_r4.c: Regenerated.
+	* generated/minloc0_16_r8.c: Regenerated.
+	* generated/minloc0_16_r10.c: Regenerated.
+	* generated/minloc0_16_r16.c: Regenerated.
+
+2019-01-09  Sandra Loosemore  <sandra@codesourcery.com>
+
+	PR other/16615
+	* caf/single.c: Mechanically replace "can not" with "cannot".
+	* io/unit.c: Likewise.
+
+2019-01-07  Thomas Koenig  <tkoenig@gcc.gnu.org>
+	    Harald Anlauf <anlauf@gmx.de>
+	    Tobias Burnus <burnus@gcc.gnu.org>
+
+	PR fortran/45424
+	* Makefile.am: Add intrinsics/is_contiguous.c.
+	* Makefile.in: Regenerated.
+	* gfortran.map: Add _gfortran_is_contiguous0.
+	* intrinsics/is_contiguous.c: New file.
+	* libgfortran.h: Add prototype for is_contiguous0.
+
+2019-01-07  Janne Blomqvist  <jb@gcc.gnu.org>
+
+	* gfortran.map (GFORTRAN_9): Make GFORTRAN_9 node depend on
+	GFORTRAN_8.
+
+2019-01-01  Jakub Jelinek  <jakub@redhat.com>
 
 	Update copyright years.
-
-2015-01-02  Tobias Burnus  <burnus@net-b.de>
-
-	* caf/single.c (_gfortran_caf_co_reduce): New function.
-	* caf/libcaf.h (_gfortran_caf_co_reduce): New prototype.
-^L
-Copyright (C) 2015 Free Software Foundation, Inc.
+
+Copyright (C) 2019 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

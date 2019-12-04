@@ -1,5 +1,5 @@
 /* Definitions for Intel 386 running Linux-based GNU systems with ELF format.
-   Copyright (C) 2012-2015 Free Software Foundation, Inc.
+   Copyright (C) 2012-2019 Free Software Foundation, Inc.
    Contributed by Ilya Enkovich.
 
 This file is part of GCC.
@@ -26,6 +26,12 @@ along with GCC; see the file COPYING3.  If not see
       ANDROID_TARGET_OS_CPP_BUILTINS();	       \
     }                                          \
   while (0)
+
+#define EXTRA_TARGET_D_OS_VERSIONS()		\
+  ANDROID_TARGET_D_OS_VERSIONS();
+
+#define GNU_USER_TARGET_D_CRITSEC_SIZE		\
+  (TARGET_64BIT ? (POINTER_SIZE == 64 ? 40 : 32) : 24)
 
 #undef CC1_SPEC
 #define CC1_SPEC \
@@ -54,45 +60,15 @@ along with GCC; see the file COPYING3.  If not see
 		       GNU_USER_TARGET_MATHFILE_SPEC " " \
 		       ANDROID_ENDFILE_SPEC)
 
-#ifndef LIBMPX_LIBS
-#define LIBMPX_LIBS "\
- %:include(libmpx.spec)%(link_libmpx)"
-#endif
-
-#ifndef MPX_SPEC
-#define MPX_SPEC "\
- %{mmpx:%{fcheck-pointer-bounds:%{!static:%:include(libmpx.spec)%(link_mpx)}}}"
-#endif
-
-#ifndef LIBMPX_SPEC
-#if defined(HAVE_LD_STATIC_DYNAMIC)
-#define LIBMPX_SPEC "\
-%{mmpx:%{fcheck-pointer-bounds:\
-    %{static:--whole-archive -lmpx --no-whole-archive" LIBMPX_LIBS "}\
-    %{!static:%{static-libmpx:" LD_STATIC_OPTION " --whole-archive}\
-    -lmpx %{static-libmpx:--no-whole-archive " LD_DYNAMIC_OPTION \
-    LIBMPX_LIBS "}}}}"
+#ifdef HAVE_LD_PUSHPOPSTATE_SUPPORT
+#define MPX_LD_AS_NEEDED_GUARD_PUSH "--push-state --no-as-needed"
+#define MPX_LD_AS_NEEDED_GUARD_POP "--pop-state"
 #else
-#define LIBMPX_SPEC "\
-%{mmpx:%{fcheck-pointer-bounds:-lmpx" LIBMPX_LIBS "}}"
-#endif
-#endif
-
-#ifndef LIBMPXWRAPPERS_SPEC
-#if defined(HAVE_LD_STATIC_DYNAMIC)
-#define LIBMPXWRAPPERS_SPEC "\
-%{mmpx:%{fcheck-pointer-bounds:%{!fno-chkp-use-wrappers:\
-    %{static:-lmpxwrappers}\
-    %{!static:%{static-libmpxwrappers:" LD_STATIC_OPTION " --whole-archive}\
-    -lmpxwrappers %{static-libmpxwrappers:--no-whole-archive "\
-    LD_DYNAMIC_OPTION "}}}}}"
-#else
-#define LIBMPXWRAPPERS_SPEC "\
-%{mmpx:%{fcheck-pointer-bounds:{!fno-chkp-use-wrappers:-lmpxwrappers}}}"
-#endif
+#define MPX_LD_AS_NEEDED_GUARD_PUSH ""
+#define MPX_LD_AS_NEEDED_GUARD_POP ""
 #endif
 
-#ifndef CHKP_SPEC
-#define CHKP_SPEC "\
-%{!nostdlib:%{!nodefaultlibs:" LIBMPX_SPEC LIBMPXWRAPPERS_SPEC "}}" MPX_SPEC
-#endif
+extern void file_end_indicate_exec_stack_and_cet (void);
+
+#undef TARGET_ASM_FILE_END
+#define TARGET_ASM_FILE_END file_end_indicate_exec_stack_and_cet

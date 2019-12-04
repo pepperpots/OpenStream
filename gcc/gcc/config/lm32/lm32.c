@@ -1,7 +1,7 @@
 /* Subroutines used for code generation on the Lattice Mico32 architecture.
    Contributed by Jon Beniston <jon@beniston.com>
 
-   Copyright (C) 2009-2015 Free Software Foundation, Inc.
+   Copyright (C) 2009-2019 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -19,66 +19,34 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
+#include "tree.h"
+#include "stringpool.h"
+#include "attribs.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "optabs.h"
 #include "regs.h"
-#include "hard-reg-set.h"
-#include "predict.h"
-#include "vec.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "basic-block.h"
-#include "insn-config.h"
-#include "conditions.h"
-#include "insn-flags.h"
-#include "insn-attr.h"
-#include "insn-codes.h"
+#include "emit-rtl.h"
 #include "recog.h"
 #include "output.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
-#include "fold-const.h"
 #include "calls.h"
-#include "flags.h"
-#include "statistics.h"
-#include "double-int.h"
-#include "real.h"
-#include "fixed-value.h"
 #include "alias.h"
-#include "expmed.h"
-#include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
-#include "varasm.h"
-#include "stmt.h"
 #include "expr.h"
-#include "reload.h"
-#include "tm_p.h"
-#include "diagnostic-core.h"
-#include "optabs.h"
-#include "libfuncs.h"
-#include "ggc.h"
-#include "target.h"
-#include "target-def.h"
-#include "langhooks.h"
 #include "tm-constrs.h"
-#include "df.h"
 #include "builtins.h"
+
+/* This file should be included last.  */
+#include "target-def.h"
 
 struct lm32_frame_info
 {
@@ -98,7 +66,7 @@ static bool lm32_in_small_data_p (const_tree);
 static void lm32_setup_incoming_varargs (cumulative_args_t cum,
 					 machine_mode mode, tree type,
 					 int *pretend_size, int no_rtl);
-static bool lm32_rtx_costs (rtx x, int code, int outer_code, int opno,
+static bool lm32_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno,
 			    int *total, bool speed);
 static bool lm32_can_eliminate (const int, const int);
 static bool
@@ -111,6 +79,9 @@ static rtx lm32_function_arg (cumulative_args_t cum,
 static void lm32_function_arg_advance (cumulative_args_t cum,
 				       machine_mode mode,
 				       const_tree type, bool named);
+static bool lm32_hard_regno_mode_ok (unsigned int, machine_mode);
+static bool lm32_modes_tieable_p (machine_mode, machine_mode);
+static HOST_WIDE_INT lm32_starting_frame_offset (void);
 
 #undef TARGET_OPTION_OVERRIDE
 #define TARGET_OPTION_OVERRIDE lm32_option_override
@@ -136,8 +107,20 @@ static void lm32_function_arg_advance (cumulative_args_t cum,
 #define TARGET_MAX_ANCHOR_OFFSET 0x7fff
 #undef TARGET_CAN_ELIMINATE
 #define TARGET_CAN_ELIMINATE lm32_can_eliminate
+#undef TARGET_LRA_P
+#define TARGET_LRA_P hook_bool_void_false
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P lm32_legitimate_address_p
+#undef TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK lm32_hard_regno_mode_ok
+#undef TARGET_MODES_TIEABLE_P
+#define TARGET_MODES_TIEABLE_P lm32_modes_tieable_p
+
+#undef TARGET_CONSTANT_ALIGNMENT
+#define TARGET_CONSTANT_ALIGNMENT constant_alignment_word_strings
+
+#undef TARGET_STARTING_FRAME_OFFSET
+#define TARGET_STARTING_FRAME_OFFSET lm32_starting_frame_offset
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
@@ -237,9 +220,8 @@ gen_int_relational (enum rtx_code code,
       /* Generate conditional branch instruction.  */
       cond = gen_rtx_fmt_ee (code, mode, cmp0, cmp1);
       label = gen_rtx_LABEL_REF (VOIDmode, destination);
-      insn = gen_rtx_SET (VOIDmode, pc_rtx,
-			  gen_rtx_IF_THEN_ELSE (VOIDmode,
-						cond, label, pc_rtx));
+      insn = gen_rtx_SET (pc_rtx, gen_rtx_IF_THEN_ELSE (VOIDmode,
+							cond, label, pc_rtx));
       emit_jump_insn (insn);
     }
   else
@@ -536,7 +518,7 @@ lm32_print_operand (FILE * file, rtx op, int letter)
   else if (code == HIGH)
     output_addr_const (file, XEXP (op, 0));  
   else if (code == MEM)
-    output_address (XEXP (op, 0));
+    output_address (GET_MODE (op), XEXP (op, 0));
   else if (letter == 'z' && GET_CODE (op) == CONST_INT && INTVAL (op) == 0)
     fprintf (file, "%s", reg_names[0]);
   else if (GET_CODE (op) == CONST_DOUBLE)
@@ -589,7 +571,7 @@ lm32_print_operand_address (FILE * file, rtx addr)
       break;
 
     case MEM:
-      output_address (XEXP (addr, 0));
+      output_address (VOIDmode, XEXP (addr, 0));
       break;
 
     case PLUS:
@@ -863,7 +845,7 @@ lm32_block_move_inline (rtx dest, rtx src, HOST_WIDE_INT length,
       break;
     }
 
-  mode = mode_for_size (bits, MODE_INT, 0);
+  mode = int_mode_for_size (bits, 0).require ();
   delta = bits / BITS_PER_UNIT;
 
   /* Allocate a buffer for the temporary registers.  */
@@ -886,7 +868,7 @@ lm32_block_move_inline (rtx dest, rtx src, HOST_WIDE_INT length,
       src = adjust_address (src, BLKmode, offset);
       dest = adjust_address (dest, BLKmode, offset);
       move_by_pieces (dest, src, length - offset,
-		      MIN (MEM_ALIGN (src), MEM_ALIGN (dest)), 0);
+		      MIN (MEM_ALIGN (src), MEM_ALIGN (dest)), RETURN_BEGIN);
     }
 }
 
@@ -952,10 +934,10 @@ nonpic_symbol_mentioned_p (rtx x)
    scanned.  In either case, *TOTAL contains the cost result.  */
 
 static bool
-lm32_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
-		int *total, bool speed)
+lm32_rtx_costs (rtx x, machine_mode mode, int outer_code,
+		int opno ATTRIBUTE_UNUSED, int *total, bool speed)
 {
-  machine_mode mode = GET_MODE (x);
+  int code = GET_CODE (x);
   bool small_mode;
 
   const int arithmetic_latency = 1;
@@ -1253,4 +1235,31 @@ lm32_move_ok (machine_mode mode, rtx operands[2]) {
   if (memory_operand (operands[0], mode))
     return register_or_zero_operand (operands[1], mode);
   return true;
+}
+
+/* Implement TARGET_HARD_REGNO_MODE_OK.  */
+
+static bool
+lm32_hard_regno_mode_ok (unsigned int regno, machine_mode)
+{
+  return G_REG_P (regno);
+}
+
+/* Implement TARGET_MODES_TIEABLE_P.  */
+
+static bool
+lm32_modes_tieable_p (machine_mode mode1, machine_mode mode2)
+{
+  return (GET_MODE_CLASS (mode1) == MODE_INT
+	  && GET_MODE_CLASS (mode2) == MODE_INT
+	  && GET_MODE_SIZE (mode1) <= UNITS_PER_WORD
+	  && GET_MODE_SIZE (mode2) <= UNITS_PER_WORD);
+}
+
+/* Implement TARGET_STARTING_FRAME_OFFSET.  */
+
+static HOST_WIDE_INT
+lm32_starting_frame_offset (void)
+{
+  return UNITS_PER_WORD;
 }

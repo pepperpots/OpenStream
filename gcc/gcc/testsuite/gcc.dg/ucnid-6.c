@@ -1,6 +1,6 @@
 /* { dg-do run } */
-/* { dg-xfail-if "" { "powerpc-ibm-aix*" } { "*" } { "" } } */
-/* { dg-skip-if "" { ! ucn } { "*" } { "" } } */
+/* { dg-xfail-if "" { "powerpc-ibm-aix*" } } */
+/* { dg-skip-if "" { ! ucn } } */
 /* { dg-options "-std=c99 -save-temps -g" } */
 void abort (void);
 
@@ -26,4 +26,3 @@ int main (void)
   
   return 0;
 }
-/* { dg-final { cleanup-saved-temps } } */

@@ -1,24 +1,35 @@
-// Copyright 2009 The Go Authors.  All rights reserved.
+// Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 package runtime
 
-var ticks struct {
-	lock mutex
-	val  uint64
-}
+import (
+	"runtime/internal/atomic"
+	_ "unsafe" // for go:linkname
+)
 
-var tls0 [8]uintptr // available storage for m0's TLS; not necessarily used; opaque to GC
+//go:generate go run wincallback.go
+//go:generate go run mkduff.go
+//go:generate go run mkfastlog2table.go
+
+// For gccgo, while we still have C runtime code, use go:linkname to
+// rename some functions to themselves, so that the compiler will
+// export them.
+//
+//go:linkname tickspersecond runtime.tickspersecond
+
+var ticksLock mutex
+var ticksVal uint64
 
 // Note: Called by runtime/pprof in addition to runtime code.
 func tickspersecond() int64 {
-	r := int64(atomicload64(&ticks.val))
+	r := int64(atomic.Load64(&ticksVal))
 	if r != 0 {
 		return r
 	}
-	lock(&ticks.lock)
-	r = int64(ticks.val)
+	lock(&ticksLock)
+	r = int64(ticksVal)
 	if r == 0 {
 		t0 := nanotime()
 		c0 := cputicks()
@@ -32,29 +43,33 @@ func tickspersecond() int64 {
 		if r == 0 {
 			r++
 		}
-		atomicstore64(&ticks.val, uint64(r))
+		atomic.Store64(&ticksVal, uint64(r))
 	}
-	unlock(&ticks.lock)
+	unlock(&ticksLock)
 	return r
-}
-
-func makeStringSlice(n int) []string {
-	return make([]string, n)
-}
-
-// TODO: Move to parfor.go when parfor.c becomes parfor.go.
-func parforalloc(nthrmax uint32) *parfor {
-	return &parfor{
-		thr:     &make([]parforthread, nthrmax)[0],
-		nthrmax: nthrmax,
-	}
 }
 
 var envs []string
 var argslice []string
 
-// called from syscall
-func runtime_envs() []string { return envs }
+//go:linkname syscall_runtime_envs syscall.runtime_envs
+func syscall_runtime_envs() []string { return append([]string{}, envs...) }
 
-// called from os
-func runtime_args() []string { return argslice }
+//go:linkname syscall_Getpagesize syscall.Getpagesize
+func syscall_Getpagesize() int { return int(physPageSize) }
+
+//go:linkname os_runtime_args os.runtime_args
+func os_runtime_args() []string { return append([]string{}, argslice...) }
+
+//go:linkname syscall_Exit syscall.Exit
+//go:nosplit
+func syscall_Exit(code int) {
+	exit(int32(code))
+}
+
+// Temporary, for the gccgo runtime code written in C.
+//go:linkname get_envs runtime_get_envs
+func get_envs() []string { return envs }
+
+//go:linkname get_args runtime_get_args
+func get_args() []string { return argslice }

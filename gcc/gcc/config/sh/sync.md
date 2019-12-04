@@ -1,5 +1,5 @@
 ;; GCC machine description for SH synchronization instructions.
-;; Copyright (C) 2011-2015 Free Software Foundation, Inc.
+;; Copyright (C) 2011-2019 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -294,7 +294,7 @@
   /* FIXME: Sometimes the 'expected value' operand is not propagated as
      immediate value.  See PR 64974.  */
   set_of_reg op2 = sh_find_set_of_reg (operands[2], curr_insn,
-				       prev_nonnote_insn_bb);
+				       prev_nonnote_nondebug_insn_bb);
   if (op2.set_src != NULL && satisfies_constraint_I08 (op2.set_src))
     {
       rtx* r = &XVECEXP (XEXP (XVECEXP (PATTERN (curr_insn), 0, 0), 1), 0, 1);
@@ -2131,7 +2131,7 @@
   [(match_operand:SI 0 "register_operand" "")		;; bool result output
    (match_operand:QI 1 "memory_operand" "")		;; memory
    (match_operand:SI 2 "const_int_operand" "")]		;; model
-  "(TARGET_ATOMIC_ANY || TARGET_ENABLE_TAS) && !TARGET_SHMEDIA"
+  "TARGET_ATOMIC_ANY || TARGET_ENABLE_TAS"
 {
   rtx addr = force_reg (Pmode, XEXP (operands[1], 0));
 
@@ -2168,7 +2168,7 @@
 	       (const_int 0)))
    (set (mem:QI (match_dup 0))
 	(unspec:QI [(const_int 128)] UNSPEC_ATOMIC))]
-  "TARGET_ENABLE_TAS && !TARGET_SHMEDIA"
+  "TARGET_ENABLE_TAS"
   "tas.b	@%0"
   [(set_attr "insn_class" "co_group")])
 

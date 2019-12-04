@@ -1,6 +1,6 @@
 // -*- C++ -*- header.
 
-// Copyright (C) 2015 Free Software Foundation, Inc.
+// Copyright (C) 2015-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -48,7 +48,7 @@ namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
-#if defined(_GLIBCXX_HAS_GTHREADS) && defined(_GLIBCXX_USE_C99_STDINT_TR1)
+#ifdef _GLIBCXX_HAS_GTHREADS
 #if defined(_GLIBCXX_HAVE_LINUX_FUTEX) && ATOMIC_INT_LOCK_FREE > 1
   struct __atomic_futex_unsigned_base
   {
@@ -93,15 +93,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       for (;;)
 	{
-	  // Don't bother checking the value again because we expect the caller to
-	  // have done it recently.
+	  // Don't bother checking the value again because we expect the caller
+	  // to have done it recently.
 	  // memory_order_relaxed is sufficient because we can rely on just the
 	  // modification order (store_notify uses an atomic RMW operation too),
 	  // and the futex syscalls synchronize between themselves.
 	  _M_data.fetch_or(_Waiter_bit, memory_order_relaxed);
-	  bool __ret;
-	  __ret = _M_futex_wait_until((unsigned*)(void*)&_M_data,
-	      __assumed | _Waiter_bit, __has_timeout, __s, __ns);
+	  bool __ret = _M_futex_wait_until((unsigned*)(void*)&_M_data,
+					   __assumed | _Waiter_bit,
+					   __has_timeout, __s, __ns);
 	  // Fetch the current value after waiting (clears _Waiter_bit).
 	  __assumed = _M_load(__mo);
 	  if (!__ret || ((__operand == __assumed) == __equal))
@@ -119,7 +119,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	bool __equal, memory_order __mo)
     {
       return _M_load_and_test_until(__assumed, __operand, __equal, __mo,
-	  false, chrono::seconds(0), chrono::nanoseconds(0));
+				    false, {}, {});
     }
 
     // If a timeout occurs, returns a current value after the timeout;
@@ -146,7 +146,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     _M_load_when_not_equal(unsigned __val, memory_order __mo)
     {
       unsigned __i = _M_load(__mo);
-      if ((__i & ~_Waiter_bit) != __val) return;
+      if ((__i & ~_Waiter_bit) != __val)
+	return (__i & ~_Waiter_bit);
       // TODO Spin-wait first.
       return _M_load_and_test(__i, __val, false, __mo);
     }
@@ -281,7 +282,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   };
 
 #endif // _GLIBCXX_HAVE_LINUX_FUTEX && ATOMIC_INT_LOCK_FREE > 1
-#endif // _GLIBCXX_HAS_GTHREADS && _GLIBCXX_USE_C99_STDINT_TR1
+#endif // _GLIBCXX_HAS_GTHREADS
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std

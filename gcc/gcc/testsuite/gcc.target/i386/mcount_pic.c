@@ -11,6 +11,5 @@ int main ()
 }
 
 /* { dg-final { scan-assembler "mcount" } } */
-/* { dg-final { scan-assembler "get_pc_thunk" { xfail { *-*-solaris* && { ! gld } } } } } */
-/* { dg-final { cleanup-saved-temps } } */
+/* { dg-final { scan-assembler "get_pc_thunk" { xfail { *-*-solaris2.10* && { ! gld } } } } } */
 /* { dg-final { cleanup-profile-file } } */

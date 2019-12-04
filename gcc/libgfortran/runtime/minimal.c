@@ -1,4 +1,4 @@
-/* Copyright (C) 2002-2015 Free Software Foundation, Inc.
+/* Copyright (C) 2002-2019 Free Software Foundation, Inc.
    Contributed by Andy Vaught and Paul Brook <paul@nowt.org>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -23,10 +23,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
 #include <string.h>
-#include <limits.h>
-#include <errno.h>
 
 
 #ifdef HAVE_UNISTD_H
@@ -43,17 +40,8 @@ stupid_function_name_for_static_linking (void)
 
 options_t options;
 
-/* This will be 0 for little-endian
-   machines and 1 for big-endian machines.
-
-   Currently minimal libgfortran only runs on little-endian devices
-   which don't support constructors so this is just a constant.  */
-int big_endian = 0;
-
 static int argc_save;
 static char **argv_save;
-
-static const char *exe_path;
 
 /* recursion_check()-- It's possible for additional errors to occur
  * during fatal error processing.  We detect this condition here and
@@ -163,14 +151,6 @@ internal_error (st_parameter_common *cmp, const char *message)
 }
 
 
-/* Return the full path of the executable.  */
-char *
-full_exe_path (void)
-{
-  return (char *) exe_path;
-}
-
-
 /* Set the saved values of the command line arguments.  */
 
 void
@@ -178,7 +158,6 @@ set_args (int argc, char **argv)
 {
   argc_save = argc;
   argv_save = argv;
-  exe_path = argv[0];
 }
 iexport(set_args);
 
@@ -207,4 +186,96 @@ sys_abort (void)
     }
 
   abort();
+}
+
+
+/* runtime/stop.c */
+
+#undef report_exception
+#define report_exception() do {} while (0)
+#undef st_printf
+#define st_printf printf
+#undef estr_write
+#define estr_write(X) write(STDERR_FILENO, (X), strlen (X))
+#if __nvptx__
+/* Map "exit" to "abort"; see PR85463 '[nvptx] "exit" in offloaded region
+   doesn't terminate process'.  */
+#undef exit
+#define exit(...) do { abort (); } while (0)
+#endif
+#undef exit_error
+#define exit_error(...) do { abort (); } while (0)
+
+/* A numeric STOP statement.  */
+
+extern _Noreturn void stop_numeric (int, bool);
+export_proto(stop_numeric);
+
+void
+stop_numeric (int code, bool quiet)
+{
+  if (!quiet)
+    {
+      report_exception ();
+      st_printf ("STOP %d\n", code);
+    }
+  exit (code);
+}
+
+
+/* A character string or blank STOP statement.  */
+
+void
+stop_string (const char *string, size_t len, bool quiet)
+{
+  if (!quiet)
+    {
+      report_exception ();
+      if (string)
+	{
+	  estr_write ("STOP ");
+	  (void) write (STDERR_FILENO, string, len);
+	  estr_write ("\n");
+	}
+    }
+  exit (0);
+}
+
+
+/* Per Fortran 2008, section 8.4:  "Execution of a STOP statement initiates
+   normal termination of execution. Execution of an ERROR STOP statement
+   initiates error termination of execution."  Thus, error_stop_string returns
+   a nonzero exit status code.  */
+
+extern _Noreturn void error_stop_string (const char *, size_t, bool);
+export_proto(error_stop_string);
+
+void
+error_stop_string (const char *string, size_t len, bool quiet)
+{
+  if (!quiet)
+    {
+      report_exception ();
+      estr_write ("ERROR STOP ");
+      (void) write (STDERR_FILENO, string, len);
+      estr_write ("\n");
+    }
+  exit_error (1);
+}
+
+
+/* A numeric ERROR STOP statement.  */
+
+extern _Noreturn void error_stop_numeric (int, bool);
+export_proto(error_stop_numeric);
+
+void
+error_stop_numeric (int code, bool quiet)
+{
+  if (!quiet)
+    {
+      report_exception ();
+      st_printf ("ERROR STOP %d\n", code);
+    }
+  exit_error (code);
 }

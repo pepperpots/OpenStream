@@ -1,4 +1,4 @@
-dnl   Copyright (C) 2014 Free Software Foundation, Inc.
+dnl   Copyright (C) 2014-2019 Free Software Foundation, Inc.
 dnl
 dnl This file is part of GCC.
 dnl
@@ -16,7 +16,6 @@ dnl You should have received a copy of the GNU General Public License
 dnl along with GCC; see the file COPYING3.  If not see
 dnl <http://www.gnu.org/licenses/>.
 
-AC_PREREQ(2.64)
 AC_INIT([libcc1], [version-unused])
 AC_CONFIG_SRCDIR([libcc1.cc])
 AC_CONFIG_HEADER(cc1plugin-config.h)
@@ -48,8 +47,17 @@ AC_SUBST(visibility)
 
 AC_CHECK_DECLS([basename])
 
-gcc_version=`cat $srcdir/../gcc/BASE-VER`
+GCC_BASE_VER
+
+if test x$with_gcc_major_version_only = xyes ; then
+  changequote(,)dnl
+  gcc_version=`sed -e 's/^\([0-9]*\).*$/\1/' $srcdir/../gcc/BASE-VER`
+  changequote([,])dnl
+else
+  gcc_version=`cat $srcdir/../gcc/BASE-VER`
+fi
 AC_SUBST(gcc_version)
+AC_SUBST([CONFIG_STATUS_DEPENDENCIES], ['$(top_srcdir)/../gcc/BASE-VER'])
 
 ACX_PROG_CC_WARNING_OPTS([-W -Wall], [WARN_FLAGS])
 AC_SUBST(WARN_FLAGS)

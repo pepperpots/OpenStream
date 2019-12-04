@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2013-2014, Free Software Foundation, Inc.         --
+--          Copyright (C) 2013-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -203,10 +203,14 @@ package body Set_Targ is
 
    begin
       case T is
-         when S_Short_Float | S_Float =>
+         when S_Float
+            | S_Short_Float
+         =>
             return "float";
+
          when S_Long_Float =>
             return "double";
+
          when S_Long_Long_Float =>
             if Long_Double_Index >= 0
               and then FPT_Mode_Table (Long_Double_Index).DIGS <= Max_HW_Digs
@@ -302,8 +306,8 @@ package body Set_Targ is
             Write_Str ("pragma Float_Representation (");
 
             case Float_Rep is
-               when IEEE_Binary => Write_Str ("IEEE");
                when AAMP        => Write_Str ("AAMP");
+               when IEEE_Binary => Write_Str ("IEEE");
             end case;
 
             Write_Line (", " & T (1 .. Last) & ");");
@@ -525,10 +529,8 @@ package body Set_Targ is
             AddC (' ');
 
             case E.FLOAT_REP is
-               when IEEE_Binary =>
-                  AddC ('I');
-               when AAMP        =>
-                  AddC ('A');
+               when AAMP        => AddC ('A');
+               when IEEE_Binary => AddC ('I');
             end case;
 
             AddC (' ');
@@ -578,6 +580,7 @@ package body Set_Targ is
       --  Checks that we have one or more spaces and skips them
 
       procedure FailN (S : String);
+      pragma No_Return (FailN);
       --  Calls Fail adding " name in file xxx", where name is the currently
       --  gathered name in Nam_Buf, surrounded by quotes, and xxx is the
       --  name of the file.
@@ -698,6 +701,8 @@ package body Set_Targ is
 
       Buflen := Read (File_Desc, Buffer'Address, Buffer'Length);
 
+      Close (File_Desc);
+
       if Buflen = Buffer'Length then
          Fail ("file is too long: " & File_Name);
       end if;
@@ -779,8 +784,10 @@ package body Set_Targ is
             case Buffer (N) is
                when 'I'    =>
                   E.FLOAT_REP := IEEE_Binary;
+
                when 'A'    =>
                   E.FLOAT_REP := AAMP;
+
                when others =>
                   FailN ("bad float rep field for");
             end case;
@@ -813,7 +820,7 @@ package body Set_Targ is
 
 begin
    --  First step: see if the -gnateT switch is present. As we have noted,
-   --  this has to be done very early, so can not depend on the normal circuit
+   --  this has to be done very early, so cannot depend on the normal circuit
    --  for reading switches and setting switches in Opt. The following code
    --  will set Opt.Target_Dependent_Info_Read_Name if the switch -gnateT=name
    --  is present in the options string.
@@ -910,6 +917,9 @@ begin
            Get_Back_End_Config_File;
       begin
          if Back_End_Config_File /= null then
+            pragma Gnat_Annotate
+              (CodePeer, Intentional, "test always false",
+               "some variant body will return non null");
             Read_Target_Dependent_Values (Back_End_Config_File.all);
 
          --  Otherwise we get all values from the back end directly
@@ -946,21 +956,21 @@ begin
                T : FPT_Mode_Entry renames
                  FPT_Mode_Table (FPT_Mode_Index_For (S_Float));
             begin
-               Float_Size := Int (T.SIZE);
+               Float_Size := Pos (T.SIZE);
             end;
 
             declare
                T : FPT_Mode_Entry renames
                  FPT_Mode_Table (FPT_Mode_Index_For (S_Long_Float));
             begin
-               Double_Size := Int (T.SIZE);
+               Double_Size := Pos (T.SIZE);
             end;
 
             declare
                T : FPT_Mode_Entry renames
                  FPT_Mode_Table (FPT_Mode_Index_For (S_Long_Long_Float));
             begin
-               Long_Double_Size := Int (T.SIZE);
+               Long_Double_Size := Pos (T.SIZE);
             end;
 
          end if;

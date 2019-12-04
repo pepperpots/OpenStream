@@ -1,5 +1,5 @@
 /* Utility functions used by tools like collect2 and lto-wrapper.
-   Copyright (C) 2009-2015 Free Software Foundation, Inc.
+   Copyright (C) 2009-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -65,8 +65,14 @@ collect_wait (const char *prog, struct pex_obj *pex)
   int status;
 
   if (!pex_get_status (pex, 1, &status))
-    fatal_error (input_location, "can't get program status: %m");
+    fatal_error (input_location, "can%'t get program status: %m");
   pex_free (pex);
+
+  if (response_file && !save_temps)
+    {
+      unlink (response_file);
+      response_file = NULL;
+    }
 
   if (status)
     {
@@ -90,12 +96,6 @@ do_wait (const char *prog, struct pex_obj *pex)
   int ret = collect_wait (prog, pex);
   if (ret != 0)
     fatal_error (input_location, "%s returned %d exit status", prog, ret);
-
-  if (response_file && !save_temps)
-    {
-      unlink (response_file);
-      response_file = NULL;
-    }
 }
 
 
@@ -176,7 +176,7 @@ collect_execute (const char *prog, char **argv, const char *outname,
      since we might not end up needing something that we could not find.  */
 
   if (argv[0] == 0)
-    fatal_error (input_location, "cannot find '%s'", prog);
+    fatal_error (input_location, "cannot find %qs", prog);
 
   pex = pex_init (0, "collect2", NULL);
   if (pex == NULL)
@@ -224,7 +224,5 @@ utils_cleanup (bool from_signal)
      calls to maybe_unlink fails. */
   cleanup_done = true;
 
-  if (response_file)
-    maybe_unlink (response_file);
   tool_cleanup (from_signal);
 }

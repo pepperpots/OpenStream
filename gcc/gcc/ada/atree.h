@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *          Copyright (C) 1992-2015, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2019, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -359,6 +359,9 @@ extern struct Node *Nodes_Ptr;
 #define Parent atree__parent
 extern Node_Id Parent (Node_Id);
 
+#define Original_Node atree__original_node
+extern Node_Id Original_Node (Node_Id);
+
 /* The auxiliary flags array which is allocated in parallel to Nodes */
 
 struct Flags
@@ -505,6 +508,8 @@ extern Node_Id Current_Error_Node;
 #define List10(N)     Field10 (N)
 #define List14(N)     Field14 (N)
 #define List25(N)     Field25 (N)
+#define List38(N)     Field38 (N)
+#define List39(N)     Field39 (N)
 
 #define Elist1(N)     Field1  (N)
 #define Elist2(N)     Field2  (N)
@@ -514,6 +519,7 @@ extern Node_Id Current_Error_Node;
 #define Elist8(N)     Field8  (N)
 #define Elist9(N)     Field9  (N)
 #define Elist10(N)    Field10 (N)
+#define Elist11(N)    Field11 (N)
 #define Elist13(N)    Field13 (N)
 #define Elist15(N)    Field15 (N)
 #define Elist16(N)    Field16 (N)
@@ -523,6 +529,9 @@ extern Node_Id Current_Error_Node;
 #define Elist24(N)    Field24 (N)
 #define Elist25(N)    Field25 (N)
 #define Elist26(N)    Field26 (N)
+#define Elist29(N)    Field29 (N)
+#define Elist30(N)    Field30 (N)
+#define Elist36(N)    Field36 (N)
 
 #define Name1(N)      Field1  (N)
 #define Name2(N)      Field2  (N)
@@ -861,7 +870,7 @@ extern Node_Id Current_Error_Node;
 #define Flag287(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.in_list)
 #define Flag288(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.has_aspects)
 #define Flag289(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.rewrite_ins)
-#define Flag290(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.analyzed
+#define Flag290(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.analyzed)
 #define Flag291(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.c_f_s)
 #define Flag292(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.error_posted)
 #define Flag293(N)     (Nodes_Ptr[(N) - First_Node_Id + 5].U.K.flag4)

@@ -34,63 +34,75 @@ void ExitSymbolizer() {
   thr->ignore_interceptors--;
 }
 
-// Denotes fake PC values that come from JIT/JAVA/etc.
-// For such PC values __tsan_symbolize_external() will be called.
-const uptr kExternalPCBit = 1ULL << 60;
-
+// Legacy API.
 // May be overriden by JIT/JAVA/etc,
 // whatever produces PCs marked with kExternalPCBit.
-extern "C" bool __tsan_symbolize_external(uptr pc,
-                               char *func_buf, uptr func_siz,
-                               char *file_buf, uptr file_siz,
-                               int *line, int *col)
-                               SANITIZER_WEAK_ATTRIBUTE;
-
-bool __tsan_symbolize_external(uptr pc,
-                               char *func_buf, uptr func_siz,
-                               char *file_buf, uptr file_siz,
-                               int *line, int *col) {
+SANITIZER_WEAK_DEFAULT_IMPL
+bool __tsan_symbolize_external(uptr pc, char *func_buf, uptr func_siz,
+                               char *file_buf, uptr file_siz, int *line,
+                               int *col) {
   return false;
 }
 
-ReportStack *SymbolizeCode(uptr addr) {
+// New API: call __tsan_symbolize_external_ex only when it exists.
+// Once old clients are gone, provide dummy implementation.
+SANITIZER_WEAK_DEFAULT_IMPL
+void __tsan_symbolize_external_ex(uptr pc,
+                                  void (*add_frame)(void *, const char *,
+                                                    const char *, int, int),
+                                  void *ctx) {}
+
+struct SymbolizedStackBuilder {
+  SymbolizedStack *head;
+  SymbolizedStack *tail;
+  uptr addr;
+};
+
+static void AddFrame(void *ctx, const char *function_name, const char *file,
+                     int line, int column) {
+  SymbolizedStackBuilder *ssb = (struct SymbolizedStackBuilder *)ctx;
+  if (ssb->tail) {
+    ssb->tail->next = SymbolizedStack::New(ssb->addr);
+    ssb->tail = ssb->tail->next;
+  } else {
+    ssb->head = ssb->tail = SymbolizedStack::New(ssb->addr);
+  }
+  AddressInfo *info = &ssb->tail->info;
+  if (function_name) {
+    info->function = internal_strdup(function_name);
+  }
+  if (file) {
+    info->file = internal_strdup(file);
+  }
+  info->line = line;
+  info->column = column;
+}
+
+SymbolizedStack *SymbolizeCode(uptr addr) {
   // Check if PC comes from non-native land.
   if (addr & kExternalPCBit) {
+    SymbolizedStackBuilder ssb = {nullptr, nullptr, addr};
+    __tsan_symbolize_external_ex(addr, AddFrame, &ssb);
+    if (ssb.head)
+      return ssb.head;
+    // Legacy code: remove along with the declaration above
+    // once all clients using this API are gone.
     // Declare static to not consume too much stack space.
     // We symbolize reports in a single thread, so this is fine.
     static char func_buf[1024];
     static char file_buf[1024];
     int line, col;
-    ReportStack *ent = ReportStack::New(addr);
-    if (!__tsan_symbolize_external(addr, func_buf, sizeof(func_buf),
-                                  file_buf, sizeof(file_buf), &line, &col))
-      return ent;
-    ent->info.function = internal_strdup(func_buf);
-    ent->info.file = internal_strdup(file_buf);
-    ent->info.line = line;
-    ent->info.column = col;
-    return ent;
+    SymbolizedStack *frame = SymbolizedStack::New(addr);
+    if (__tsan_symbolize_external(addr, func_buf, sizeof(func_buf), file_buf,
+                                  sizeof(file_buf), &line, &col)) {
+      frame->info.function = internal_strdup(func_buf);
+      frame->info.file = internal_strdup(file_buf);
+      frame->info.line = line;
+      frame->info.column = col;
+    }
+    return frame;
   }
-  static const uptr kMaxAddrFrames = 16;
-  InternalScopedBuffer<AddressInfo> addr_frames(kMaxAddrFrames);
-  for (uptr i = 0; i < kMaxAddrFrames; i++)
-    new(&addr_frames[i]) AddressInfo();
-  uptr addr_frames_num = Symbolizer::GetOrInit()->SymbolizePC(
-      addr, addr_frames.data(), kMaxAddrFrames);
-  if (addr_frames_num == 0)
-    return ReportStack::New(addr);
-  ReportStack *top = 0;
-  ReportStack *bottom = 0;
-  for (uptr i = 0; i < addr_frames_num; i++) {
-    ReportStack *cur_entry = ReportStack::New(addr);
-    cur_entry->info = addr_frames[i];
-    if (i == 0)
-      top = cur_entry;
-    else
-      bottom->next = cur_entry;
-    bottom = cur_entry;
-  }
-  return top;
+  return Symbolizer::GetOrInit()->SymbolizePC(addr);
 }
 
 ReportLocation *SymbolizeData(uptr addr) {
@@ -98,7 +110,7 @@ ReportLocation *SymbolizeData(uptr addr) {
   if (!Symbolizer::GetOrInit()->SymbolizeData(addr, &info))
     return 0;
   ReportLocation *ent = ReportLocation::New(ReportLocationGlobal);
-  ent->global = info;
+  internal_memcpy(&ent->global, &info, sizeof(info));
   return ent;
 }
 

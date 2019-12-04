@@ -1,5 +1,5 @@
 /* String pool for GCC.
-   Copyright (C) 2000-2015 Free Software Foundation, Inc.
+   Copyright (C) 2000-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -28,32 +28,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "ggc.h"
-#include "ggc-internal.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
 #include "tree.h"
-#include "cpplib.h"
-
-/* The "" allocated string.  */
-const char empty_string[] = "";
-
-/* Character strings, each containing a single decimal digit.
-   Written this way to save space.  */
-static const char digit_vector[] = {
-  '0', 0, '1', 0, '2', 0, '3', 0, '4', 0,
-  '5', 0, '6', 0, '7', 0, '8', 0, '9', 0
-};
-
-#define digit_string(d) (digit_vector + ((d) * 2))
 
 struct ht *ident_hash;
 
@@ -95,19 +70,16 @@ alloc_node (cpp_hash_table *table ATTRIBUTE_UNUSED)
 const char *
 ggc_alloc_string (const char *contents, int length MEM_STAT_DECL)
 {
-  char *result;
-
   if (length == -1)
     length = strlen (contents);
 
-  if (length == 0)
-    return empty_string;
-  if (length == 1 && ISDIGIT (contents[0]))
-    return digit_string (contents[0] - '0');
+  if (!length)
+    return "";
 
-  result = (char *) ggc_internal_cleared_alloc (length + 1 PASS_MEM_STAT);
+  char *result = (char *) ggc_alloc_atomic (length + 1);
   memcpy (result, contents, length);
   result[length] = '\0';
+
   return (const char *) result;
 }
 

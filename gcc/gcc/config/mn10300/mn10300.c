@@ -1,5 +1,5 @@
 /* Subroutines for insn-output.c for Matsushita MN10300 series
-   Copyright (C) 1996-2015 Free Software Foundation, Inc.
+   Copyright (C) 1996-2019 Free Software Foundation, Inc.
    Contributed by Jeff Law (law@cygnus.com).
 
    This file is part of GCC.
@@ -18,66 +18,43 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
 #include "tree.h"
+#include "stringpool.h"
+#include "attribs.h"
+#include "cfghooks.h"
+#include "cfgloop.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "optabs.h"
+#include "regs.h"
+#include "emit-rtl.h"
+#include "recog.h"
+#include "diagnostic-core.h"
+#include "alias.h"
 #include "stor-layout.h"
 #include "varasm.h"
 #include "calls.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "insn-config.h"
-#include "conditions.h"
 #include "output.h"
 #include "insn-attr.h"
-#include "flags.h"
-#include "recog.h"
 #include "reload.h"
-#include "hashtab.h"
-#include "function.h"
-#include "statistics.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "expmed.h"
-#include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
-#include "stmt.h"
 #include "expr.h"
-#include "insn-codes.h"
-#include "optabs.h"
-#include "obstack.h"
-#include "diagnostic-core.h"
-#include "tm_p.h"
 #include "tm-constrs.h"
-#include "target.h"
-#include "target-def.h"
-#include "dominance.h"
-#include "cfg.h"
 #include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "predict.h"
-#include "basic-block.h"
-#include "df.h"
-#include "opts.h"
-#include "cfgloop.h"
 #include "dumpfile.h"
 #include "builtins.h"
+
+/* This file should be included last.  */
+#include "target-def.h"
 
 /* This is used in the am33_2.0-linux-gnu port, in which global symbol
    names are not prefixed by underscores, to tell whether to prefix a
@@ -127,7 +104,7 @@ mn10300_option_override (void)
       else if (strcasecmp (mn10300_tune_string, "am34") == 0)
 	mn10300_tune_cpu = PROCESSOR_AM34;
       else
-	error ("-mtune= expects mn10300, am33, am33-2, or am34");
+	error ("%<-mtune=%> expects mn10300, am33, am33-2, or am34");
     }
 }
 
@@ -267,7 +244,7 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	{
 	case MEM:
 	  fputc ('(', file);
-	  output_address (XEXP (x, 0));
+	  output_address (GET_MODE (x), XEXP (x, 0));
 	  fputc (')', file);
 	  break;
 
@@ -286,7 +263,7 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	{
 	case MEM:
 	  fputc ('(', file);
-	  output_address (XEXP (x, 0));
+	  output_address (GET_MODE (x), XEXP (x, 0));
 	  fputc (')', file);
 	  break;
 
@@ -301,22 +278,21 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	case CONST_DOUBLE:
 	  {
 	    long val[2];
-	    REAL_VALUE_TYPE rv;
 
 	    switch (GET_MODE (x))
 	      {
-	      case DFmode:
-		REAL_VALUE_FROM_CONST_DOUBLE (rv, x);
-		REAL_VALUE_TO_TARGET_DOUBLE (rv, val);
+	      case E_DFmode:
+		REAL_VALUE_TO_TARGET_DOUBLE
+		  (*CONST_DOUBLE_REAL_VALUE (x), val);
 		fprintf (file, "0x%lx", val[0]);
 		break;;
-	      case SFmode:
-		REAL_VALUE_FROM_CONST_DOUBLE (rv, x);
-		REAL_VALUE_TO_TARGET_SINGLE (rv, val[0]);
+	      case E_SFmode:
+		REAL_VALUE_TO_TARGET_SINGLE
+		  (*CONST_DOUBLE_REAL_VALUE (x), val[0]);
 		fprintf (file, "0x%lx", val[0]);
 		break;;
-	      case VOIDmode:
-	      case DImode:
+	      case E_VOIDmode:
+	      case E_DImode:
 		mn10300_print_operand_address (file,
 					       GEN_INT (CONST_DOUBLE_LOW (x)));
 		break;
@@ -346,7 +322,7 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	case MEM:
 	  fputc ('(', file);
 	  x = adjust_address (x, SImode, 4);
-	  output_address (XEXP (x, 0));
+	  output_address (GET_MODE (x), XEXP (x, 0));
 	  fputc (')', file);
 	  break;
 
@@ -361,19 +337,18 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	case CONST_DOUBLE:
 	  {
 	    long val[2];
-	    REAL_VALUE_TYPE rv;
 
 	    switch (GET_MODE (x))
 	      {
-	      case DFmode:
-		REAL_VALUE_FROM_CONST_DOUBLE (rv, x);
-		REAL_VALUE_TO_TARGET_DOUBLE (rv, val);
+	      case E_DFmode:
+		REAL_VALUE_TO_TARGET_DOUBLE
+		  (*CONST_DOUBLE_REAL_VALUE (x), val);
 		fprintf (file, "0x%lx", val[1]);
 		break;;
-	      case SFmode:
+	      case E_SFmode:
 		gcc_unreachable ();
-	      case VOIDmode:
-	      case DImode:
+	      case E_VOIDmode:
+	      case E_DImode:
 		mn10300_print_operand_address (file,
 					       GEN_INT (CONST_DOUBLE_HIGH (x)));
 		break;
@@ -399,9 +374,10 @@ mn10300_print_operand (FILE *file, rtx x, int code)
     case 'A':
       fputc ('(', file);
       if (REG_P (XEXP (x, 0)))
-	output_address (gen_rtx_PLUS (SImode, XEXP (x, 0), const0_rtx));
+	output_address (VOIDmode, gen_rtx_PLUS (SImode,
+						XEXP (x, 0), const0_rtx));
       else
-	output_address (XEXP (x, 0));
+	output_address (VOIDmode, XEXP (x, 0));
       fputc (')', file);
       break;
 
@@ -432,12 +408,12 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	{
 	case MEM:
 	  fputc ('(', file);
-	  output_address (XEXP (x, 0));
+	  output_address (GET_MODE (x), XEXP (x, 0));
 	  fputc (')', file);
 	  break;
 
 	case PLUS:
-	  output_address (x);
+	  output_address (VOIDmode, x);
 	  break;
 
 	case REG:
@@ -452,10 +428,8 @@ mn10300_print_operand (FILE *file, rtx x, int code)
 	case CONST_DOUBLE:
 	  {
 	    unsigned long val;
-	    REAL_VALUE_TYPE rv;
 
-	    REAL_VALUE_FROM_CONST_DOUBLE (rv, x);
-	    REAL_VALUE_TO_TARGET_SINGLE (rv, val);
+	    REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), val);
 	    fprintf (file, "0x%lx", val);
 	    break;
 	  }
@@ -748,7 +722,7 @@ mn10300_gen_multiple_store (unsigned int mask)
       ++count;
       x = plus_constant (Pmode, stack_pointer_rtx, count * -4);
       x = gen_frame_mem (SImode, x);
-      x = gen_rtx_SET (VOIDmode, x, gen_rtx_REG (SImode, regno));
+      x = gen_rtx_SET (x, gen_rtx_REG (SImode, regno));
       elts[count] = F(x);
 
       /* Remove the register from the mask so that... */
@@ -761,7 +735,7 @@ mn10300_gen_multiple_store (unsigned int mask)
 
   /* Create the instruction that updates the stack pointer.  */
   x = plus_constant (Pmode, stack_pointer_rtx, count * -4);
-  x = gen_rtx_SET (VOIDmode, stack_pointer_rtx, x);
+  x = gen_rtx_SET (stack_pointer_rtx, x);
   elts[0] = F(x);
 
   /* We need one PARALLEL element to update the stack pointer and
@@ -1890,6 +1864,7 @@ rtx
 mn10300_legitimize_pic_address (rtx orig, rtx reg)
 {
   rtx x;
+  rtx_insn *insn;
 
   if (GET_CODE (orig) == LABEL_REF
       || (GET_CODE (orig) == SYMBOL_REF
@@ -1903,7 +1878,7 @@ mn10300_legitimize_pic_address (rtx orig, rtx reg)
       x = gen_rtx_CONST (SImode, x);
       emit_move_insn (reg, x);
 
-      x = emit_insn (gen_addsi3 (reg, reg, pic_offset_table_rtx));
+      insn = emit_insn (gen_addsi3 (reg, reg, pic_offset_table_rtx));
     }
   else if (GET_CODE (orig) == SYMBOL_REF)
     {
@@ -1915,12 +1890,12 @@ mn10300_legitimize_pic_address (rtx orig, rtx reg)
       x = gen_rtx_PLUS (SImode, pic_offset_table_rtx, x);
       x = gen_const_mem (SImode, x);
 
-      x = emit_move_insn (reg, x);
+      insn = emit_move_insn (reg, x);
     }
   else
     return orig;
 
-  set_unique_reg_note (x, REG_EQUAL, orig);
+  set_unique_reg_note (insn, REG_EQUAL, orig);
   return reg;
 }
 
@@ -2243,7 +2218,7 @@ mn10300_address_cost (rtx x, machine_mode mode ATTRIBUTE_UNUSED,
       return speed ? 2 : 6;
 
     default:
-      return rtx_cost (x, MEM, 0, speed);
+      return rtx_cost (x, Pmode, MEM, 0, speed);
     }
 }
 
@@ -2357,13 +2332,14 @@ mn10300_memory_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
    to represent cycles.  Size-relative costs are in bytes.  */
 
 static bool
-mn10300_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
-		   int *ptotal, bool speed)
+mn10300_rtx_costs (rtx x, machine_mode mode, int outer_code,
+		   int opno ATTRIBUTE_UNUSED, int *ptotal, bool speed)
 {
   /* This value is used for SYMBOL_REF etc where we want to pretend
      we have a full 32-bit constant.  */
   HOST_WIDE_INT i = 0x12345678;
   int total;
+  int code = GET_CODE (x);
 
   switch (code)
     {
@@ -2449,7 +2425,7 @@ mn10300_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  i = INTVAL (XEXP (x, 1));
 	  if (i == 1 || i == 4)
 	    {
-	      total = 1 + rtx_cost (XEXP (x, 0), PLUS, 0, speed);
+	      total = 1 + rtx_cost (XEXP (x, 0), mode, PLUS, 0, speed);
 	      goto alldone;
 	    }
 	}
@@ -2505,7 +2481,7 @@ mn10300_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       break;
 
     case MEM:
-      total = mn10300_address_cost (XEXP (x, 0), GET_MODE (x),
+      total = mn10300_address_cost (XEXP (x, 0), mode,
 				    MEM_ADDR_SPACE (x), speed);
       if (speed)
 	total = COSTS_N_INSNS (2 + total);
@@ -2652,7 +2628,9 @@ mn10300_can_output_mi_thunk (const_tree    thunk_fndecl ATTRIBUTE_UNUSED,
   return true;
 }
 
-bool
+/* Implement TARGET_HARD_REGNO_MODE_OK.  */
+
+static bool
 mn10300_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
 {
   if (REGNO_REG_CLASS (regno) == FP_REGS
@@ -2674,8 +2652,10 @@ mn10300_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
   return false;
 }
 
-bool
-mn10300_modes_tieable (machine_mode mode1, machine_mode mode2)
+/* Implement TARGET_MODES_TIEABLE_P.  */
+
+static bool
+mn10300_modes_tieable_p (machine_mode mode1, machine_mode mode2)
 {
   if (GET_MODE_CLASS (mode1) == MODE_FLOAT
       && GET_MODE_CLASS (mode2) != MODE_FLOAT)
@@ -2698,13 +2678,13 @@ cc_flags_for_mode (machine_mode mode)
 {
   switch (mode)
     {
-    case CCmode:
+    case E_CCmode:
       return CC_FLAG_Z | CC_FLAG_N | CC_FLAG_C | CC_FLAG_V;
-    case CCZNCmode:
+    case E_CCZNCmode:
       return CC_FLAG_Z | CC_FLAG_N | CC_FLAG_C;
-    case CCZNmode:
+    case E_CCZNmode:
       return CC_FLAG_Z | CC_FLAG_N;
-    case CC_FLOATmode:
+    case E_CC_FLOATmode:
       return -1;
     default:
       gcc_unreachable ();
@@ -2723,7 +2703,6 @@ cc_flags_for_code (enum rtx_code code)
     case LT:	/* N */
     case GE:	/* ~N */
       return CC_FLAG_N;
-      break;
 
     case GT:    /* ~(Z|(N^V)) */
     case LE:    /* Z|(N^V) */
@@ -2788,7 +2767,8 @@ set_is_store_p (rtx set)
    COST is the current cycle cost for DEP.  */
 
 static int
-mn10300_adjust_sched_cost (rtx_insn *insn, rtx link, rtx_insn *dep, int cost)
+mn10300_adjust_sched_cost (rtx_insn *insn, int dep_type, rtx_insn *dep,
+			   int cost, unsigned int)
 {
   rtx insn_set;
   rtx dep_set;
@@ -2837,7 +2817,7 @@ mn10300_adjust_sched_cost (rtx_insn *insn, rtx link, rtx_insn *dep, int cost)
     return cost;
 
   /* If a data dependence already exists then the cost is correct.  */
-  if (REG_NOTE_KIND (link) == 0)
+  if (dep_type == 0)
     return cost;
 
   /* Check that the instruction about to scheduled is an FPU instruction.  */
@@ -2881,18 +2861,18 @@ mn10300_conditional_register_usage (void)
     call_used_regs[PIC_OFFSET_TABLE_REGNUM] = 1;
 }
 
-/* Worker function for TARGET_MD_ASM_CLOBBERS.
+/* Worker function for TARGET_MD_ASM_ADJUST.
    We do this in the mn10300 backend to maintain source compatibility
    with the old cc0-based compiler.  */
 
-static tree
-mn10300_md_asm_clobbers (tree outputs ATTRIBUTE_UNUSED,
-                         tree inputs ATTRIBUTE_UNUSED,
-                         tree clobbers)
+static rtx_insn *
+mn10300_md_asm_adjust (vec<rtx> &/*outputs*/, vec<rtx> &/*inputs*/,
+		       vec<const char *> &/*constraints*/,
+		       vec<rtx> &clobbers, HARD_REG_SET &clobbered_regs)
 {
-  clobbers = tree_cons (NULL_TREE, build_string (5, "EPSW"),
-                        clobbers);
-  return clobbers;
+  clobbers.safe_push (gen_rtx_REG (CCmode, CC_REG));
+  SET_HARD_REG_BIT (clobbered_regs, CC_REG);
+  return NULL;
 }
 
 /* A helper function for splitting cbranch patterns after reload.  */
@@ -2904,12 +2884,12 @@ mn10300_split_cbranch (machine_mode cmp_mode, rtx cmp_op, rtx label_ref)
 
   flags = gen_rtx_REG (cmp_mode, CC_REG);
   x = gen_rtx_COMPARE (cmp_mode, XEXP (cmp_op, 0), XEXP (cmp_op, 1));
-  x = gen_rtx_SET (VOIDmode, flags, x);
+  x = gen_rtx_SET (flags, x);
   emit_insn (x);
 
   x = gen_rtx_fmt_ee (GET_CODE (cmp_op), VOIDmode, flags, const0_rtx);
   x = gen_rtx_IF_THEN_ELSE (VOIDmode, x, label_ref, pc_rtx);
-  x = gen_rtx_SET (VOIDmode, pc_rtx, x);
+  x = gen_rtx_SET (pc_rtx, x);
   emit_jump_insn (x);
 }
 
@@ -2923,7 +2903,7 @@ mn10300_match_ccmode (rtx insn, machine_mode cc_mode)
 
   gcc_checking_assert (XVECLEN (PATTERN (insn), 0) == 2);
 
-  op1 = XVECEXP (PATTERN (insn), 0, 1);
+  op1 = XVECEXP (PATTERN (insn), 0, 0);
   gcc_checking_assert (GET_CODE (SET_SRC (op1)) == COMPARE);
 
   flags = SET_DEST (op1);
@@ -3192,7 +3172,7 @@ mn10300_bundle_liw (void)
    Insert a SETLB insn just before LABEL.  */
 
 static void
-mn10300_insert_setlb_lcc (rtx label, rtx branch)
+mn10300_insert_setlb_lcc (rtx_insn *label, rtx_insn *branch)
 {
   rtx lcc, comparison, cmp_reg;
 
@@ -3408,6 +3388,9 @@ mn10300_reorg (void)
 #undef  TARGET_CASE_VALUES_THRESHOLD
 #define TARGET_CASE_VALUES_THRESHOLD mn10300_case_values_threshold
 
+#undef TARGET_LRA_P
+#define TARGET_LRA_P hook_bool_void_false
+
 #undef  TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	mn10300_legitimate_address_p
 #undef  TARGET_DELEGITIMIZE_ADDRESS
@@ -3442,10 +3425,19 @@ mn10300_reorg (void)
 #undef  TARGET_CONDITIONAL_REGISTER_USAGE
 #define TARGET_CONDITIONAL_REGISTER_USAGE mn10300_conditional_register_usage
 
-#undef TARGET_MD_ASM_CLOBBERS
-#define TARGET_MD_ASM_CLOBBERS  mn10300_md_asm_clobbers
+#undef TARGET_MD_ASM_ADJUST
+#define TARGET_MD_ASM_ADJUST mn10300_md_asm_adjust
 
 #undef  TARGET_FLAGS_REGNUM
 #define TARGET_FLAGS_REGNUM  CC_REG
+
+#undef  TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK mn10300_hard_regno_mode_ok
+
+#undef  TARGET_MODES_TIEABLE_P
+#define TARGET_MODES_TIEABLE_P mn10300_modes_tieable_p
+
+#undef  TARGET_HAVE_SPECULATION_SAFE_VALUE
+#define TARGET_HAVE_SPECULATION_SAFE_VALUE speculation_safe_value_not_needed
 
 struct gcc_target targetm = TARGET_INITIALIZER;

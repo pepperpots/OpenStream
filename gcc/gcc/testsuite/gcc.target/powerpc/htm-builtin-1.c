@@ -1,5 +1,5 @@
 /* { dg-do assemble { target { powerpc*-*-* } } } */
-/* { dg-skip-if "" { powerpc*-*-darwin* } { "*" } { "" } } */
+/* { dg-skip-if "" { powerpc*-*-darwin* } } */
 /* { dg-require-effective-target powerpc_htm_ok } */
 /* { dg-options "-O2 -mhtm -save-temps" } */
 
@@ -51,4 +51,3 @@ void use_builtins (long *p, char code, long *a, long *b)
   __builtin_set_tfhar (a[22]);
   __builtin_set_tfiar (a[23]);
 }
-/* { dg-final { cleanup-saved-temps } } */

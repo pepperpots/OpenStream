@@ -1,5 +1,5 @@
 /* Simple data type for real numbers for the GNU compiler.
-   Copyright (C) 2002-2015 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -52,13 +52,19 @@ along with GCC; see the file COPYING3.  If not see
 #include <math.h>
 #include "coretypes.h"
 #include "sreal.h"
+#include "selftest.h"
+#include "backend.h"
+#include "tree.h"
+#include "gimple.h"
+#include "cgraph.h"
+#include "data-streamer.h"
 
 /* Print the content of struct sreal.  */
 
 void
 sreal::dump (FILE *file) const
 {
-  fprintf (file, "(%" PRIi64 " * 2^%d)", m_sig, m_exp);
+  fprintf (file, "(%" PRIi64 " * 2^%d)", (int64_t)m_sig, m_exp);
 }
 
 DEBUG_FUNCTION void
@@ -101,14 +107,14 @@ sreal::shift_right (int s)
 int64_t
 sreal::to_int () const
 {
-  int64_t sign = m_sig < 0 ? -1 : 1;
+  int64_t sign = SREAL_SIGN (m_sig);
 
   if (m_exp <= -SREAL_BITS)
     return 0;
   if (m_exp >= SREAL_PART_BITS)
     return sign * INTTYPE_MAXIMUM (int64_t);
   if (m_exp > 0)
-    return m_sig << m_exp;
+    return sign * (SREAL_ABS ((int64_t)m_sig) << m_exp);
   if (m_exp < 0)
     return m_sig >> -m_exp;
   return m_sig;
@@ -132,7 +138,8 @@ sreal
 sreal::operator+ (const sreal &other) const
 {
   int dexp;
-  sreal tmp, r;
+  sreal tmp;
+  int64_t r_sig, r_exp;
 
   const sreal *a_p = this, *b_p = &other, *bb;
 
@@ -140,10 +147,14 @@ sreal::operator+ (const sreal &other) const
     std::swap (a_p, b_p);
 
   dexp = a_p->m_exp - b_p->m_exp;
-  r.m_exp = a_p->m_exp;
+  r_exp = a_p->m_exp;
   if (dexp > SREAL_BITS)
     {
-      r.m_sig = a_p->m_sig;
+      r_sig = a_p->m_sig;
+
+      sreal r;
+      r.m_sig = r_sig;
+      r.m_exp = r_exp;
       return r;
     }
 
@@ -156,8 +167,8 @@ sreal::operator+ (const sreal &other) const
       bb = &tmp;
     }
 
-  r.m_sig = a_p->m_sig + bb->m_sig;
-  r.normalize ();
+  r_sig = a_p->m_sig + (int64_t)bb->m_sig;
+  sreal r (r_sig, r_exp);
   return r;
 }
 
@@ -168,7 +179,8 @@ sreal
 sreal::operator- (const sreal &other) const
 {
   int dexp;
-  sreal tmp, r;
+  sreal tmp;
+  int64_t r_sig, r_exp;
   const sreal *bb;
   const sreal *a_p = this, *b_p = &other;
 
@@ -180,10 +192,14 @@ sreal::operator- (const sreal &other) const
     }
 
   dexp = a_p->m_exp - b_p->m_exp;
-  r.m_exp = a_p->m_exp;
+  r_exp = a_p->m_exp;
   if (dexp > SREAL_BITS)
     {
-      r.m_sig = sign * a_p->m_sig;
+      r_sig = sign * a_p->m_sig;
+
+      sreal r;
+      r.m_sig = r_sig;
+      r.m_exp = r_exp;
       return r;
     }
   if (dexp == 0)
@@ -195,8 +211,8 @@ sreal::operator- (const sreal &other) const
       bb = &tmp;
     }
 
-  r.m_sig = sign * (a_p->m_sig - bb->m_sig);
-  r.normalize ();
+  r_sig = sign * ((int64_t) a_p->m_sig - (int64_t)bb->m_sig);
+  sreal r (r_sig, r_exp);
   return r;
 }
 
@@ -206,17 +222,14 @@ sreal
 sreal::operator* (const sreal &other) const
 {
   sreal r;
-  if (absu_hwi (m_sig) < SREAL_MIN_SIG || absu_hwi (other.m_sig) < SREAL_MIN_SIG)
+  if (absu_hwi (m_sig) < SREAL_MIN_SIG
+      || absu_hwi (other.m_sig) < SREAL_MIN_SIG)
     {
       r.m_sig = 0;
       r.m_exp = -SREAL_MAX_EXP;
     }
   else
-    {
-      r.m_sig = m_sig * other.m_sig;
-      r.m_exp = m_exp + other.m_exp;
-      r.normalize ();
-    }
+    r.normalize (m_sig * (int64_t) other.m_sig, m_exp + other.m_exp);
 
   return r;
 }
@@ -227,9 +240,152 @@ sreal
 sreal::operator/ (const sreal &other) const
 {
   gcc_checking_assert (other.m_sig != 0);
-  sreal r;
-  r.m_sig = (m_sig << SREAL_PART_BITS) / other.m_sig;
-  r.m_exp = m_exp - other.m_exp - SREAL_PART_BITS;
-  r.normalize ();
+  sreal r (SREAL_SIGN (m_sig)
+	   * ((int64_t)SREAL_ABS (m_sig) << SREAL_PART_BITS) / other.m_sig,
+	   m_exp - other.m_exp - SREAL_PART_BITS);
   return r;
 }
+
+/* Stream sreal value to OB.  */
+
+void
+sreal::stream_out (struct output_block *ob)
+{
+  streamer_write_hwi (ob, m_sig);
+  streamer_write_hwi (ob, m_exp);
+}
+
+/* Read sreal value from IB.  */
+
+sreal
+sreal::stream_in (struct lto_input_block *ib)
+{
+  sreal val;
+  val.m_sig = streamer_read_hwi (ib);
+  val.m_exp = streamer_read_hwi (ib);
+  return val;
+}
+
+#if CHECKING_P
+
+namespace selftest {
+
+/* Selftests for sreals.  */
+
+/* Verify basic sreal operations.  */
+
+static void
+sreal_verify_basics (void)
+{
+  sreal minimum = INT_MIN/2;
+  sreal maximum = INT_MAX/2;
+
+  sreal seven = 7;
+  sreal minus_two = -2;
+  sreal minus_nine = -9;
+
+  ASSERT_EQ (INT_MIN/2, minimum.to_int ());
+  ASSERT_EQ (INT_MAX/2, maximum.to_int ());
+
+  ASSERT_FALSE (minus_two < minus_two);
+  ASSERT_FALSE (seven < seven);
+  ASSERT_TRUE (seven > minus_two);
+  ASSERT_TRUE (minus_two < seven);
+  ASSERT_TRUE (minus_two != seven);
+  ASSERT_EQ (minus_two, -2);
+  ASSERT_EQ (seven, 7);
+  ASSERT_EQ ((seven << 10) >> 10, 7);
+  ASSERT_EQ (seven + minus_nine, -2);
+}
+
+/* Helper function that performs basic arithmetics and comparison
+   of given arguments A and B.  */
+
+static void
+verify_aritmetics (int64_t a, int64_t b)
+{
+  ASSERT_EQ (a, -(-(sreal (a))).to_int ());
+  ASSERT_EQ (a < b, sreal (a) < sreal (b));
+  ASSERT_EQ (a <= b, sreal (a) <= sreal (b));
+  ASSERT_EQ (a == b, sreal (a) == sreal (b));
+  ASSERT_EQ (a != b, sreal (a) != sreal (b));
+  ASSERT_EQ (a > b, sreal (a) > sreal (b));
+  ASSERT_EQ (a >= b, sreal (a) >= sreal (b));
+  ASSERT_EQ (a + b, (sreal (a) + sreal (b)).to_int ());
+  ASSERT_EQ (a - b, (sreal (a) - sreal (b)).to_int ());
+  ASSERT_EQ (b + a, (sreal (b) + sreal (a)).to_int ());
+  ASSERT_EQ (b - a, (sreal (b) - sreal (a)).to_int ());
+}
+
+/* Verify arithmetics for interesting numbers.  */
+
+static void
+sreal_verify_arithmetics (void)
+{
+  int values[] = {-14123413, -7777, -17, -10, -2, 0, 17, 139, 1234123};
+  unsigned c = sizeof (values) / sizeof (int);
+
+  for (unsigned i = 0; i < c; i++)
+    for (unsigned j = 0; j < c; j++)
+      {
+	int a = values[i];
+	int b = values[j];
+
+	verify_aritmetics (a, b);
+      }
+}
+
+/* Helper function that performs various shifting test of a given
+   argument A.  */
+
+static void
+verify_shifting (int64_t a)
+{
+  sreal v = a;
+
+  for (unsigned i = 0; i < 16; i++)
+    ASSERT_EQ (a << i, (v << i).to_int());
+
+  a = a << 16;
+  v = v << 16;
+
+  for (unsigned i = 0; i < 16; i++)
+    ASSERT_EQ (a >> i, (v >> i).to_int());
+}
+
+/* Verify shifting for interesting numbers.  */
+
+static void
+sreal_verify_shifting (void)
+{
+  int values[] = {0, 17, 32, 139, 1024, 55555, 1234123};
+  unsigned c = sizeof (values) / sizeof (int);
+
+  for (unsigned i = 0; i < c; i++)
+    verify_shifting (values[i]);
+}
+
+/* Verify division by (of) a negative value.  */
+
+static void
+sreal_verify_negative_division (void)
+{
+  ASSERT_EQ (sreal (1) / sreal (1), sreal (1));
+  ASSERT_EQ (sreal (-1) / sreal (-1), sreal (1));
+  ASSERT_EQ (sreal (-1234567) / sreal (-1234567), sreal (1));
+  ASSERT_EQ (sreal (-1234567) / sreal (1234567), sreal (-1));
+  ASSERT_EQ (sreal (1234567) / sreal (-1234567), sreal (-1));
+}
+
+/* Run all of the selftests within this file.  */
+
+void sreal_c_tests ()
+{
+  sreal_verify_basics ();
+  sreal_verify_arithmetics ();
+  sreal_verify_shifting ();
+  sreal_verify_negative_division ();
+}
+
+} // namespace selftest
+#endif /* CHECKING_P */

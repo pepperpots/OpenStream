@@ -1,5 +1,5 @@
 /* Subroutines common to both C and C++ pretty-printers.
-   Copyright (C) 2002-2015 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
    Contributed by Gabriel Dos Reis <gdr@integrable-solutions.net>
 
 This file is part of GCC.
@@ -21,26 +21,14 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
-#include "tree.h"
+#include "c-pretty-print.h"
+#include "diagnostic.h"
 #include "stor-layout.h"
+#include "stringpool.h"
 #include "attribs.h"
 #include "intl.h"
-#include "c-pretty-print.h"
 #include "tree-pretty-print.h"
-#include "tree-iterator.h"
-#include "diagnostic.h"
-#include "wide-int-print.h"
+#include "selftest.h"
 
 /* The pretty-printer code is primarily designed to closely follow
    (GNU) C and C++ grammars.  That is to be contrasted with spaghetti
@@ -181,7 +169,6 @@ void
 pp_c_cv_qualifiers (c_pretty_printer *pp, int qualifiers, bool func_type)
 {
   const char *p = pp_last_position_in_text (pp);
-  bool previous = false;
 
   if (!qualifiers)
     return;
@@ -193,39 +180,19 @@ pp_c_cv_qualifiers (c_pretty_printer *pp, int qualifiers, bool func_type)
     pp_c_whitespace (pp);
 
   if (qualifiers & TYPE_QUAL_ATOMIC)
-    {
-      pp_c_ws_string (pp, "_Atomic");
-      previous = true;
-    }
-
+    pp_c_ws_string (pp, "_Atomic");
   if (qualifiers & TYPE_QUAL_CONST)
-    {
-      if (previous)
-        pp_c_whitespace (pp);
-      pp_c_ws_string (pp, func_type ? "__attribute__((const))" : "const");
-      previous = true;
-    }
-
+    pp_c_ws_string (pp, func_type ? "__attribute__((const))" : "const");
   if (qualifiers & TYPE_QUAL_VOLATILE)
-    {
-      if (previous)
-        pp_c_whitespace (pp);
-      pp_c_ws_string (pp, func_type ? "__attribute__((noreturn))" : "volatile");
-      previous = true;
-    }
-
+    pp_c_ws_string (pp, func_type ? "__attribute__((noreturn))" : "volatile");
   if (qualifiers & TYPE_QUAL_RESTRICT)
-    {
-      if (previous)
-        pp_c_whitespace (pp);
-      pp_c_ws_string (pp, (flag_isoc99 && !c_dialect_cxx ()
-			   ? "restrict" : "__restrict__"));
-    }
+    pp_c_ws_string (pp, (flag_isoc99 && !c_dialect_cxx ()
+			 ? "restrict" : "__restrict__"));
 }
 
 /* Pretty-print T using the type-cast notation '( type-name )'.  */
 
-static void
+void
 pp_c_type_cast (c_pretty_printer *pp, tree t)
 {
   pp_c_left_paren (pp);
@@ -379,14 +346,17 @@ c_pretty_printer::simple_type_specifier (tree t)
       else
 	{
 	  int prec = TYPE_PRECISION (t);
+	  tree common_t;
 	  if (ALL_FIXED_POINT_MODE_P (TYPE_MODE (t)))
-	    t = c_common_type_for_mode (TYPE_MODE (t), TYPE_SATURATING (t));
+	    common_t = c_common_type_for_mode (TYPE_MODE (t),
+					       TYPE_SATURATING (t));
 	  else
-	    t = c_common_type_for_mode (TYPE_MODE (t), TYPE_UNSIGNED (t));
-	  if (TYPE_NAME (t))
+	    common_t = c_common_type_for_mode (TYPE_MODE (t),
+					       TYPE_UNSIGNED (t));
+	  if (common_t && TYPE_NAME (common_t))
 	    {
-	      simple_type_specifier (t);
-	      if (TYPE_PRECISION (t) != prec)
+	      simple_type_specifier (common_t);
+	      if (TYPE_PRECISION (common_t) != prec)
 		{
 		  pp_colon (this);
 		  pp_decimal_int (this, prec);
@@ -552,6 +522,11 @@ pp_c_parameter_type_list (c_pretty_printer *pp, tree t)
 	  else
 	    pp->abstract_declarator (TREE_VALUE (parms));
 	}
+      if (!first && !parms)
+	{
+	  pp_separate_with (pp, ',');
+	  pp_c_ws_string (pp, "...");
+	}
     }
   pp_c_right_paren (pp);
 }
@@ -657,7 +632,7 @@ c_pretty_printer::storage_class_specifier (tree t)
     {
       if (DECL_REGISTER (t))
 	pp_c_ws_string (this, "register");
-      else if (TREE_STATIC (t) && TREE_CODE (t) == VAR_DECL)
+      else if (TREE_STATIC (t) && VAR_P (t))
 	pp_c_ws_string (this, "static");
     }
 }
@@ -831,6 +806,10 @@ pp_c_attributes_display (c_pretty_printer *pp, tree a)
       as = lookup_attribute_spec (TREE_PURPOSE (a));
       if (!as || as->affects_type_identity == false)
         continue;
+      if (c_dialect_cxx ()
+	  && !strcmp ("transaction_safe", as->name))
+	/* In C++ transaction_safe is printed at the end of the declarator.  */
+	continue;
       if (is_first)
        {
          pp_c_ws_string (pp, "__attribute__");
@@ -929,27 +908,18 @@ pp_c_void_constant (c_pretty_printer *pp)
 
 /* Pretty-print an INTEGER literal.  */
 
-static void
+void
 pp_c_integer_constant (c_pretty_printer *pp, tree i)
 {
-  int idx;
-
-  /* We are going to compare the type of I to other types using
-     pointer comparison so we need to use its canonical type.  */
-  tree type =
-    TYPE_CANONICAL (TREE_TYPE (i))
-    ? TYPE_CANONICAL (TREE_TYPE (i))
-    : TREE_TYPE (i);
-
   if (tree_fits_shwi_p (i))
     pp_wide_integer (pp, tree_to_shwi (i));
   else if (tree_fits_uhwi_p (i))
     pp_unsigned_wide_integer (pp, tree_to_uhwi (i));
   else
     {
-      wide_int wi = i;
+      wide_int wi = wi::to_wide (i);
 
-      if (wi::lt_p (i, 0, TYPE_SIGN (TREE_TYPE (i))))
+      if (wi::lt_p (wi::to_wide (i), 0, TYPE_SIGN (TREE_TYPE (i))))
 	{
 	  pp_minus (pp);
 	  wi = -wi;
@@ -957,24 +927,6 @@ pp_c_integer_constant (c_pretty_printer *pp, tree i)
       print_hex (wi, pp_buffer (pp)->digit_buffer);
       pp_string (pp, pp_buffer (pp)->digit_buffer);
     }
-  if (TYPE_UNSIGNED (type))
-    pp_character (pp, 'u');
-  if (type == long_integer_type_node || type == long_unsigned_type_node)
-    pp_character (pp, 'l');
-  else if (type == long_long_integer_type_node
-	   || type == long_long_unsigned_type_node)
-    pp_string (pp, "ll");
-  else for (idx = 0; idx < NUM_INT_N_ENTS; idx ++)
-    if (int_n_enabled_p[idx])
-      {
-	char buf[2+20];
-	if (type == int_n_trees[idx].signed_type
-	    || type == int_n_trees[idx].unsigned_type)
-	  {
-	    sprintf (buf, "I%d", int_n_data[idx].bitsize);
-	    pp_string (pp, buf);
-	  }
-      }
 }
 
 /* Print out a CHARACTER literal.  */
@@ -1016,23 +968,22 @@ pp_c_bool_constant (c_pretty_printer *pp, tree b)
     pp_unsupported_tree (pp, b);
 }
 
-/* Attempt to print out an ENUMERATOR.  Return true on success.  Else return
-   false; that means the value was obtained by a cast, in which case
-   print out the type-id part of the cast-expression -- the casted value
-   is then printed by pp_c_integer_literal.  */
+/* Given a value e of ENUMERAL_TYPE:
+   Print out the first ENUMERATOR id with value e, if one is found,
+   else print out the value as a C-style cast (type-id)value.  */
 
-static bool
+static void
 pp_c_enumeration_constant (c_pretty_printer *pp, tree e)
 {
-  bool value_is_named = true;
   tree type = TREE_TYPE (e);
-  tree value;
+  tree value = NULL_TREE;
 
   /* Find the name of this constant.  */
-  for (value = TYPE_VALUES (type);
-       value != NULL_TREE && !tree_int_cst_equal (TREE_VALUE (value), e);
-       value = TREE_CHAIN (value))
-    ;
+  if ((pp->flags & pp_c_flag_gnu_v3) == 0)
+    for (value = TYPE_VALUES (type); value != NULL_TREE;
+	 value = TREE_CHAIN (value))
+      if (tree_int_cst_equal (DECL_INITIAL (TREE_VALUE (value)), e))
+	break;
 
   if (value != NULL_TREE)
     pp->id_expression (TREE_PURPOSE (value));
@@ -1040,10 +991,8 @@ pp_c_enumeration_constant (c_pretty_printer *pp, tree e)
     {
       /* Value must have been cast.  */
       pp_c_type_cast (pp, type);
-      value_is_named = false;
+      pp_c_integer_constant (pp, e);
     }
-
-  return value_is_named;
 }
 
 /* Print out a REAL value as a decimal-floating-constant.  */
@@ -1076,6 +1025,16 @@ pp_c_floating_constant (c_pretty_printer *pp, tree r)
     pp_string (pp, "dd");
   else if (TREE_TYPE (r) == dfloat32_type_node)
     pp_string (pp, "df");
+  else if (TREE_TYPE (r) != double_type_node)
+    for (int i = 0; i < NUM_FLOATN_NX_TYPES; i++)
+      if (TREE_TYPE (r) == FLOATN_NX_TYPE_NODE (i))
+	{
+	  pp_character (pp, 'f');
+	  pp_decimal_int (pp, floatn_nx_types[i].n);
+	  if (floatn_nx_types[i].extended)
+	    pp_character (pp, 'x');
+	  break;
+	}
 }
 
 /* Print out a FIXED value as a decimal-floating-constant.  */
@@ -1178,9 +1137,8 @@ c_pretty_printer::constant (tree e)
 	  pp_c_bool_constant (this, e);
 	else if (type == char_type_node)
 	  pp_c_character_constant (this, e);
-	else if (TREE_CODE (type) == ENUMERAL_TYPE
-		 && pp_c_enumeration_constant (this, e))
-	  ;
+	else if (TREE_CODE (type) == ENUMERAL_TYPE)
+	  pp_c_enumeration_constant (this, e);
 	else
 	  pp_c_integer_constant (this, e);
       }
@@ -1302,9 +1260,14 @@ c_pretty_printer::primary_expression (tree e)
 
     default:
       /* FIXME:  Make sure we won't get into an infinite loop.  */
-      pp_c_left_paren (this);
-      expression (e);
-      pp_c_right_paren (this);
+      if (location_wrapper_p (e))
+	expression (e);
+      else
+	{
+	  pp_c_left_paren (this);
+	  expression (e);
+	  pp_c_right_paren (this);
+	}
       break;
     }
 }
@@ -1418,8 +1381,9 @@ pp_c_initializer_list (c_pretty_printer *pp, tree e)
     case VECTOR_TYPE:
       if (TREE_CODE (e) == VECTOR_CST)
 	{
-	  unsigned i;
-	  for (i = 0; i < VECTOR_CST_NELTS (e); ++i)
+	  /* We don't create variable-length VECTOR_CSTs.  */
+	  unsigned int nunits = VECTOR_CST_NELTS (e).to_constant ();
+	  for (unsigned int i = 0; i < nunits; ++i)
 	    {
 	      if (i > 0)
 		pp_separate_with (pp, ',');
@@ -1521,17 +1485,6 @@ c_pretty_printer::postfix_expression (tree e)
       pp_c_right_bracket (this);
       break;
 
-    case ARRAY_NOTATION_REF:
-      postfix_expression (ARRAY_NOTATION_ARRAY (e));
-      pp_c_left_bracket (this);
-      expression (ARRAY_NOTATION_START (e));
-      pp_colon (this);
-      expression (ARRAY_NOTATION_LENGTH (e));
-      pp_colon (this);
-      expression (ARRAY_NOTATION_STRIDE (e));
-      pp_c_right_bracket (this);
-      break;
-      
     case CALL_EXPR:
       {
 	call_expr_arg_iterator iter;
@@ -1596,6 +1549,14 @@ c_pretty_printer::postfix_expression (tree e)
 			   : "__builtin_islessgreater");
       goto two_args_fun;
 
+    case MAX_EXPR:
+      pp_c_ws_string (this, "max");
+      goto two_args_fun;
+
+    case MIN_EXPR:
+      pp_c_ws_string (this, "min");
+      goto two_args_fun;
+
     two_args_fun:
       pp_c_left_paren (this);
       expression (TREE_OPERAND (e, 0));
@@ -1614,7 +1575,7 @@ c_pretty_printer::postfix_expression (tree e)
     case COMPONENT_REF:
       {
 	tree object = TREE_OPERAND (e, 0);
-	if (TREE_CODE (object) == INDIRECT_REF)
+	if (INDIRECT_REF_P (object))
 	  {
 	    postfix_expression (TREE_OPERAND (object, 0));
 	    pp_c_arrow (this);
@@ -1693,7 +1654,7 @@ c_pretty_printer::postfix_expression (tree e)
           id_expression (TREE_OPERAND (e, 0));
 	  break;
 	}
-      /* else fall through.  */
+      /* fall through.  */
 
     default:
       primary_expression (e);
@@ -1782,7 +1743,13 @@ c_pretty_printer::unary_expression (tree e)
       if (code == ADDR_EXPR && TREE_CODE (TREE_OPERAND (e, 0)) != STRING_CST)
 	pp_ampersand (this);
       else if (code == INDIRECT_REF)
-	pp_c_star (this);
+	{
+	  tree type = TREE_TYPE (TREE_OPERAND (e, 0));
+	  if (type && TREE_CODE (type) == REFERENCE_TYPE)
+	    /* Reference decay is implicit, don't print anything.  */;
+	  else
+	    pp_c_star (this);
+	}
       else if (code == NEGATE_EXPR)
 	pp_minus (this);
       else if (code == BIT_NOT_EXPR || code == CONJ_EXPR)
@@ -1844,7 +1811,8 @@ pp_c_cast_expression (c_pretty_printer *pp, tree e)
     case FIX_TRUNC_EXPR:
     CASE_CONVERT:
     case VIEW_CONVERT_EXPR:
-      pp_c_type_cast (pp, TREE_TYPE (e));
+      if (!location_wrapper_p (e))
+	pp_c_type_cast (pp, TREE_TYPE (e));
       pp_c_cast_expression (pp, TREE_OPERAND (e, 0));
       break;
 
@@ -1868,11 +1836,13 @@ c_pretty_printer::multiplicative_expression (tree e)
     case MULT_EXPR:
     case TRUNC_DIV_EXPR:
     case TRUNC_MOD_EXPR:
+    case EXACT_DIV_EXPR:
+    case RDIV_EXPR:
       multiplicative_expression (TREE_OPERAND (e, 0));
       pp_c_whitespace (this);
       if (code == MULT_EXPR)
 	pp_c_star (this);
-      else if (code == TRUNC_DIV_EXPR)
+      else if (code != TRUNC_MOD_EXPR)
 	pp_slash (this);
       else
 	pp_modulo (this);
@@ -1899,6 +1869,7 @@ pp_c_additive_expression (c_pretty_printer *pp, tree e)
     {
     case POINTER_PLUS_EXPR:
     case PLUS_EXPR:
+    case POINTER_DIFF_EXPR:
     case MINUS_EXPR:
       pp_c_additive_expression (pp, TREE_OPERAND (e, 0));
       pp_c_whitespace (pp);
@@ -1929,9 +1900,13 @@ pp_c_shift_expression (c_pretty_printer *pp, tree e)
     {
     case LSHIFT_EXPR:
     case RSHIFT_EXPR:
+    case LROTATE_EXPR:
+    case RROTATE_EXPR:
       pp_c_shift_expression (pp, TREE_OPERAND (e, 0));
       pp_c_whitespace (pp);
-      pp_string (pp, code == LSHIFT_EXPR ? "<<" : ">>");
+      pp_string (pp, code == LSHIFT_EXPR ? "<<" :
+		     code == RSHIFT_EXPR ? ">>" :
+		     code == LROTATE_EXPR ? "<<<" : ">>>");
       pp_c_whitespace (pp);
       pp_c_additive_expression (pp, TREE_OPERAND (e, 1));
       break;
@@ -2210,7 +2185,6 @@ c_pretty_printer::expression (tree e)
     case POSTINCREMENT_EXPR:
     case POSTDECREMENT_EXPR:
     case ARRAY_REF:
-    case ARRAY_NOTATION_REF:
     case CALL_EXPR:
     case COMPONENT_REF:
     case BIT_FIELD_REF:
@@ -2225,6 +2199,8 @@ c_pretty_printer::expression (tree e)
     case UNLT_EXPR:
     case UNGE_EXPR:
     case UNGT_EXPR:
+    case MAX_EXPR:
+    case MIN_EXPR:
     case ABS_EXPR:
     case CONSTRUCTOR:
     case COMPOUND_LITERAL_EXPR:
@@ -2256,11 +2232,15 @@ c_pretty_printer::expression (tree e)
     case MULT_EXPR:
     case TRUNC_MOD_EXPR:
     case TRUNC_DIV_EXPR:
+    case EXACT_DIV_EXPR:
+    case RDIV_EXPR:
       multiplicative_expression (e);
       break;
 
     case LSHIFT_EXPR:
     case RSHIFT_EXPR:
+    case LROTATE_EXPR:
+    case RROTATE_EXPR:
       pp_c_shift_expression (this, e);
       break;
 
@@ -2305,6 +2285,7 @@ c_pretty_printer::expression (tree e)
 
     case POINTER_PLUS_EXPR:
     case PLUS_EXPR:
+    case POINTER_DIFF_EXPR:
     case MINUS_EXPR:
       pp_c_additive_expression (this, e);
       break;
@@ -2361,7 +2342,7 @@ c_pretty_printer::statement (tree stmt)
   if (pp_needs_newline (this))
     pp_newline_and_indent (this, 0);
 
-  dump_generic_node (this, stmt, pp_indentation (this), 0, true);
+  dump_generic_node (this, stmt, pp_indentation (this), TDF_NONE, true);
 }
 
 
@@ -2415,9 +2396,72 @@ pp_c_tree_decl_identifier (c_pretty_printer *pp, tree t)
   else
     {
       static char xname[8];
-      sprintf (xname, "<U%4x>", ((unsigned)((uintptr_t)(t) & 0xffff)));
+      sprintf (xname, "<U%4hx>", ((unsigned short) ((uintptr_t) (t)
+						    & 0xffff)));
       name = xname;
     }
 
   pp_c_identifier (pp, name);
 }
+
+#if CHECKING_P
+
+namespace selftest {
+
+/* Selftests for pretty-printing trees.  */
+
+/* Verify that EXPR printed by c_pretty_printer is EXPECTED, using
+   LOC as the effective location for any failures.  */
+
+static void
+assert_c_pretty_printer_output (const location &loc, const char *expected,
+				tree expr)
+{
+  c_pretty_printer pp;
+  pp.expression (expr);
+  ASSERT_STREQ_AT (loc, expected, pp_formatted_text (&pp));
+}
+
+/* Helper function for calling assert_c_pretty_printer_output.
+   This is to avoid having to write SELFTEST_LOCATION.  */
+
+#define ASSERT_C_PRETTY_PRINTER_OUTPUT(EXPECTED, EXPR) \
+  SELFTEST_BEGIN_STMT						\
+    assert_c_pretty_printer_output ((SELFTEST_LOCATION),	\
+				    (EXPECTED),		\
+				    (EXPR));			\
+  SELFTEST_END_STMT
+
+/* Verify that location wrappers don't show up in pretty-printed output.  */
+
+static void
+test_location_wrappers ()
+{
+  /* VAR_DECL.  */
+  tree id = get_identifier ("foo");
+  tree decl = build_decl (UNKNOWN_LOCATION, VAR_DECL, id,
+			  integer_type_node);
+  tree wrapped_decl = maybe_wrap_with_location (decl, BUILTINS_LOCATION);
+  ASSERT_NE (wrapped_decl, decl);
+  ASSERT_C_PRETTY_PRINTER_OUTPUT ("foo", decl);
+  ASSERT_C_PRETTY_PRINTER_OUTPUT ("foo", wrapped_decl);
+
+  /* INTEGER_CST.  */
+  tree int_cst = build_int_cst (integer_type_node, 42);
+  tree wrapped_cst = maybe_wrap_with_location (int_cst, BUILTINS_LOCATION);
+  ASSERT_NE (wrapped_cst, int_cst);
+  ASSERT_C_PRETTY_PRINTER_OUTPUT ("42", int_cst);
+  ASSERT_C_PRETTY_PRINTER_OUTPUT ("42", wrapped_cst);
+}
+
+/* Run all of the selftests within this file.  */
+
+void
+c_pretty_print_c_tests ()
+{
+  test_location_wrappers ();
+}
+
+} // namespace selftest
+
+#endif /* CHECKING_P */

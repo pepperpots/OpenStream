@@ -8,7 +8,7 @@
 # into the libgo library.  This does the easy stuff; the hard stuff is
 # left to the user.
 
-# The file MERGE should hold the Mercurial revision number of the last
+# The file MERGE should hold the Git revision number of the last
 # revision which was merged into these sources.  Given that, and given
 # the current sources, we can run the usual diff3 algorithm to merge
 # all changes into our sources.
@@ -30,7 +30,7 @@ case $# in
 1) ;;
 2) rev=$2 ;;
 *)
-  echo 1>&2 "merge.sh: Usage: merge.sh mercurial-repository [revision]"
+  echo 1>&2 "merge.sh: Usage: merge.sh git-repository [revision]"
   exit 1
   ;;
 esac
@@ -66,19 +66,21 @@ merge() {
     else
       echo "merge.sh: ${name}: REMOVED"
       rm -f ${libgo}
-      hg rm ${libgo}
+      git rm ${libgo}
     fi
   elif test -f ${old}; then
     # The file exists in the old version.
     if ! test -f ${libgo}; then
-      echo "merge.sh: $name: skipping: exists in old and new git, but not in libgo"
-      continue
+      if ! cmp -s ${old} ${new}; then
+        echo "merge.sh: $name: skipping: exists in old and new git, but not in libgo"
+      fi
+      return
     fi
     if cmp -s ${old} ${libgo}; then
       # The libgo file is unchanged from the old version.
       if cmp -s ${new} ${libgo}; then
         # File is unchanged from old to new version.
-        continue
+	return
       fi
       # Update file in libgo.
       echo "merge.sh: $name: updating"
@@ -97,11 +99,9 @@ merge() {
       1)
         echo "merge.sh: $name: CONFLICTS"
         mv ${libgo}.tmp ${libgo}
-        hg resolve -u ${libgo}
         ;;
       *)
-        echo 1>&2 "merge.sh: $name: diff3 failure"
-        exit 1
+        echo 1>&2 "merge.sh: $name: DIFF3 FAILURE"
         ;;
       esac
     fi
@@ -118,48 +118,56 @@ merge() {
         mkdir -p ${dir}
       fi
       cp ${new} ${libgo}
-      hg add ${libgo}
+      git add ${libgo}
     fi
   fi
 }
 
-merge_c() {
-  from=$1
-  to=$2
-  oldfile=${OLDDIR}/src/runtime/$from
-  if test -f ${oldfile}; then
-    sed -e 's/·/_/g' < ${oldfile} > ${oldfile}.tmp
-    oldfile=${oldfile}.tmp
-    newfile=${NEWDIR}/src/runtime/$from
-    sed -e 's/·/_/g' < ${newfile} > ${newfile}.tmp
-    newfile=${newfile}.tmp
-    libgofile=runtime/$to
-    merge $from ${oldfile} ${newfile} ${libgofile}
-  fi
-}
-
-if test -f VERSION; then
-  if ! cmp -s ${NEWDIR}/VERSION VERSION; then
-    cp ${NEWDIR}/VERSION .
-  fi
-else
-  if test -f ${NEWDIR}/VERSION; then
-    cp ${NEWDIR}/VERSION .
-  fi
-fi
+echo ${rev} > VERSION
 
 (cd ${NEWDIR}/src && find . -name '*.go' -print) | while read f; do
+  skip=false
+  case "$f" in
+  ./cmd/buildid/* | ./cmd/cgo/* | ./cmd/go/* | ./cmd/gofmt/* | ./cmd/testjson/* | ./cmd/vet/* | ./cmd/internal/browser/* | ./cmd/internal/buildid/* | ./cmd/internal/edit/* | ./cmd/internal/objabi/* | ./cmd/internal/testj2on/* | ./cmd/internal/sys/* | ./cmd/vendor/golang.org/x/tools/* )
+    ;;
+  ./cmd/*)
+    skip=true
+    ;;
+  ./runtime/race/*)
+    skip=true
+    ;;
+  esac
+  if test "$skip" = "true"; then
+    continue
+  fi
+
   oldfile=${OLDDIR}/src/$f
   newfile=${NEWDIR}/src/$f
-  libgofile=go/$f
+  libgofile=go/`echo $f | sed -e 's|cmd/vendor/|/|' | sed -e 's|/vendor/|/|'`
   merge $f ${oldfile} ${newfile} ${libgofile}
 done
 
 (cd ${NEWDIR}/src && find . -name testdata -print) | while read d; do
+  skip=false
+  case "$d" in
+  ./cmd/buildid/* | ./cmd/cgo/* | ./cmd/go/* | ./cmd/gofmt/* | ./cmd/testjson/* | ./cmd/vet/* | ./cmd/internal/browser/* | ./cmd/internal/buildid/* | ./cmd/internal/edit/* | ./cmd/internal/objabi/* | ./cmd/internal/testj2on/* | ./cmd/internal/sys/* | ./cmd/vendor/golang.org/x/tools/* )
+    ;;
+  ./cmd/*)
+    skip=true
+    ;;
+  ./runtime/race/* | ./runtime/cgo/*)
+    skip=true
+    ;;
+  esac
+  if test "$skip" = "true"; then
+    continue
+  fi
+
   oldtd=${OLDDIR}/src/$d
   newtd=${NEWDIR}/src/$d
-  libgotd=go/$d
+  libgofile=go/`echo $d | sed -e 's|cmd/vendor/|/|' | sed -e 's|/vendor/|/|'`
   if ! test -d ${oldtd}; then
+    echo "merge.sh: $d: NEWDIR"
     continue
   fi
   (cd ${oldtd} && git ls-files .) | while read f; do
@@ -174,43 +182,12 @@ done
   done
 done
 
-cmdlist="cgo go gofmt"
-for c in $cmdlist; do
-  (cd ${NEWDIR}/src/cmd/$c && find . -name '*.go' -print) | while read f; do
-    oldfile=${OLDDIR}/src/cmd/$c/$f
-    newfile=${NEWDIR}/src/cmd/$c/$f
-    libgofile=go/cmd/$c/$f
-    merge $f ${oldfile} ${newfile} ${libgofile}
-  done
-
-  (cd ${NEWDIR}/src/cmd/$c && find . -name testdata -print) | while read d; do
-    oldtd=${OLDDIR}/src/cmd/$c/$d
-    newtd=${NEWDIR}/src/cmd/$c/$d
-    libgotd=go/cmd/$c/$d
-    if ! test -d ${oldtd}; then
-      continue
-    fi
-    (cd ${oldtd} && git ls-files .) | while read f; do
-      if test "`basename $f`" = ".gitignore"; then
-        continue
-      fi
-      name=$d/$f
-      oldfile=${oldtd}/$f
-      newfile=${newtd}/$f
-      libgofile=${libgotd}/$f
-      merge ${name} ${oldfile} ${newfile} ${libgofile}
-    done
-  done
+(cd ${NEWDIR}/misc/cgo && find . -type f -print) | while read f; do
+  oldfile=${OLDDIR}/misc/cgo/$f
+  newfile=${NEWDIR}/misc/cgo/$f
+  libgofile=misc/cgo/$f
+  merge $f ${oldfile} ${newfile} ${libgofile}
 done
-
-runtime="chan.goc chan.h cpuprof.goc env_posix.c heapdump.c lock_futex.c lfstack.goc lock_sema.c mcache.c mcentral.c mfixalloc.c mgc0.c mgc0.h mheap.c msize.c netpoll.goc netpoll_epoll.c netpoll_kqueue.c netpoll_stub.c panic.c print.c proc.c race.h rdebug.goc runtime.c runtime.h signal_unix.c signal_unix.h malloc.h malloc.goc mprof.goc parfor.c runtime1.goc sema.goc sigqueue.goc string.goc time.goc"
-for f in $runtime; do
-  # merge_c $f $f
-  true
-done
-
-# merge_c os_linux.c thread-linux.c
-# merge_c mem_linux.c mem.c
 
 (cd ${OLDDIR}/src && find . -name '*.go' -print) | while read f; do
   oldfile=${OLDDIR}/src/$f
@@ -224,7 +201,22 @@ done
   fi
   echo "merge.sh: ${libgofile}: REMOVED"
   rm -f ${libgofile}
-  hg rm ${libgofile}
+  git rm ${libgofile}
+done
+
+(cd ${OLDDIR}/misc/cgo && find . -type f -print) | while read f; do
+  oldfile=${OLDDIR}/misc/cgo/$f
+  newfile=${NEWDIR}/misc/cgo/$f
+  libgofile=misc/cgo/$f
+  if test -f ${newfile}; then
+    continue
+  fi
+  if ! test -f ${libgofile}; then
+    continue
+  fi
+  echo "merge.sh: ${libgofile}: REMOVED"
+  rm -f ${libgofile}
+  git rm ${libgofile}
 done
 
 (echo ${new_rev}; sed -ne '2,$p' MERGE) > MERGE.tmp

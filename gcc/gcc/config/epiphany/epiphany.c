@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the EPIPHANY cpu.
-   Copyright (C) 1994-2015 Free Software Foundation, Inc.
+   Copyright (C) 1994-2019 Free Software Foundation, Inc.
    Contributed by Embecosm on behalf of Adapteva, Inc.
 
 This file is part of GCC.
@@ -18,63 +18,32 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
+#include "target.h"
+#include "rtl.h"
 #include "tree.h"
-#include "fold-const.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "stringpool.h"
+#include "attribs.h"
+#include "optabs.h"
+#include "emit-rtl.h"
+#include "recog.h"
+#include "diagnostic-core.h"
+#include "alias.h"
 #include "stor-layout.h"
 #include "varasm.h"
 #include "calls.h"
-#include "stringpool.h"
-#include "rtl.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "real.h"
-#include "insn-config.h"
-#include "conditions.h"
 #include "output.h"
 #include "insn-attr.h"
-#include "flags.h"
-#include "function.h"
-#include "insn-codes.h"
-#include "optabs.h"
-#include "hashtab.h"
-#include "statistics.h"
-#include "fixed-value.h"
-#include "expmed.h"
-#include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
-#include "stmt.h"
 #include "expr.h"
-#include "diagnostic-core.h"
-#include "recog.h"
-#include "toplev.h"
-#include "tm_p.h"
-#include "target.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "predict.h"
-#include "basic-block.h"
-#include "df.h"
-#include "langhooks.h"
-#include "ggc.h"
 #include "tm-constrs.h"
 #include "tree-pass.h"	/* for current_pass */
 #include "context.h"
@@ -129,13 +98,15 @@ static rtx_insn *frame_insn (rtx);
 #define TARGET_SETUP_INCOMING_VARARGS epiphany_setup_incoming_varargs
 
 /* Using the simplistic varags handling forces us to do partial reg/stack
-   argument passing for types with larger size (> 4 bytes) than alignemnt.  */
+   argument passing for types with larger size (> 4 bytes) than alignment.  */
 #define TARGET_ARG_PARTIAL_BYTES epiphany_arg_partial_bytes
 
 #define TARGET_FUNCTION_OK_FOR_SIBCALL epiphany_function_ok_for_sibcall
 
 #define TARGET_SCHED_ISSUE_RATE epiphany_issue_rate
 #define TARGET_SCHED_ADJUST_COST epiphany_adjust_cost
+
+#define TARGET_LRA_P hook_bool_void_false
 
 #define TARGET_LEGITIMATE_ADDRESS_P epiphany_legitimate_address_p
 
@@ -201,6 +172,15 @@ static rtx_insn *frame_insn (rtx);
 #define TARGET_ASM_ALIGNED_HI_OP "\t.hword\t"
 #undef TARGET_ASM_ALIGNED_SI_OP
 #define TARGET_ASM_ALIGNED_SI_OP "\t.word\t"
+
+#undef TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK epiphany_hard_regno_mode_ok
+
+#undef TARGET_CONSTANT_ALIGNMENT
+#define TARGET_CONSTANT_ALIGNMENT epiphany_constant_alignment
+
+#undef TARGET_STARTING_FRAME_OFFSET
+#define TARGET_STARTING_FRAME_OFFSET epiphany_starting_frame_offset
 
 bool
 epiphany_is_interrupt_p (tree decl)
@@ -301,7 +281,7 @@ get_epiphany_condition_code (rtx comparison)
 {
   switch (GET_MODE (XEXP (comparison, 0)))
     {
-    case CCmode:
+    case E_CCmode:
       switch (GET_CODE (comparison))
 	{
 	case EQ  : return 0;
@@ -317,28 +297,28 @@ get_epiphany_condition_code (rtx comparison)
 
 	default : gcc_unreachable ();
 	}
-    case CC_N_NEmode:
+    case E_CC_N_NEmode:
       switch (GET_CODE (comparison))
 	{
 	case EQ: return 6;
 	case NE: return 7;
 	default: gcc_unreachable ();
 	}
-    case CC_C_LTUmode:
+    case E_CC_C_LTUmode:
       switch (GET_CODE (comparison))
 	{
 	case GEU: return 2;
 	case LTU: return 3;
 	default: gcc_unreachable ();
 	}
-    case CC_C_GTUmode:
+    case E_CC_C_GTUmode:
       switch (GET_CODE (comparison))
 	{
 	case LEU: return 3;
 	case GTU: return 2;
 	default: gcc_unreachable ();
 	}
-    case CC_FPmode:
+    case E_CC_FPmode:
       switch (GET_CODE (comparison))
 	{
 	case EQ: return 10;
@@ -347,14 +327,14 @@ get_epiphany_condition_code (rtx comparison)
 	case LE: return 13;
 	default: gcc_unreachable ();
 	}
-    case CC_FP_EQmode:
+    case E_CC_FP_EQmode:
       switch (GET_CODE (comparison))
 	{
 	case EQ: return 0;
 	case NE: return 1;
 	default: gcc_unreachable ();
 	}
-    case CC_FP_GTEmode:
+    case E_CC_FP_GTEmode:
       switch (GET_CODE (comparison))
 	{
 	case EQ: return 0;
@@ -365,14 +345,14 @@ get_epiphany_condition_code (rtx comparison)
 	case UNLT : return 7;
 	default: gcc_unreachable ();
 	}
-    case CC_FP_ORDmode:
+    case E_CC_FP_ORDmode:
       switch (GET_CODE (comparison))
 	{
 	case ORDERED: return 9;
 	case UNORDERED: return 8;
 	default: gcc_unreachable ();
 	}
-    case CC_FP_UNEQmode:
+    case E_CC_FP_UNEQmode:
       switch (GET_CODE (comparison))
 	{
 	case UNEQ: return 9;
@@ -386,14 +366,15 @@ get_epiphany_condition_code (rtx comparison)
 }
 
 
-/* Return 1 if hard register REGNO can hold a value of machine_mode MODE.  */
-int
-hard_regno_mode_ok (int regno, machine_mode mode)
+/* Implement TARGET_HARD_REGNO_MODE_OK.  */
+
+static bool
+epiphany_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
 {
   if (GET_MODE_SIZE (mode) > UNITS_PER_WORD)
     return (regno & 1) == 0 && GPR_P (regno);
   else
-    return 1;
+    return true;
 }
 
 /* Given a comparison code (EQ, NE, etc.) and the first operand of a COMPARE,
@@ -481,13 +462,16 @@ epiphany_init_reg_tables (void)
 
 static const struct attribute_spec epiphany_attribute_table[] =
 {
-  /* { name, min_len, max_len, decl_req, type_req, fn_type_req, handler } */
-  { "interrupt",  0, 9, true,  false, false, epiphany_handle_interrupt_attribute, true },
-  { "forwarder_section", 1, 1, true, false, false, epiphany_handle_forwarder_attribute, false },
-  { "long_call",  0, 0, false, true, true, NULL, false },
-  { "short_call", 0, 0, false, true, true, NULL, false },
-  { "disinterrupt", 0, 0, false, true, true, NULL, true },
-  { NULL,         0, 0, false, false, false, NULL, false }
+  /* { name, min_len, max_len, decl_req, type_req, fn_type_req,
+       affects_type_identity, handler, exclude } */
+  { "interrupt",  0, 9, true,  false, false, true,
+    epiphany_handle_interrupt_attribute, NULL },
+  { "forwarder_section", 1, 1, true, false, false, false,
+    epiphany_handle_forwarder_attribute, NULL },
+  { "long_call",  0, 0, false, true, true, false, NULL, NULL },
+  { "short_call", 0, 0, false, true, true, false, NULL, NULL },
+  { "disinterrupt", 0, 0, false, true, true, true, NULL, NULL },
+  { NULL,         0, 0, false, false, false, false, NULL, NULL }
 };
 
 /* Handle an "interrupt" attribute; arguments as in
@@ -590,7 +574,7 @@ sfunc_symbol (const char *name)
 }
 
 /* X and Y are two things to compare using CODE in IN_MODE.
-   Emit the compare insn, construct the the proper cc reg in the proper
+   Emit the compare insn, construct the proper cc reg in the proper
    mode, and return the rtx for the cc reg comparison in CMODE.  */
 
 rtx
@@ -669,7 +653,7 @@ gen_compare_reg (machine_mode cmode, enum rtx_code code,
   else
     x = force_reg (in_mode, x);
 
-  pat = gen_rtx_SET (VOIDmode, cc_reg, gen_rtx_COMPARE (mode, x, y));
+  pat = gen_rtx_SET (cc_reg, gen_rtx_COMPARE (mode, x, y));
   if (mode == CC_FP_EQmode || mode == CC_FP_GTEmode)
     {
       const char *name = mode == CC_FP_EQmode ? "__eqsf2" : "__gtesf2";
@@ -784,9 +768,12 @@ epiphany_arg_partial_bytes (cumulative_args_t cum, machine_mode mode,
    scanned.  In either case, *TOTAL contains the cost result.  */
 
 static bool
-epiphany_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
+epiphany_rtx_costs (rtx x, machine_mode mode, int outer_code,
+		    int opno ATTRIBUTE_UNUSED,
 		    int *total, bool speed ATTRIBUTE_UNUSED)
 {
+  int code = GET_CODE (x);
+
   switch (code)
     {
       /* Small integers in the right context are as cheap as registers.  */
@@ -827,13 +814,13 @@ epiphany_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       return true;
 
     case COMPARE:
-      switch (GET_MODE (x))
+      switch (mode)
 	{
 	/* There are a number of single-insn combiner patterns that use
 	   the flag side effects of arithmetic.  */
-	case CC_N_NEmode:
-	case CC_C_LTUmode:
-	case CC_C_GTUmode:
+	case E_CC_N_NEmode:
+	case E_CC_C_LTUmode:
+	case E_CC_C_GTUmode:
 	  return true;
 	default:
 	  return false;
@@ -1349,7 +1336,7 @@ epiphany_print_operand (FILE *file, rtx x, int code)
 	    offset = 0;
 	    break;
 	}
-      output_address (addr);
+      output_address (GET_MODE (x), addr);
       fputc (']', file);
       if (offset)
 	{
@@ -1370,22 +1357,21 @@ epiphany_print_operand (FILE *file, rtx x, int code)
 	      case 1:
 		break;
 	    }
-	  output_address (offset);
+	  output_address (GET_MODE (x), offset);
 	}
       break;
     case CONST_DOUBLE :
       /* We handle SFmode constants here as output_addr_const doesn't.  */
       if (GET_MODE (x) == SFmode)
 	{
-	  REAL_VALUE_TYPE d;
 	  long l;
 
-	  REAL_VALUE_FROM_CONST_DOUBLE (d, x);
-	  REAL_VALUE_TO_TARGET_SINGLE (d, l);
+	  REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), l);
 	  fprintf (file, "%s0x%08lx", IMMEDIATE_PREFIX, l);
 	  break;
 	}
-      /* Fall through.  Let output_addr_const deal with it.  */
+      /* FALLTHRU */
+      /* Let output_addr_const deal with it.  */
     case CONST_INT:
       fprintf(file,"%s",IMMEDIATE_PREFIX);
       if (code == 'C' || code == 'X')
@@ -1404,7 +1390,7 @@ epiphany_print_operand (FILE *file, rtx x, int code)
 /* Print a memory address as an operand to reference that memory location.  */
 
 static void
-epiphany_print_operand_address (FILE *file, rtx addr)
+epiphany_print_operand_address (FILE *file, machine_mode /*mode*/, rtx addr)
 {
   register rtx base, index = 0;
   int offset = 0;
@@ -1458,7 +1444,9 @@ epiphany_print_operand_address (FILE *file, rtx addr)
       break;
     case PRE_INC: case PRE_DEC: case POST_INC: case POST_DEC: case POST_MODIFY:
       /* We shouldn't get here as we've lost the mode of the memory object
-	 (which says how much to inc/dec by.  */
+	 (which says how much to inc/dec by.
+	 FIXME: We have the mode now, address printing can be moved into this
+	 function.  */
       gcc_unreachable ();
       break;
     default:
@@ -1570,7 +1558,7 @@ frame_subreg_note (rtx set, int offset)
   rtx src = simplify_gen_subreg (SImode, SET_SRC (set), DImode, offset);
   rtx dst = simplify_gen_subreg (SImode, SET_DEST (set), DImode, offset);
 
-  set = gen_rtx_SET (VOIDmode, dst ,src);
+  set = gen_rtx_SET (dst ,src);
   RTX_FRAME_RELATED_P (set) = 1;
   return set;
 }
@@ -1625,7 +1613,7 @@ frame_insn (rtx x)
 static rtx_insn *
 frame_move_insn (rtx to, rtx from)
 {
-  return frame_insn (gen_rtx_SET (VOIDmode, to, from));
+  return frame_insn (gen_rtx_SET (to, from));
 }
 
 /* Generate a MEM referring to a varargs argument slot.  */
@@ -1867,11 +1855,10 @@ epiphany_expand_prologue (void)
       /* Instruction scheduling can separate the instruction setting IP from
 	 INSN so that dwarf2out_frame_debug_expr becomes confused what the
 	 temporary register is.  Example: _gcov.o  */
-      note = gen_rtx_SET (VOIDmode, stack_pointer_rtx,
+      note = gen_rtx_SET (stack_pointer_rtx,
 			  gen_rtx_PLUS (Pmode, stack_pointer_rtx, off));
       note = gen_rtx_PARALLEL (VOIDmode,
-			       gen_rtvec (2, gen_rtx_SET (VOIDmode, mem2, reg),
-					  note));
+			       gen_rtvec (2, gen_rtx_SET (mem2, reg), note));
       add_reg_note (insn, REG_FRAME_RELATED_EXPR, note);
     }
   /* If there is only one or no register to save, yet we have a large frame,
@@ -2016,9 +2003,10 @@ epiphany_issue_rate (void)
    the same cost as a data-dependence.  The return value should be
    the new value for COST.  */
 static int
-epiphany_adjust_cost (rtx_insn *insn, rtx link, rtx_insn *dep_insn, int cost)
+epiphany_adjust_cost (rtx_insn *insn, int dep_type, rtx_insn *dep_insn,
+		      int cost, unsigned int)
 {
-  if (REG_NOTE_KIND (link) == 0)
+  if (dep_type == 0)
     {
       rtx dep_set;
 
@@ -2801,7 +2789,7 @@ epiphany_min_divisions_for_recip_mul (machine_mode mode)
 }
 
 static machine_mode
-epiphany_preferred_simd_mode (machine_mode mode ATTRIBUTE_UNUSED)
+epiphany_preferred_simd_mode (scalar_mode mode ATTRIBUTE_UNUSED)
 {
   return TARGET_VECT_DOUBLE ? DImode : SImode;
 }
@@ -2883,12 +2871,12 @@ epiphany_special_round_type_align (tree type, unsigned computed,
    arrays-at-the-end-of-structs work, like for struct gcov_fn_info in
    libgcov.c .  */
 unsigned
-epiphany_adjust_field_align (tree field, unsigned computed)
+epiphany_adjust_field_align (tree type, unsigned computed)
 {
   if (computed == 32
-      && TREE_CODE (TREE_TYPE (field)) == ARRAY_TYPE)
+      && TREE_CODE (type) == ARRAY_TYPE)
     {
-      tree elmsz = TYPE_SIZE (TREE_TYPE (TREE_TYPE (field)));
+      tree elmsz = TYPE_SIZE (TREE_TYPE (type));
 
       if (!tree_fits_uhwi_p (elmsz) || tree_to_uhwi (elmsz) >= 32)
 	return 64;
@@ -3035,6 +3023,25 @@ epiphany_start_function (FILE *file, const char *name, tree decl)
     }
   switch_to_section (function_section (decl));
   ASM_OUTPUT_FUNCTION_LABEL (file, name, decl);
+}
+
+
+/* Implement TARGET_CONSTANT_ALIGNMENT.  */
+
+static HOST_WIDE_INT
+epiphany_constant_alignment (const_tree exp, HOST_WIDE_INT align)
+{
+  if (TREE_CODE (exp) == STRING_CST)
+    return MAX (align, FASTEST_ALIGNMENT);
+  return align;
+}
+
+/* Implement TARGET_STARTING_FRAME_OFFSET.  */
+
+static HOST_WIDE_INT
+epiphany_starting_frame_offset (void)
+{
+  return epiphany_stack_offset;
 }
 
 struct gcc_target targetm = TARGET_INITIALIZER;

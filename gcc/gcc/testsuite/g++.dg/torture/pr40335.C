@@ -7,7 +7,7 @@ main (void)
   int i = -1; 
   switch ((signed char) i)
     {
-      case 255: /* { dg-bogus "exceeds maximum value" "" { xfail *-*-* } } */
+      case 255: /* { dg-warning "exceeds maximum value" } */
 	abort ();
       default:
 	break;

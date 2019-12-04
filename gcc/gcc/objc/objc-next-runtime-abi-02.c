@@ -1,5 +1,5 @@
 /* Next Runtime (ABI-2) private.
-   Copyright (C) 2011-2015 Free Software Foundation, Inc.
+   Copyright (C) 2011-2019 Free Software Foundation, Inc.
 
    Contributed by Iain Sandoe and based, in part, on an implementation in
    'branches/apple/trunk' contributed by Apple Computer Inc.
@@ -28,20 +28,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
 #include "tree.h"
-#include "fold-const.h"
 #include "stringpool.h"
+#include "attribs.h"
 
 #ifdef OBJCPLUS
 #include "cp/cp-tree.h"
@@ -60,7 +49,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "objcp-decl.h"
 #endif  /* OBJCPLUS */
 
-#include "ggc.h"
 #include "target.h"
 #include "tree-iterator.h"
 
@@ -1023,10 +1011,10 @@ next_runtime_abi_02_string_decl (tree type, const char *name,  string_section wh
 
 /* NOTE --- entry --- */
 
-typedef struct GTY(()) ident_data_tuple {
+struct GTY(()) ident_data_tuple {
   tree ident;
   tree data;
-} ident_data_tuple ;
+};
 
 /* This routine creates a file scope static variable of type 'Class'
    to hold the address of a class.  */
@@ -1207,11 +1195,11 @@ build_v2_message_reference_decl (tree sel_name, tree message_func_ident)
   return decl;
 }
 
-typedef struct GTY(()) msgref_entry {
+struct GTY(()) msgref_entry {
   tree func;
   tree selname;
   tree refdecl;
-} msgref_entry;
+};
 
 static GTY (()) vec<msgref_entry, va_gc> *msgrefs;
 
@@ -1263,10 +1251,10 @@ build_v2_protocollist_ref_decl (tree protocol)
   return decl;
 }
 
-typedef struct GTY(()) prot_list_entry {
+struct GTY(()) prot_list_entry {
   tree id;
   tree refdecl;
-} prot_list_entry;
+};
 static GTY (()) vec<prot_list_entry, va_gc> *protrefs;
 
 static tree
@@ -1659,8 +1647,8 @@ build_v2_build_objc_method_call (int super_flag, tree method_prototype,
      /* ??? CHECKME.   */
       ret_val = build_conditional_expr (input_location,
 					ifexp, 1,
-					ret_val, NULL_TREE,
-					ftree, NULL_TREE);
+					ret_val, NULL_TREE, input_location,
+					ftree, NULL_TREE, input_location);
 #endif
     }
   return ret_val;
@@ -2767,11 +2755,11 @@ generate_v2_category (struct imp_entry *impent)
 /* This routine declares a variable to hold the offset for ivar
    FIELD_DECL.  Variable name is .objc_ivar.ClassName.IvarName.  */
 
-typedef struct GTY(()) ivarref_entry
+struct GTY(()) ivarref_entry
 {
   tree decl;
   tree offset;
-} ivarref_entry;
+};
 
 static GTY (()) vec<ivarref_entry, va_gc> *ivar_offset_refs;
 
@@ -3598,7 +3586,7 @@ next_runtime_02_eh_type (tree type)
 	 case, we use c++'s typeinfo decl.  */
       return build_eh_type_type (type);
 #else
-      error ("non-objective-c type '%T' cannot be caught", type);
+      error ("non-objective-c type %qT cannot be caught", type);
       goto err_mark_in;
 #endif
     }

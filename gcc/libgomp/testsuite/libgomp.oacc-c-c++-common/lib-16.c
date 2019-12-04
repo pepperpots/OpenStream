@@ -1,4 +1,4 @@
-/* { dg-do run } */
+/* Test if acc_copyin has present_or_ and reference counting behavior.  */
 
 #include <stdlib.h>
 #include <openacc.h>
@@ -18,12 +18,21 @@ main (int argc, char **argv)
     }
 
   (void) acc_copyin (h, N);
-
   (void) acc_copyin (h, N);
+
+  acc_copyout (h, N);
+
+  if (!acc_is_present (h, N))
+    abort ();
+
+  acc_copyout (h, N);
+
+#if !ACC_MEM_SHARED
+  if (acc_is_present (h, N))
+    abort ();
+#endif
 
   free (h);
 
   return 0;
 }
-
-/* { dg-shouldfail "libgomp: \[\h+,\+256\] already mapped to \[\h+,\+256\]" } */

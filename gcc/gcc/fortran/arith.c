@@ -1,5 +1,5 @@
 /* Compiler arithmetic
-   Copyright (C) 2000-2015 Free Software Foundation, Inc.
+   Copyright (C) 2000-2019 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -26,7 +26,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "flags.h"
+#include "options.h"
 #include "gfortran.h"
 #include "arith.h"
 #include "target-memory.h"
@@ -113,6 +113,11 @@ gfc_arith_error (arith code)
       p =
 	_("Integer outside symmetric range implied by Standard Fortran at %L");
       break;
+    case ARITH_WRONGCONCAT:
+      p =
+	_("Illegal type in character concatenation at %L");
+      break;
+
     default:
       gfc_internal_error ("gfc_arith_error(): Bad error code");
     }
@@ -555,10 +560,10 @@ check_result (arith rc, gfc_expr *x, gfc_expr *r, gfc_expr **rp)
       val = ARITH_OK;
     }
 
-  if (val != ARITH_OK)
-    gfc_free_expr (r);
-  else
+  if (val == ARITH_OK || val == ARITH_OVERFLOW)
     *rp = r;
+  else
+    gfc_free_expr (r);
 
   return val;
 }
@@ -731,8 +736,28 @@ gfc_arith_divide (gfc_expr *op1, gfc_expr *op2, gfc_expr **resultp)
 	  break;
 	}
 
-      mpz_tdiv_q (result->value.integer, op1->value.integer,
-		  op2->value.integer);
+      if (warn_integer_division)
+	{
+	  mpz_t r;
+	  mpz_init (r);
+	  mpz_tdiv_qr (result->value.integer, r, op1->value.integer,
+		       op2->value.integer);
+
+	  if (mpz_cmp_si (r, 0) != 0)
+	    {
+	      char *p;
+	      p = mpz_get_str (NULL, 10, result->value.integer);
+	      gfc_warning_now (OPT_Winteger_division, "Integer division "
+			       "truncated to constant %qs at %L", p,
+			       &op1->where);
+	      free (p);
+	    }
+	  mpz_clear (r);
+	}
+      else
+	mpz_tdiv_q (result->value.integer, op1->value.integer,
+		    op2->value.integer);
+
       break;
 
     case BT_REAL:
@@ -823,8 +848,6 @@ arith_power (gfc_expr *op1, gfc_expr *op2, gfc_expr **resultp)
 	    {
 	    case BT_INTEGER:
 	      {
-		int power;
-
 		/* First, we simplify the cases of op1 == 1, 0 or -1.  */
 		if (mpz_cmp_si (op1->value.integer, 1) == 0)
 		  {
@@ -854,30 +877,41 @@ arith_power (gfc_expr *op1, gfc_expr *op2, gfc_expr **resultp)
 		  {
 		    /* if op2 < 0, op1**op2 == 0  because abs(op1) > 1.  */
 		    mpz_set_si (result->value.integer, 0);
-		  }
-		else if (gfc_extract_int (op2, &power) != NULL)
-		  {
-		    /* If op2 doesn't fit in an int, the exponentiation will
-		       overflow, because op2 > 0 and abs(op1) > 1.  */
-		    mpz_t max;
-		    int i;
-		    i = gfc_validate_kind (BT_INTEGER, result->ts.kind, false);
-
-		    if (flag_range_check)
-		      rc = ARITH_OVERFLOW;
-
-		    /* Still, we want to give the same value as the
-		       processor.  */
-		    mpz_init (max);
-		    mpz_add_ui (max, gfc_integer_kinds[i].huge, 1);
-		    mpz_mul_ui (max, max, 2);
-		    mpz_powm (result->value.integer, op1->value.integer,
-			      op2->value.integer, max);
-		    mpz_clear (max);
+		    if (warn_integer_division)
+		      gfc_warning_now (OPT_Winteger_division, "Negative "
+				       "exponent of integer has zero "
+				       "result at %L", &result->where);
 		  }
 		else
-		  mpz_pow_ui (result->value.integer, op1->value.integer,
-			      power);
+		  {
+		    /* We have abs(op1) > 1 and op2 > 1.
+		       If op2 > bit_size(op1), we'll have an out-of-range
+		       result.  */
+		    int k, power;
+
+		    k = gfc_validate_kind (BT_INTEGER, op1->ts.kind, false);
+		    power = gfc_integer_kinds[k].bit_size;
+		    if (mpz_cmp_si (op2->value.integer, power) < 0)
+		      {
+			gfc_extract_int (op2, &power);
+			mpz_pow_ui (result->value.integer, op1->value.integer,
+				    power);
+			rc = gfc_range_check (result);
+			if (rc == ARITH_OVERFLOW)
+			  gfc_error_now ("Result of exponentiation at %L "
+					 "exceeds the range of %s", &op1->where,
+					 gfc_typename (&(op1->ts)));
+		      }
+		    else
+		      {
+			/* Provide a nonsense value to propagate up. */
+			mpz_set (result->value.integer,
+				 gfc_integer_kinds[k].huge);
+			mpz_add_ui (result->value.integer,
+				    result->value.integer, 1);
+			rc = ARITH_OVERFLOW;
+		      }
+		  }
 	      }
 	      break;
 
@@ -956,9 +990,14 @@ static arith
 gfc_arith_concat (gfc_expr *op1, gfc_expr *op2, gfc_expr **resultp)
 {
   gfc_expr *result;
-  int len;
+  size_t len;
 
-  gcc_assert (op1->ts.kind == op2->ts.kind);
+  /* By cleverly playing around with constructors, is is possible
+     to get mismaching types here.  */
+  if (op1->ts.type != BT_CHARACTER || op2->ts.type != BT_CHARACTER
+      || op1->ts.kind != op2->ts.kind)
+    return ARITH_WRONGCONCAT;
+
   result = gfc_get_constant_expr (BT_CHARACTER, op1->ts.kind,
 				  &op1->where);
 
@@ -1065,7 +1104,7 @@ compare_complex (gfc_expr *op1, gfc_expr *op2)
 int
 gfc_compare_string (gfc_expr *a, gfc_expr *b)
 {
-  int len, alen, blen, i;
+  size_t len, alen, blen, i;
   gfc_char_t ac, bc;
 
   alen = a->value.character.length;
@@ -1092,7 +1131,7 @@ gfc_compare_string (gfc_expr *a, gfc_expr *b)
 int
 gfc_compare_with_Cstring (gfc_expr *a, const char *b, bool case_sensitive)
 {
-  int len, alen, blen, i;
+  size_t len, alen, blen, i;
   gfc_char_t ac, bc;
 
   alen = a->value.character.length;
@@ -1501,7 +1540,7 @@ eval_intrinsic (gfc_intrinsic_op op,
 	  break;
 	}
 
-    /* Fall through  */
+    gcc_fallthrough ();
     /* Numeric binary  */
     case INTRINSIC_PLUS:
     case INTRINSIC_MINUS:
@@ -1521,7 +1560,7 @@ eval_intrinsic (gfc_intrinsic_op op,
       temp.value.op.op1 = op1;
       temp.value.op.op2 = op2;
 
-      gfc_type_convert_binary (&temp, 0);
+      gfc_type_convert_binary (&temp, warn_conversion || warn_conversion_extra);
 
       if (op == INTRINSIC_EQ || op == INTRINSIC_NE
 	  || op == INTRINSIC_GE || op == INTRINSIC_GT
@@ -1579,8 +1618,12 @@ eval_intrinsic (gfc_intrinsic_op op,
   if (rc != ARITH_OK)
     {
       gfc_error (gfc_arith_error (rc), &op1->where);
+      if (rc == ARITH_OVERFLOW)
+	goto done;
       return NULL;
     }
+
+done:
 
   gfc_free_expr (op1);
   gfc_free_expr (op2);
@@ -1949,6 +1992,43 @@ arith_error (arith rc, gfc_typespec *from, gfc_typespec *to, locus *where)
      NaN, etc.  */
 }
 
+/* Returns true if significant bits were lost when converting real
+   constant r from from_kind to to_kind.  */
+
+static bool
+wprecision_real_real (mpfr_t r, int from_kind, int to_kind)
+{
+  mpfr_t rv, diff;
+  bool ret;
+
+  gfc_set_model_kind (to_kind);
+  mpfr_init (rv);
+  gfc_set_model_kind (from_kind);
+  mpfr_init (diff);
+
+  mpfr_set (rv, r, GFC_RND_MODE);
+  mpfr_sub (diff, rv, r, GFC_RND_MODE);
+
+  ret = ! mpfr_zero_p (diff);
+  mpfr_clear (rv);
+  mpfr_clear (diff);
+  return ret;
+}
+
+/* Return true if conversion from an integer to a real loses precision.  */
+
+static bool
+wprecision_int_real (mpz_t n, mpfr_t r)
+{
+  bool ret;
+  mpz_t i;
+  mpz_init (i);
+  mpfr_get_z (i, r, GFC_RND_MODE);
+  mpz_sub (i, i, n);
+  ret = mpz_cmp_si (i, 0) != 0;
+  mpz_clear (i);
+  return ret;
+}
 
 /* Convert integers to integers.  */
 
@@ -1985,8 +2065,12 @@ gfc_int2int (gfc_expr *src, int kind)
       k = gfc_validate_kind (BT_INTEGER, kind, false);
       gfc_convert_mpz_to_signed (result->value.integer,
 				 gfc_integer_kinds[k].bit_size);
-    }
 
+      if (warn_conversion && !src->do_not_warn && kind < src->ts.kind)
+	gfc_warning_now (OPT_Wconversion, "Conversion from %qs to %qs at %L",
+			 gfc_typename (&src->ts), gfc_typename (&result->ts),
+			 &src->where);
+    }
   return result;
 }
 
@@ -2009,6 +2093,14 @@ gfc_int2real (gfc_expr *src, int kind)
       gfc_free_expr (result);
       return NULL;
     }
+
+  if (warn_conversion
+      && wprecision_int_real (src->value.integer, result->value.real))
+    gfc_warning (OPT_Wconversion, "Change of value in conversion "
+		 "from %qs to %qs at %L",
+		 gfc_typename (&src->ts),
+		 gfc_typename (&result->ts),
+		 &src->where);
 
   return result;
 }
@@ -2034,6 +2126,15 @@ gfc_int2complex (gfc_expr *src, int kind)
       return NULL;
     }
 
+  if (warn_conversion
+      && wprecision_int_real (src->value.integer,
+			      mpc_realref (result->value.complex)))
+      gfc_warning_now (OPT_Wconversion, "Change of value in conversion "
+		       "from %qs to %qs at %L",
+		       gfc_typename (&src->ts),
+		       gfc_typename (&result->ts),
+		       &src->where);
+
   return result;
 }
 
@@ -2045,6 +2146,7 @@ gfc_real2int (gfc_expr *src, int kind)
 {
   gfc_expr *result;
   arith rc;
+  bool did_warn = false;
 
   result = gfc_get_constant_expr (BT_INTEGER, kind, &src->where);
 
@@ -2055,6 +2157,28 @@ gfc_real2int (gfc_expr *src, int kind)
       arith_error (rc, &src->ts, &result->ts, &src->where);
       gfc_free_expr (result);
       return NULL;
+    }
+
+  /* If there was a fractional part, warn about this.  */
+
+  if (warn_conversion)
+    {
+      mpfr_t f;
+      mpfr_init (f);
+      mpfr_frac (f, src->value.real, GFC_RND_MODE);
+      if (mpfr_cmp_si (f, 0) != 0)
+	{
+	  gfc_warning_now (OPT_Wconversion, "Change of value in conversion "
+			   "from %qs to %qs at %L", gfc_typename (&src->ts),
+			   gfc_typename (&result->ts), &src->where);
+	  did_warn = true;
+	}
+    }
+  if (!did_warn && warn_conversion_extra)
+    {
+      gfc_warning_now (OPT_Wconversion_extra, "Conversion from %qs to %qs "
+		       "at %L", gfc_typename (&src->ts),
+		       gfc_typename (&result->ts), &src->where);
     }
 
   return result;
@@ -2068,6 +2192,7 @@ gfc_real2real (gfc_expr *src, int kind)
 {
   gfc_expr *result;
   arith rc;
+  bool did_warn = false;
 
   result = gfc_get_constant_expr (BT_REAL, kind, &src->where);
 
@@ -2088,6 +2213,33 @@ gfc_real2real (gfc_expr *src, int kind)
       return NULL;
     }
 
+  /* As a special bonus, don't warn about REAL values which are not changed by
+     the conversion if -Wconversion is specified and -Wconversion-extra is
+     not.  */
+
+  if ((warn_conversion || warn_conversion_extra) && src->ts.kind > kind)
+    {
+      int w = warn_conversion ? OPT_Wconversion : OPT_Wconversion_extra;
+      
+      /* Calculate the difference between the constant and the rounded
+	 value and check it against zero.  */
+
+      if (wprecision_real_real (src->value.real, src->ts.kind, kind))
+	{
+	  gfc_warning_now (w, "Change of value in conversion from "
+			   "%qs to %qs at %L",
+			   gfc_typename (&src->ts), gfc_typename (&result->ts),
+			   &src->where);
+	  /* Make sure the conversion warning is not emitted again.  */
+	  did_warn = true;
+	}
+    }
+
+    if (!did_warn && warn_conversion_extra)
+      gfc_warning_now (OPT_Wconversion_extra, "Conversion from %qs to %qs "
+		       "at %L", gfc_typename(&src->ts),
+		       gfc_typename(&result->ts), &src->where);
+
   return result;
 }
 
@@ -2099,6 +2251,7 @@ gfc_real2complex (gfc_expr *src, int kind)
 {
   gfc_expr *result;
   arith rc;
+  bool did_warn = false;
 
   result = gfc_get_constant_expr (BT_COMPLEX, kind, &src->where);
 
@@ -2119,6 +2272,26 @@ gfc_real2complex (gfc_expr *src, int kind)
       return NULL;
     }
 
+  if ((warn_conversion || warn_conversion_extra) && src->ts.kind > kind)
+    {
+      int w = warn_conversion ? OPT_Wconversion : OPT_Wconversion_extra;
+
+      if (wprecision_real_real (src->value.real, src->ts.kind, kind))
+	{
+	  gfc_warning_now (w, "Change of value in conversion from "
+			   "%qs to %qs at %L",
+			   gfc_typename (&src->ts), gfc_typename (&result->ts),
+			   &src->where);
+	  /* Make sure the conversion warning is not emitted again.  */
+	  did_warn = true;
+	}
+    }
+
+  if (!did_warn && warn_conversion_extra)
+    gfc_warning_now (OPT_Wconversion_extra, "Conversion from %qs to %qs "
+		     "at %L", gfc_typename(&src->ts),
+		     gfc_typename(&result->ts), &src->where);
+
   return result;
 }
 
@@ -2130,6 +2303,7 @@ gfc_complex2int (gfc_expr *src, int kind)
 {
   gfc_expr *result;
   arith rc;
+  bool did_warn = false;
 
   result = gfc_get_constant_expr (BT_INTEGER, kind, &src->where);
 
@@ -2143,6 +2317,43 @@ gfc_complex2int (gfc_expr *src, int kind)
       return NULL;
     }
 
+  if (warn_conversion || warn_conversion_extra)
+    {
+      int w = warn_conversion ? OPT_Wconversion : OPT_Wconversion_extra;
+
+      /* See if we discarded an imaginary part.  */
+      if (mpfr_cmp_si (mpc_imagref (src->value.complex), 0) != 0)
+	{
+	  gfc_warning_now (w, "Non-zero imaginary part discarded "
+			   "in conversion from %qs to %qs at %L",
+			   gfc_typename(&src->ts), gfc_typename (&result->ts),
+			   &src->where);
+	  did_warn = true;
+	}
+
+      else {
+	mpfr_t f;
+
+	mpfr_init (f);
+	mpfr_frac (f, src->value.real, GFC_RND_MODE);
+	if (mpfr_cmp_si (f, 0) != 0)
+	  {
+	    gfc_warning_now (w, "Change of value in conversion from "
+			     "%qs to %qs at %L", gfc_typename (&src->ts),
+			     gfc_typename (&result->ts), &src->where);
+	    did_warn = true;
+	  }
+	mpfr_clear (f);
+      }
+
+      if (!did_warn && warn_conversion_extra)
+	{
+	  gfc_warning_now (OPT_Wconversion_extra, "Conversion from %qs to %qs "
+			   "at %L", gfc_typename (&src->ts),
+			   gfc_typename (&result->ts), &src->where);
+	}
+    }
+
   return result;
 }
 
@@ -2154,6 +2365,7 @@ gfc_complex2real (gfc_expr *src, int kind)
 {
   gfc_expr *result;
   arith rc;
+  bool did_warn = false;
 
   result = gfc_get_constant_expr (BT_REAL, kind, &src->where);
 
@@ -2174,6 +2386,41 @@ gfc_complex2real (gfc_expr *src, int kind)
       return NULL;
     }
 
+  if (warn_conversion || warn_conversion_extra)
+    {
+      int w = warn_conversion ? OPT_Wconversion : OPT_Wconversion_extra;
+
+      /* See if we discarded an imaginary part.  */
+      if (mpfr_cmp_si (mpc_imagref (src->value.complex), 0) != 0)
+	{
+	  gfc_warning (w, "Non-zero imaginary part discarded "
+		       "in conversion from %qs to %qs at %L",
+		       gfc_typename(&src->ts), gfc_typename (&result->ts),
+		       &src->where);
+	  did_warn = true;
+	}
+
+      /* Calculate the difference between the real constant and the rounded
+	 value and check it against zero.  */
+      
+      if (kind > src->ts.kind
+	  && wprecision_real_real (mpc_realref (src->value.complex),
+				   src->ts.kind, kind))
+	{
+	  gfc_warning_now (w, "Change of value in conversion from "
+			   "%qs to %qs at %L",
+			   gfc_typename (&src->ts), gfc_typename (&result->ts),
+			   &src->where);
+	  /* Make sure the conversion warning is not emitted again.  */
+	  did_warn = true;
+	}
+    }
+
+  if (!did_warn && warn_conversion_extra)
+    gfc_warning_now (OPT_Wconversion, "Conversion from %qs to %qs at %L",
+		     gfc_typename(&src->ts), gfc_typename (&result->ts),
+		     &src->where);
+
   return result;
 }
 
@@ -2185,6 +2432,7 @@ gfc_complex2complex (gfc_expr *src, int kind)
 {
   gfc_expr *result;
   arith rc;
+  bool did_warn = false;
 
   result = gfc_get_constant_expr (BT_COMPLEX, kind, &src->where);
 
@@ -2219,6 +2467,26 @@ gfc_complex2complex (gfc_expr *src, int kind)
       gfc_free_expr (result);
       return NULL;
     }
+
+  if ((warn_conversion || warn_conversion_extra) && src->ts.kind > kind
+      && (wprecision_real_real (mpc_realref (src->value.complex),
+				src->ts.kind, kind)
+	  || wprecision_real_real (mpc_imagref (src->value.complex),
+				   src->ts.kind, kind)))
+    {
+      int w = warn_conversion ? OPT_Wconversion : OPT_Wconversion_extra;
+
+      gfc_warning_now (w, "Change of value in conversion from "
+		       "%qs to %qs at %L",
+		       gfc_typename (&src->ts), gfc_typename (&result->ts),
+		       &src->where);
+      did_warn = true;
+    }
+
+  if (!did_warn && warn_conversion_extra && src->ts.kind != kind)
+    gfc_warning_now (OPT_Wconversion_extra, "Conversion from %qs to %qs "
+		     "at %L", gfc_typename(&src->ts),
+		     gfc_typename (&result->ts), &src->where);
 
   return result;
 }
@@ -2265,6 +2533,18 @@ gfc_int2log (gfc_expr *src, int kind)
   return result;
 }
 
+/* Convert character to character. We only use wide strings internally,
+   so we only set the kind.  */
+
+gfc_expr *
+gfc_character2character (gfc_expr *src, int kind)
+{
+  gfc_expr *result;
+  result = gfc_copy_expr (src);
+  result->ts.kind = kind;
+
+  return result;
+}
 
 /* Helper function to set the representation in a Hollerith conversion.  
    This assumes that the ts.type and ts.kind of the result have already
@@ -2273,10 +2553,10 @@ gfc_int2log (gfc_expr *src, int kind)
 static void
 hollerith2representation (gfc_expr *result, gfc_expr *src)
 {
-  int src_len, result_len;
+  size_t src_len, result_len;
 
   src_len = src->representation.length - src->ts.u.pad;
-  result_len = gfc_target_expr_size (result);
+  gfc_target_expr_size (result, &result_len);
 
   if (src_len > result_len)
     {
@@ -2355,6 +2635,7 @@ gfc_hollerith2character (gfc_expr *src, int kind)
   result = gfc_copy_expr (src);
   result->ts.type = BT_CHARACTER;
   result->ts.kind = kind;
+  result->ts.u.pad = 0;
 
   result->value.character.length = result->representation.length;
   result->value.character.string

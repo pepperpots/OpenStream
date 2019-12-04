@@ -52,16 +52,16 @@ f (int N, float *a, float *b)
     }
 
 #pragma acc parallel copyin (a[0:N]) copy (b[0:N]) async (a)
-	/* { dg-error "expected integer expression before" "" { target c } 54 } */
-	/* { dg-error "'async' expression must be integral" "" { target c++ } 54 } */
+	/* { dg-error "expected integer expression before" "" { target c } .-1 } */
+	/* { dg-error "'async' expression must be integral" "" { target c++ } .-2 } */
     {
         for (ii = 0; ii < N; ii++)
             b[ii] = a[ii];
     }
 
 #pragma acc parallel copyin (a[0:N]) copy (b[0:N]) async (1.0)
-	/* { dg-error "expected integer expression before" "" { target c } 62 } */
-	/* { dg-error "'async' expression must be integral" "" { target c++ } 62 } */
+	/* { dg-error "expected integer expression before" "" { target c } .-1 } */
+	/* { dg-error "'async' expression must be integral" "" { target c++ } .-2 } */
     {
         for (ii = 0; ii < N; ii++)
             b[ii] = a[ii];
@@ -116,7 +116,6 @@ f (int N, float *a, float *b)
     }
 
 #pragma acc parallel copyin (a[0:N]) copy (b[0:N]) wait (1 /* { dg-error "expected '\\\)' before end of line" } */
-    /* { dg-error "expected integer expression before '\\\)'" "" { target c++ } 118 } */
     {
         for (ii = 0; ii < N; ii++)
             b[ii] = a[ii];
@@ -152,6 +151,12 @@ f (int N, float *a, float *b)
             b[ii] = a[ii];
     }
 
+#pragma acc parallel copyin (a[0:N]) copy (b[0:N]) wait ( /* { dg-error "expected (primary-|)expression before" } */
+    {
+        for (ii = 0; ii < N; ii++)
+            b[ii] = a[ii];
+    }
+
 #pragma acc parallel copyin (a[0:N]) copy (b[0:N]) wait
     {
         for (ii = 0; ii < N; ii++)
@@ -171,7 +176,6 @@ f (int N, float *a, float *b)
 #pragma acc wait (1,2,,) /* { dg-error "expected (primary-|)expression before" } */
 
 #pragma acc wait (1 /* { dg-error "expected '\\\)' before end of line" } */
-    /* { dg-error "expected integer expression before '\\\)'" "" { target c++ } 173 } */
 
 #pragma acc wait (1,*) /* { dg-error "expected (primary-|)expression before" } */
 
@@ -204,10 +208,10 @@ f (int N, float *a, float *b)
 #pragma acc wait async (*) /* { dg-error "expected (primary-|)expression before " } */
 
 #pragma acc wait async (a)
-    /* { dg-error "expected integer expression before" "" { target c } 206 } */
-    /* { dg-error "expression must be integral" "" { target c++ } 206 } */
+    /* { dg-error "expected integer expression before" "" { target c } .-1 } */
+    /* { dg-error "expression must be integral" "" { target c++ } .-2 } */
 
 #pragma acc wait async (1.0)
-   /* { dg-error "expected integer expression before" "" { target c } 210 } */
-   /* { dg-error "expression must be integral" "" { target c++ } 210 } */
+   /* { dg-error "expected integer expression before" "" { target c } .-1 } */
+   /* { dg-error "expression must be integral" "" { target c++ } .-2 } */
 }

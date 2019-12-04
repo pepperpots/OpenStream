@@ -1,6 +1,6 @@
 // random -*- C++ -*-
 
-// Copyright (C) 2012-2015 Free Software Foundation, Inc.
+// Copyright (C) 2012-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -23,6 +23,8 @@
 // <http://www.gnu.org/licenses/>.
 
 #define _GLIBCXX_USE_CXX11_ABI 1
+#define _CRT_RAND_S // define this before including <stdlib.h> to get rand_s
+
 #include <random>
 
 #ifdef  _GLIBCXX_USE_C99_STDINT_TR1
@@ -31,10 +33,27 @@
 # include <cpuid.h>
 #endif
 
+#include <cerrno>
 #include <cstdio>
 
 #ifdef _GLIBCXX_HAVE_UNISTD_H
 # include <unistd.h>
+#endif
+
+#ifdef _GLIBCXX_HAVE_SYS_IOCTL_H
+# include <sys/ioctl.h>
+#endif
+
+#ifdef _GLIBCXX_HAVE_LINUX_TYPES_H
+# include <linux/types.h>
+#endif
+
+#ifdef _GLIBCXX_HAVE_LINUX_RANDOM_H
+# include <linux/random.h>
+#endif
+
+#ifdef _GLIBCXX_USE_CRT_RAND_S
+# include <stdlib.h>
 #endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
@@ -69,6 +88,18 @@ namespace std _GLIBCXX_VISIBILITY(default)
 	if (--retries == 0)
 	  std::__throw_runtime_error(__N("random_device::__x86_rdrand(void)"));
 
+      return val;
+    }
+#endif
+
+#ifdef _GLIBCXX_USE_CRT_RAND_S
+# pragma GCC poison _M_mt
+    unsigned int
+    __winxp_rand_s()
+    {
+      unsigned int val;
+      if (::rand_s(&val) != 0)
+	std::__throw_runtime_error(__N("random_device: rand_s failed"));
       return val;
     }
 #endif
@@ -109,9 +140,11 @@ namespace std _GLIBCXX_VISIBILITY(default)
   }
 
   void
-  random_device::_M_init_pretr1(const std::string& token)
+  random_device::_M_init_pretr1(const std::string& token [[gnu::unused]])
   {
+#ifndef _GLIBCXX_USE_CRT_RAND_S
     _M_mt.seed(_M_strtoul(token));
+#endif
   }
 
   void
@@ -130,20 +163,66 @@ namespace std _GLIBCXX_VISIBILITY(default)
 #endif
 
     result_type __ret;
+    void* p = &__ret;
+    size_t n = sizeof(result_type);
 #ifdef _GLIBCXX_HAVE_UNISTD_H
-    read(fileno(static_cast<FILE*>(_M_file)),
-	 static_cast<void*>(&__ret), sizeof(result_type));
+    do
+      {
+	const int e = read(fileno(static_cast<FILE*>(_M_file)), p, n);
+	if (e > 0)
+	  {
+	    n -= e;
+	    p = static_cast<char*>(p) + e;
+	  }
+	else if (e != -1 || errno != EINTR)
+	  __throw_runtime_error(__N("random_device could not be read"));
+      }
+    while (n > 0);
 #else
-    std::fread(static_cast<void*>(&__ret), sizeof(result_type),
-	       1, static_cast<FILE*>(_M_file));
+    const size_t e = std::fread(p, n, 1, static_cast<FILE*>(_M_file));
+    if (e != 1)
+      __throw_runtime_error(__N("random_device could not be read"));
 #endif
+
     return __ret;
   }
 
   random_device::result_type
   random_device::_M_getval_pretr1()
   {
+#ifdef _GLIBCXX_USE_CRT_RAND_S
+    return __winxp_rand_s();
+#else
     return _M_mt();
+#endif
+  }
+
+  double
+  random_device::_M_getentropy() const noexcept
+  {
+#if defined _GLIBCXX_HAVE_SYS_IOCTL_H && defined RNDGETENTCNT
+    if (!_M_file)
+      return 0.0;
+
+    const int fd = fileno(static_cast<FILE*>(_M_file));
+    if (fd < 0)
+      return 0.0;
+
+    int ent;
+    if (ioctl(fd, RNDGETENTCNT, &ent) < 0)
+      return 0.0;
+
+    if (ent < 0)
+      return 0.0;
+
+    const int max = sizeof(result_type) * __CHAR_BIT__;
+    if (ent > max)
+      ent = max;
+
+    return static_cast<double>(ent);
+#else
+    return 0.0;
+#endif
   }
 
   template class mersenne_twister_engine<

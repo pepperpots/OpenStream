@@ -1,4 +1,4 @@
-// Copyright (C) 2014-2015 Free Software Foundation, Inc.
+// Copyright (C) 2014-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -15,20 +15,20 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
-// { dg-options "-std=gnu++14" }
+// { dg-do run { target c++14 } }
+// { dg-require-cstdint "" }
 
 #include <experimental/algorithm>
-#include <iterator>
-#include <sstream>
-#include <forward_list>
-#include <vector>
+#include <random>
 #include <testsuite_hooks.h>
+#include <testsuite_iterators.h>
+
+using __gnu_test::test_container;
+using __gnu_test::input_iterator_wrapper;
+using __gnu_test::output_iterator_wrapper;
+using __gnu_test::forward_iterator_wrapper;
 
 std::mt19937 rng;
-
-using std::experimental::sample;
-using std::istream_iterator;
-using std::ostream_iterator;
 
 void
 test01()
@@ -37,7 +37,7 @@ test01()
   int samp[10] = { };
 
   // population smaller than desired sample size
-  auto it = sample(pop, pop + 2, samp, 10, rng);
+  auto it = std::experimental::sample(pop, pop + 2, samp, 10, rng);
   VERIFY( it == samp + 2 );
   VERIFY( std::accumulate(samp, samp + 10, 0) == 3 );
 }
@@ -48,7 +48,7 @@ test02()
   const int pop[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
   int samp[10] = { };
 
-  auto it = sample(pop, std::end(pop), samp, 10, rng);
+  auto it = std::experimental::sample(pop, std::end(pop), samp, 10, rng);
   VERIFY( it == samp + 10 );
 
   std::sort(samp, it);
@@ -59,11 +59,14 @@ test02()
 void
 test03()
 {
-  std::istringstream pop("0 1 2 3 4 5 6 7 8 9");
+  const int pop[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, };
   int samp[5] = { };
 
   // input iterator for population
-  auto it = sample(istream_iterator<int>{pop}, {}, samp, 5, rng);
+  test_container<const int, input_iterator_wrapper> pop_in{pop};
+  auto it = std::experimental::sample(pop_in.begin(), pop_in.end(),
+                                      samp,
+                                      5, rng);
   VERIFY( it == samp + 5 );
 
   std::sort(samp, it);
@@ -74,19 +77,20 @@ test03()
 void
 test04()
 {
-  std::forward_list<int> pop{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-  std::stringstream samp;
+  const int pop[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+  int samp[5] = { };
 
   // forward iterator for population and output iterator for result
-  sample(pop.begin(), pop.end(), ostream_iterator<int>{samp, " "}, 5, rng);
+  test_container<const int, forward_iterator_wrapper> pop_fwd{pop};
+  test_container<int, output_iterator_wrapper> samp_out{samp};
+  auto it = std::experimental::sample(pop_fwd.begin(), pop_fwd.end(),
+				      samp_out.begin(), 5, rng);
 
-  // samp.rdbuf()->pubseekoff(0, std::ios::beg);
-  std::vector<int> v(istream_iterator<int>{samp}, {});
-  VERIFY( v.size() == 5 );
+  VERIFY( std::distance(samp, it.ptr) == 5 );
 
-  std::sort(v.begin(), v.end());
-  auto it = std::unique(v.begin(), v.end());
-  VERIFY( it == v.end() );
+  std::sort(samp, it.ptr);
+  auto it2 = std::unique(samp, it.ptr);
+  VERIFY( it2 == it.ptr );
 }
 
 int

@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *            Copyright (C) 2005-2015, Free Software Foundation, Inc.       *
+ *            Copyright (C) 2005-2019, Free Software Foundation, Inc.       *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -50,9 +50,12 @@
 #include <stdlib.h>
 #endif
 
-#if defined (__APPLE__) && !defined (__arm__)
+#if defined (__APPLE__) \
+   && !(defined (__arm__) \
+        || defined (__arm64__) \
+        || defined (__IOS_SIMULATOR__))
 /* On Darwin, _NSGetEnviron must be used for shared libraries; but it is not
-   available on iOS.  */
+   available on iOS (on device or on simulator).  */
 #include <crt_externs.h>
 #endif
 
@@ -192,12 +195,9 @@ __gnat_setenv (char *name, char *value)
 
   sprintf (expression, "%s=%s", name, value);
   putenv (expression);
-#if (defined (__FreeBSD__) && (__FreeBSD__ < 7)) \
-   || defined (__MINGW32__) \
-   ||(defined (__vxworks) && ! defined (__RTP__))
-  /* On some systems like FreeBSD 6.x and earlier, MacOS X and Windows,
-     putenv is making a copy of the expression string so we can free
-     it after the call to putenv */
+#if defined (__MINGW32__) || (defined (__vxworks) && ! defined (__RTP__))
+  /* On some systems like MacOS X and Windows, putenv is making a copy of the
+     expression string so we can free it after the call to putenv */
   free (expression);
 #endif
 #endif
@@ -211,10 +211,13 @@ __gnat_environ (void)
   return NULL;
 #elif defined (__MINGW32__)
   return _environ;
-#elif defined (sun)
+#elif defined (__sun__)
   extern char **_environ;
   return _environ;
-#elif defined (__APPLE__) && !defined (__arm__)
+#elif defined (__APPLE__) \
+     && !(defined (__arm__) \
+          || defined (__arm64__)                \
+          || defined (__IOS_SIMULATOR__))
   return *_NSGetEnviron ();
 #elif ! (defined (__vxworks))
   extern char **environ;
@@ -229,7 +232,7 @@ void __gnat_unsetenv (char *name)
 #if defined (VMS)
   /* Not implemented */
   return;
-#elif defined (__hpux__) || defined (sun) \
+#elif defined (__hpux__) || defined (__sun__) \
      || (defined (__vxworks) && ! defined (__RTP__)) \
      || defined (_AIX) || defined (__Lynx__)
 
@@ -288,7 +291,7 @@ void __gnat_clearenv (void)
 #if defined (VMS)
   /* not implemented */
   return;
-#elif defined (sun) \
+#elif defined (__sun__) \
   || (defined (__vxworks) && ! defined (__RTP__)) || defined (__Lynx__) \
   || defined (__PikeOS__)
   /* On Solaris, VxWorks (not RTPs), and Lynx there is no system
@@ -304,7 +307,8 @@ void __gnat_clearenv (void)
   }
 #elif defined (__MINGW32__) || defined (__FreeBSD__) || defined (__APPLE__) \
    || (defined (__vxworks) && defined (__RTP__)) || defined (__CYGWIN__) \
-   || defined (__NetBSD__) || defined (__OpenBSD__) || defined (__rtems__)
+   || defined (__NetBSD__) || defined (__OpenBSD__) || defined (__rtems__) \
+   || defined (__DragonFly__) || defined (__DJGPP__)
   /* On Windows, FreeBSD and MacOS there is no function to clean all the
      environment but there is a "clean" way to unset a variable. So go
      through the environ table and call __gnat_unsetenv on all entries */

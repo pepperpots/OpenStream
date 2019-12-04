@@ -1,5 +1,6 @@
 // { dg-lto-do link }
-// { dg-lto-options { { -std=gnu++14 -flto -g } { -std=gnu++14 -flto -g -O2 -fno-inline -flto-partition=max } } }
+// { dg-require-effective-target lto_incremental }
+// { dg-lto-options { { -std=gnu++14 -flto -g -Wno-return-type } { -std=gnu++14 -flto -g -O2 -fno-inline -flto-partition=max -Wno-return-type } } }
 // { dg-extra-ld-options "-r -nostdlib" }
 
 namespace std {
@@ -25,7 +26,7 @@ struct C<_Functor(_ArgTypes...)>
                            typename remove_reference<_Functor>::type>::value,
                        _Functor> {};
 template <typename _Tp> using result_of_t = typename C<_Tp>::type;
-template <typename> void forward();
+template <typename> void forward() { }
 template <typename _Tp> _Tp move(_Tp) {}
 namespace __cxx11 {
 class basic_string typedef string;
@@ -119,7 +120,7 @@ class H {
   template <typename Func> void schedule(Func func) {
     G __trans_tmp_1;
     struct task_with_ready_state {
-      task_with_ready_state(Func, G);
+      task_with_ready_state(Func, G) { };
     };
     std::make_unique<task_with_ready_state>(std::move(func), __trans_tmp_1);
     _promise->schedule(std::move(func));
@@ -135,10 +136,12 @@ public:
     then(0, [] {});
   }
 } clients;
-main() {
+int main() {
   B app;
   app.run(0, 0, [&] {
     auto config = app.configuration()[0].as<std::string>();
     clients.then([] {});
   });
+
+  return 0;
 }

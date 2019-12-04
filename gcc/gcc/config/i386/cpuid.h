@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2015 Free Software Foundation, Inc.
+ * Copyright (C) 2007-2019 Free Software Foundation, Inc.
  *
  * This file is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -47,7 +47,7 @@
 #define bit_SSE		(1 << 25)
 #define bit_SSE2	(1 << 26)
 
-/* Extended Features */
+/* Extended Features (%eax == 0x80000001) */
 /* %ecx */
 #define bit_LAHF_LM	(1 << 0)
 #define bit_ABM		(1 << 5)
@@ -63,11 +63,16 @@
 #define bit_MMXEXT	(1 << 22)
 #define bit_LM		(1 << 29)
 #define bit_3DNOWP	(1 << 30)
-#define bit_3DNOW	(1 << 31)
+#define bit_3DNOW	(1u << 31)
+
+/* %ebx  */
+#define bit_CLZERO	(1 << 0)
+#define bit_WBNOINVD	(1 << 9)
 
 /* Extended Features (%eax == 7) */
 /* %ebx */
 #define bit_FSGSBASE	(1 << 0)
+#define bit_SGX (1 << 2)
 #define bit_BMI	(1 << 3)
 #define bit_HLE	(1 << 4)
 #define bit_AVX2	(1 << 5)
@@ -79,7 +84,6 @@
 #define bit_RDSEED	(1 << 18)
 #define bit_ADX	(1 << 19)
 #define bit_AVX512IFMA	(1 << 21)
-#define bit_PCOMMIT	(1 << 22)
 #define bit_CLFLUSHOPT	(1 << 23)
 #define bit_CLWB	(1 << 24)
 #define bit_AVX512PF	(1 << 26)
@@ -87,12 +91,32 @@
 #define bit_AVX512CD	(1 << 28)
 #define bit_SHA		(1 << 29)
 #define bit_AVX512BW	(1 << 30)
-#define bit_AVX512VL	(1 << 31)
+#define bit_AVX512VL	(1u << 31)
 
 /* %ecx */
 #define bit_PREFETCHWT1	  (1 << 0)
 #define bit_AVX512VBMI	(1 << 1)
+#define bit_PKU	(1 << 3)
+#define bit_OSPKE	(1 << 4)
+#define bit_WAITPKG	(1 << 5)
+#define bit_AVX512VBMI2	(1 << 6)
+#define bit_SHSTK	(1 << 7)
+#define bit_GFNI	(1 << 8)
+#define bit_VAES	(1 << 9)
+#define bit_AVX512VNNI	(1 << 11)
+#define bit_VPCLMULQDQ	(1 << 10)
+#define bit_AVX512BITALG	(1 << 12)
+#define bit_AVX512VPOPCNTDQ	(1 << 14)
+#define bit_RDPID	(1 << 22)
+#define bit_MOVDIRI	(1 << 27)
+#define bit_MOVDIR64B	(1 << 28)
+#define bit_CLDEMOTE	(1 << 25)
 
+/* %edx */
+#define bit_AVX5124VNNIW (1 << 2)
+#define bit_AVX5124FMAPS (1 << 3)
+#define bit_IBT	(1 << 20)
+#define bit_PCONFIG	(1 << 18)
 /* XFEATURE_ENABLED_MASK register bits (%eax == 13, %ecx == 0) */
 #define bit_BNDREGS     (1 << 3)
 #define bit_BNDCSR      (1 << 4)
@@ -101,6 +125,10 @@
 #define bit_XSAVEOPT	(1 << 0)
 #define bit_XSAVEC	(1 << 1)
 #define bit_XSAVES	(1 << 3)
+
+/* PT sub leaf (%eax == 14, %ecx == 0) */
+/* %ebx */
+#define bit_PTWRITE	(1 << 4)
 
 /* Signatures for different CPU implementations as returned in uses
    of cpuid with level 0.  */
@@ -156,10 +184,27 @@
 #define signature_VORTEX_ecx	0x436f5320
 #define signature_VORTEX_edx	0x36387865
 
+#ifndef __x86_64__
+/* At least one cpu (Winchip 2) does not set %ebx and %ecx
+   for cpuid leaf 1. Forcibly zero the two registers before
+   calling cpuid as a precaution.  */
+#define __cpuid(level, a, b, c, d)			\
+  do {							\
+    if (__builtin_constant_p (level) && (level) != 1)	\
+      __asm__ ("cpuid\n\t"				\
+	      : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
+	      : "0" (level));				\
+    else						\
+      __asm__ ("cpuid\n\t"				\
+	      : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
+	      : "0" (level), "1" (0), "2" (0));		\
+  } while (0)
+#else
 #define __cpuid(level, a, b, c, d)			\
   __asm__ ("cpuid\n\t"					\
 	   : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
 	   : "0" (level))
+#endif
 
 #define __cpuid_count(level, count, a, b, c, d)		\
   __asm__ ("cpuid\n\t"					\
@@ -168,7 +213,7 @@
 
 
 /* Return highest supported input value for cpuid instruction.  ext can
-   be either 0x0 or 0x8000000 to return highest supported value for
+   be either 0x0 or 0x80000000 to return highest supported value for
    basic or extended cpuid information.  Function returns 0 if cpuid
    is not supported or whatever cpuid returns in eax register.  If sig
    pointer is non-null, then first four bytes of the signature
@@ -224,21 +269,39 @@ __get_cpuid_max (unsigned int __ext, unsigned int *__sig)
   return __eax;
 }
 
-/* Return cpuid data for requested cpuid level, as found in returned
+/* Return cpuid data for requested cpuid leaf, as found in returned
    eax, ebx, ecx and edx registers.  The function checks if cpuid is
    supported and returns 1 for valid cpuid information or 0 for
-   unsupported cpuid level.  All pointers are required to be non-null.  */
+   unsupported cpuid leaf.  All pointers are required to be non-null.  */
 
 static __inline int
-__get_cpuid (unsigned int __level,
+__get_cpuid (unsigned int __leaf,
 	     unsigned int *__eax, unsigned int *__ebx,
 	     unsigned int *__ecx, unsigned int *__edx)
 {
-  unsigned int __ext = __level & 0x80000000;
+  unsigned int __ext = __leaf & 0x80000000;
+  unsigned int __maxlevel = __get_cpuid_max (__ext, 0);
 
-  if (__get_cpuid_max (__ext, 0) < __level)
+  if (__maxlevel == 0 || __maxlevel < __leaf)
     return 0;
 
-  __cpuid (__level, *__eax, *__ebx, *__ecx, *__edx);
+  __cpuid (__leaf, *__eax, *__ebx, *__ecx, *__edx);
+  return 1;
+}
+
+/* Same as above, but sub-leaf can be specified.  */
+
+static __inline int
+__get_cpuid_count (unsigned int __leaf, unsigned int __subleaf,
+		   unsigned int *__eax, unsigned int *__ebx,
+		   unsigned int *__ecx, unsigned int *__edx)
+{
+  unsigned int __ext = __leaf & 0x80000000;
+  unsigned int __maxlevel = __get_cpuid_max (__ext, 0);
+
+  if (__maxlevel == 0 || __maxlevel < __leaf)
+    return 0;
+
+  __cpuid_count (__leaf, __subleaf, *__eax, *__ebx, *__ecx, *__edx);
   return 1;
 }

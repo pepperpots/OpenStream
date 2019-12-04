@@ -1,5 +1,5 @@
 /* Generic routines for manipulating PHIs
-   Copyright (C) 2003-2015 Free Software Foundation, Inc.
+   Copyright (C) 2003-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -20,36 +20,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
 #include "tree.h"
-#include "fold-const.h"
-#include "predict.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "basic-block.h"
-#include "tree-ssa-alias.h"
-#include "internal-fn.h"
-#include "gimple-expr.h"
-#include "is-a.h"
 #include "gimple.h"
+#include "ssa.h"
+#include "fold-const.h"
 #include "gimple-iterator.h"
-#include "gimple-ssa.h"
-#include "tree-phinodes.h"
-#include "ssa-iterators.h"
-#include "stringpool.h"
-#include "tree-ssanames.h"
 #include "tree-ssa.h"
-#include "diagnostic-core.h"
 
 /* Rewriting a function into SSA form can create a huge number of PHIs
    many of which may be thrown away shortly after their creation if jumps
@@ -90,7 +67,7 @@ along with GCC; see the file COPYING3.  If not see
    the -2 on all the calculations below.  */
 
 #define NUM_BUCKETS 10
-static GTY ((deletable (""))) vec<gimple, va_gc> *free_phinodes[NUM_BUCKETS - 2];
+static GTY ((deletable (""))) vec<gimple *, va_gc> *free_phinodes[NUM_BUCKETS - 2];
 static unsigned long free_phinode_count;
 
 static int ideal_phi_node_len (int);
@@ -103,8 +80,10 @@ unsigned int phi_nodes_created;
 void
 phinodes_print_statistics (void)
 {
-  fprintf (stderr, "PHI nodes allocated: %u\n", phi_nodes_created);
-  fprintf (stderr, "PHI nodes reused: %u\n", phi_nodes_reused);
+  fprintf (stderr, "%-32s" PRsa (11) "\n", "PHI nodes allocated:",
+	   SIZE_AMOUNT (phi_nodes_created));
+  fprintf (stderr, "%-32s" PRsa (11) "\n", "PHI nodes reused:",
+	   SIZE_AMOUNT (phi_nodes_reused));
 }
 
 /* Allocate a PHI node with at least LEN arguments.  If the free list
@@ -213,7 +192,7 @@ make_phi_node (tree var, int len)
   else
     gimple_phi_set_result (phi, make_ssa_name (var, phi));
 
-  for (i = 0; i < capacity; i++)
+  for (i = 0; i < len; i++)
     {
       use_operand_p  imm;
 
@@ -230,8 +209,8 @@ make_phi_node (tree var, int len)
 
 /* We no longer need PHI, release it so that it may be reused.  */
 
-void
-release_phi_node (gimple phi)
+static void
+release_phi_node (gimple *phi)
 {
   size_t bucket;
   size_t len = gimple_phi_capacity (phi);
@@ -271,6 +250,10 @@ resize_phi_node (gphi *phi, size_t len)
   new_phi = allocate_phi_node (len);
 
   memcpy (new_phi, phi, old_size);
+  memset ((char *)new_phi + old_size, 0,
+	  (sizeof (struct gphi)
+	   - sizeof (struct phi_arg_d)
+	   + sizeof (struct phi_arg_d) * len) - old_size);
 
   for (i = 0; i < gimple_phi_num_args (new_phi); i++)
     {
@@ -282,18 +265,6 @@ resize_phi_node (gphi *phi, size_t len)
     }
 
   new_phi->capacity = len;
-
-  for (i = gimple_phi_num_args (new_phi); i < len; i++)
-    {
-      use_operand_p imm;
-
-      gimple_phi_arg_set_location (new_phi, i, UNKNOWN_LOCATION);
-      imm = gimple_phi_arg_imm_use_ptr (new_phi, i);
-      imm->use = gimple_phi_arg_def_ptr (new_phi, i);
-      imm->prev = NULL;
-      imm->next = NULL;
-      imm->loc.stmt = new_phi;
-    }
 
   return new_phi;
 }
@@ -323,6 +294,8 @@ reserve_phi_args_for_new_edge (basic_block bb)
 	  stmt = new_phi;
 	}
 
+      stmt->nargs++;
+
       /* We represent a "missing PHI argument" by placing NULL_TREE in
 	 the corresponding slot.  If PHI arguments were added
 	 immediately after an edge is created, this zeroing would not
@@ -330,10 +303,13 @@ reserve_phi_args_for_new_edge (basic_block bb)
 	 example, the loop optimizer duplicates several basic blocks,
 	 redirects edges, and then fixes up PHI arguments later in
 	 batch.  */
+      use_operand_p imm = gimple_phi_arg_imm_use_ptr (stmt, len - 1);
+      imm->use = gimple_phi_arg_def_ptr (stmt, len - 1);
+      imm->prev = NULL;
+      imm->next = NULL;
+      imm->loc.stmt = stmt;
       SET_PHI_ARG_DEF (stmt, len - 1, NULL_TREE);
       gimple_phi_arg_set_location (stmt, len - 1, UNKNOWN_LOCATION);
-
-      stmt->nargs++;
     }
 }
 
@@ -376,7 +352,7 @@ create_phi_node (tree var, basic_block bb)
    PHI points to the reallocated phi node when we return.  */
 
 void
-add_phi_arg (gphi *phi, tree def, edge e, source_location locus)
+add_phi_arg (gphi *phi, tree def, edge e, location_t locus)
 {
   basic_block bb = e->dest;
 
@@ -461,7 +437,7 @@ remove_phi_args (edge e)
 void
 remove_phi_node (gimple_stmt_iterator *gsi, bool release_lhs_p)
 {
-  gimple phi = gsi_stmt (*gsi);
+  gimple *phi = gsi_stmt (*gsi);
 
   if (release_lhs_p)
     insert_debug_temps_for_defs (gsi);

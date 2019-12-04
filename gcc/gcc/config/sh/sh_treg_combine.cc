@@ -1,6 +1,6 @@
 /* An SH specific RTL pass that tries to combine comparisons and redundant
    condition code register stores across multiple basic blocks.
-   Copyright (C) 2013-2015 Free Software Foundation, Inc.
+   Copyright (C) 2013-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -18,56 +18,25 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
+#define INCLUDE_ALGORITHM
+#define INCLUDE_LIST
+#define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
-#include "machmode.h"
-#include "predict.h"
-#include "vec.h"
-#include "hashtab.h"
-#include "hash-set.h"
-#include "tm.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "cfgrtl.h"
-#include "cfganal.h"
-#include "lcm.h"
-#include "cfgbuild.h"
-#include "cfgcleanup.h"
-#include "basic-block.h"
-#include "df.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
-#include "insn-config.h"
-#include "insn-codes.h"
+#include "tree.h"
+#include "memmodel.h"
+#include "optabs.h"
 #include "emit-rtl.h"
 #include "recog.h"
+#include "cfgrtl.h"
 #include "tree-pass.h"
-#include "target.h"
-#include "symtab.h"
-#include "inchash.h"
-#include "tree.h"
-#include "optabs.h"
-#include "flags.h"
-#include "statistics.h"
-#include "double-int.h"
-#include "real.h"
-#include "fixed-value.h"
-#include "alias.h"
-#include "wide-int.h"
-#include "expmed.h"
-#include "dojump.h"
-#include "explow.h"
-#include "calls.h"
-#include "varasm.h"
-#include "stmt.h"
 #include "expr.h"
-
-#include <algorithm>
-#include <list>
-#include <vector>
 
 /*
 This pass tries to optimize for example this:
@@ -324,7 +293,7 @@ find_set_of_reg_bb (rtx reg, rtx_insn *insn)
     return result;
 
   for (result.insn = insn; result.insn != NULL;
-       result.insn = prev_nonnote_insn_bb (result.insn))
+       result.insn = prev_nonnote_nondebug_insn_bb (result.insn))
     {
       if (BARRIER_P (result.insn))
 	return result;
@@ -781,9 +750,8 @@ sh_treg_combine::record_set_of_reg (rtx reg, rtx_insn *start_insn,
       // Now see how the ccreg was set.
       // For now it must be in the same BB.
       log_msg ("tracing ccreg\n");
-      new_entry.setcc =
-	  find_set_of_reg_bb (m_ccreg,
-			      prev_nonnote_insn_bb (new_entry.cstore.insn));
+      new_entry.setcc = find_set_of_reg_bb
+	(m_ccreg, prev_nonnote_nondebug_insn_bb (new_entry.cstore.insn));
 
       // If cstore was found but setcc was not found continue anyway, as
       // for some of the optimization types the setcc is irrelevant.
@@ -960,8 +928,8 @@ sh_treg_combine::make_not_reg_insn (rtx dst_reg, rtx src_reg) const
 
   start_sequence ();
 
-  emit_insn (gen_rtx_SET (VOIDmode, m_ccreg,
-			  gen_rtx_fmt_ee (EQ, SImode, src_reg, const0_rtx)));
+  emit_insn (gen_rtx_SET (m_ccreg, gen_rtx_fmt_ee (EQ, SImode,
+						   src_reg, const0_rtx)));
 
   if (GET_MODE (dst_reg) == SImode)
     emit_move_insn (dst_reg, m_ccreg);
@@ -983,7 +951,7 @@ rtx_insn *
 sh_treg_combine::make_inv_ccreg_insn (void) const
 {
   start_sequence ();
-  rtx_insn *i = emit_insn (gen_rtx_SET (VOIDmode, m_ccreg,
+  rtx_insn *i = emit_insn (gen_rtx_SET (m_ccreg,
                                         gen_rtx_fmt_ee (XOR, GET_MODE (m_ccreg),
                                                         m_ccreg, const1_rtx)));
   end_sequence ();
@@ -1386,7 +1354,8 @@ sh_treg_combine::try_optimize_cbranch (rtx_insn *insn)
   //   (set (reg ccreg) (eq (reg) (const_int 0)))
   // The testing insn could also be outside of the current basic block, but
   // for now we limit the search to the current basic block.
-  trace.setcc = find_set_of_reg_bb (m_ccreg, prev_nonnote_insn_bb (insn));
+  trace.setcc = find_set_of_reg_bb
+    (m_ccreg, prev_nonnote_nondebug_insn_bb (insn));
 
   if (trace.setcc.set_src () == NULL_RTX)
     log_return_void ("could not find set of ccreg in current BB\n");
@@ -1445,9 +1414,9 @@ sh_treg_combine::try_optimize_cbranch (rtx_insn *insn)
   // If we find it here there's no point in checking other BBs.
   trace.bb_entries.push_front (bb_entry (trace.bb ()));
 
-  record_return_t res =
-      record_set_of_reg (trace_reg, prev_nonnote_insn_bb (trace.setcc.insn),
-			 trace.bb_entries.front ());
+  record_return_t res = record_set_of_reg
+    (trace_reg, prev_nonnote_nondebug_insn_bb (trace.setcc.insn),
+     trace.bb_entries.front ());
 
   if (res == other_set_found)
     log_return_void ("other set found - aborting trace\n");
@@ -1617,7 +1586,7 @@ sh_treg_combine::execute (function *fun)
 	log_msg ("trying to split insn:\n");
 	log_insn (*i);
 	log_msg ("\n");
-	try_split (PATTERN (*i), *i, 0);
+	try_split (PATTERN (*i), safe_as_a <rtx_insn *> (*i), 0);
       }
 
   m_touched_insns.clear ();

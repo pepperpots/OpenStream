@@ -1,5 +1,5 @@
 /* Additional functions for the GCC driver on Darwin native.
-   Copyright (C) 2006-2015 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
    Contributed by Apple Computer Inc.
 
 This file is part of GCC.
@@ -19,11 +19,97 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
+#include "libiberty.h"
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
-#include "gcc.h"
 #include "opts.h"
+#include "diagnostic-core.h"
+
+/* Validate a version string (either given on the command line or, perhaps
+   as MACOSX_DEPLOYMENT_TARGET).
+
+   The specs %version-compare() function doesn't accept leading '0' on
+   numbers so strip them out.  Do sanity checking here too.
+
+   Return:
+     * original string means it was OK and we didn't want to change it.
+     * new string means it was OK but we rewrote it to avoid possible format
+     problems.
+     * NULL means we didn't like what we saw.
+*/
+
+static const char *
+validate_macosx_version_min (const char *version_str)
+{
+  size_t version_len;
+  unsigned long major, minor, tiny = 0;
+  char *end;
+  const char *old_version = version_str;
+  bool need_rewrite = false;
+
+  version_len = strlen (version_str);
+  if (version_len < 4) /* The minimum would be 10.x  */
+    return NULL;
+
+  /* Version string must consist of digits and periods only.  */
+  if (strspn (version_str, "0123456789.") != version_len)
+    return NULL;
+
+  if (!ISDIGIT (version_str[0]) || !ISDIGIT (version_str[version_len - 1]))
+    return NULL;
+
+  if (version_str[0] == '0')
+    need_rewrite = true;
+
+  major = strtoul (version_str, &end, 10);
+  version_str = end + ((*end == '.') ? 1 : 0);
+
+  if (major != 10) /* So far .. all MacOS 10 ... */
+    return NULL;
+
+  /* Version string components must be present and numeric.  */
+  if (!ISDIGIT (version_str[0]))
+    return NULL;
+
+  /* If we have one or more leading zeros on a component, then rewrite the
+     version string.  */
+  if (version_str[0] == '0' && version_str[1] != '\0'
+      && version_str[1] != '.')
+    need_rewrite = true;
+
+  minor = strtoul (version_str, &end, 10);
+  version_str = end + ((*end == '.') ? 1 : 0);
+  if (minor > 99)
+    return NULL;
+
+  /* If 'tiny' is present it must be numeric.  */
+  if (*end != '\0' && !ISDIGIT (version_str[0]))
+    return NULL;
+
+  /* If we have one or more leading zeros on a component, then rewrite the
+     version string.  */
+  if (*end != '\0' && version_str[0] == '0'
+      && version_str[1] != '\0')
+    need_rewrite = true;
+
+  tiny = strtoul (version_str, &end, 10);
+  if (tiny > 99)
+    return NULL;
+
+  /* Version string must contain no more than three tokens.  */
+  if (*end != '\0')
+    return NULL;
+
+  if (need_rewrite)
+    {
+      char *new_version;
+      asprintf (&new_version, "10.%lu.%lu", minor, tiny);
+      return new_version;
+    }
+
+  return old_version;
+}
 
 #ifndef CROSS_DIRECTORY_STRUCTURE
 #include <sys/sysctl.h>
@@ -36,9 +122,7 @@ darwin_find_version_from_kernel (void)
   size_t osversion_len = sizeof (osversion) - 1;
   static int osversion_name[2] = { CTL_KERN, KERN_OSRELEASE };
   int major_vers;
-  char minor_vers[6];
   char * version_p;
-  char * version_pend;
   char * new_flag;
 
   /* Determine the version of the running OS.  If we can't, warn user,
@@ -60,22 +144,20 @@ darwin_find_version_from_kernel (void)
     major_vers = major_vers * 10 + (*version_p++ - '0');
   if (*version_p++ != '.')
     goto parse_failed;
-  version_pend = strchr(version_p, '.');
-  if (!version_pend)
-    goto parse_failed;
-  if (! ISDIGIT (*version_p))
-    goto parse_failed;
-  strncpy(minor_vers, version_p, version_pend - version_p);
-  minor_vers[version_pend - version_p] = '\0';
   
   /* The major kernel version number is 4 plus the second OS version
      component.  */
   if (major_vers - 4 <= 4)
     /* On 10.4 and earlier, the old linker is used which does not
-       support three-component system versions.  */
+       support three-component system versions.
+       FIXME: we should not assume this - a newer linker could be used.  */
     asprintf (&new_flag, "10.%d", major_vers - 4);
   else
-    asprintf (&new_flag, "10.%d.%s", major_vers - 4, minor_vers);
+    /* Although the newer linker supports three-component system
+       versions, there's no guarantee that the minor version component
+       of the kernel and the system are the same. Apple's clang always
+       uses 0 as the minor version: do the same.  */
+    asprintf (&new_flag, "10.%d.0", major_vers - 4);
 
   return new_flag;
 
@@ -84,7 +166,6 @@ darwin_find_version_from_kernel (void)
 	   (int) osversion_len, osversion);
   return NULL;
 }
-
 #endif
 
 /* When running on a Darwin system and using that system's headers and
@@ -96,73 +177,37 @@ darwin_find_version_from_kernel (void)
    included in tm.h).  This may be overidden by setting the flag explicitly
    (or by the MACOSX_DEPLOYMENT_TARGET environment).  */
 
-static void
-darwin_default_min_version (unsigned int *decoded_options_count,
-			    struct cl_decoded_option **decoded_options)
+static const char *
+darwin_default_min_version (void)
 {
-  const unsigned int argc = *decoded_options_count;
-  struct cl_decoded_option *const argv = *decoded_options;
-  unsigned int i;
-  const char *new_flag;
+  /* Try to retrieve the deployment target from the environment.  */
+  const char *new_flag = getenv ("MACOSX_DEPLOYMENT_TARGET");
 
-  /* If the command-line is empty, just return.  */
-  if (argc <= 1)
-    return;
-  
-  /* Don't do this if the user specified -mmacosx-version-min= or
-     -mno-macosx-version-min.  */
-  for (i = 1; i < argc; i++)
-    if (argv[i].opt_index == OPT_mmacosx_version_min_)
-      return;
-
-  /* Retrieve the deployment target from the environment and insert
-     it as a flag.  */
-  {
-    const char * macosx_deployment_target;
-    macosx_deployment_target = getenv ("MACOSX_DEPLOYMENT_TARGET");
-    if (macosx_deployment_target
-	/* Apparently, an empty string for MACOSX_DEPLOYMENT_TARGET means
-	   "use the default".  Or, possibly "use 10.1".  We choose
-	   to ignore the environment variable, as if it was never set.  */
-	&& macosx_deployment_target[0])
-      {
-	++*decoded_options_count;
-	*decoded_options = XNEWVEC (struct cl_decoded_option,
-				    *decoded_options_count);
-	(*decoded_options)[0] = argv[0];
-	generate_option (OPT_mmacosx_version_min_, macosx_deployment_target,
-			 1, CL_DRIVER, &(*decoded_options)[1]);
-	memcpy (*decoded_options + 2, argv + 1,
-		(argc - 1) * sizeof (struct cl_decoded_option));
-	return;
-      }
-  }
-
+  /* Apparently, an empty string for MACOSX_DEPLOYMENT_TARGET means
+     "use the default".  Or, possibly "use 10.1".  We choose
+     to ignore the environment variable, as if it was never set.  */
+  if (new_flag == NULL || new_flag[0] == 0)
 #ifndef CROSS_DIRECTORY_STRUCTURE
-
-  /* Try to find the version from the kernel, if we fail - we print a message 
-     and give up.  */
-  new_flag = darwin_find_version_from_kernel ();
-  if (!new_flag)
-    return;
-
+    /* Try to find the version from the kernel, if we fail - we print a
+       message and give up.  */
+    new_flag = darwin_find_version_from_kernel ();
 #else
-
-  /* For cross-compilers, default to the target OS version. */
-  new_flag = DEF_MIN_OSX_VERSION;
-
+    /* For cross-compilers, default to a minimum version determined by
+       the configuration. */
+    new_flag = DEF_MIN_OSX_VERSION;
 #endif /* CROSS_DIRECTORY_STRUCTURE */
 
-  /* Add the new flag.  */
-  ++*decoded_options_count;
-  *decoded_options = XNEWVEC (struct cl_decoded_option,
-			      *decoded_options_count);
-  (*decoded_options)[0] = argv[0];
-  generate_option (OPT_mmacosx_version_min_, new_flag,
-		   1, CL_DRIVER, &(*decoded_options)[1]);
-  memcpy (*decoded_options + 2, argv + 1,
-	  (argc - 1) * sizeof (struct cl_decoded_option));
-  return;
+  if (new_flag != NULL)
+    {
+      const char *checked = validate_macosx_version_min (new_flag);
+      if (checked == NULL)
+	{
+	  warning (0, "couldn%'t understand version %s\n", new_flag);
+	  return NULL;
+	}
+      new_flag = xstrndup (checked, strlen (checked));
+    }
+  return new_flag;
 }
 
 /* Translate -filelist and -framework options in *DECODED_OPTIONS
@@ -179,21 +224,57 @@ darwin_driver_init (unsigned int *decoded_options_count,
 		    struct cl_decoded_option **decoded_options)
 {
   unsigned int i;
+  bool seenX86 = false;
+  bool seenX86_64 = false;
+  bool seenPPC = false;
+  bool seenPPC64 = false;
+  bool seenM32 = false;
+  bool seenM64 = false;
+  bool appendM32 = false;
+  bool appendM64 = false;
+  const char *vers_string = NULL;
+  bool seen_version_min = false;
 
   for (i = 1; i < *decoded_options_count; i++)
     {
       if ((*decoded_options)[i].errors & CL_ERR_MISSING_ARG)
 	continue;
+
       switch ((*decoded_options)[i].opt_index)
 	{
-#if DARWIN_X86
 	case OPT_arch:
+	  /* Support provision of a single -arch xxxx flag as a means of
+	     specifying the sub-target/multi-lib.  Translate this into -m32/64
+	     as appropriate.  */  
 	  if (!strcmp ((*decoded_options)[i].arg, "i386"))
-	    generate_option (OPT_m32, NULL, 1, CL_DRIVER, &(*decoded_options)[i]);
+	    seenX86 = true;
 	  else if (!strcmp ((*decoded_options)[i].arg, "x86_64"))
-	    generate_option (OPT_m64, NULL, 1, CL_DRIVER, &(*decoded_options)[i]);
+	    seenX86_64 = true;
+	  else if (!strcmp ((*decoded_options)[i].arg, "ppc"))
+	    seenPPC = true;
+	  else if (!strcmp ((*decoded_options)[i].arg, "ppc64"))
+	    seenPPC64 = true;
+	  else
+	    error ("this compiler does not support %s",
+		   (*decoded_options)[i].arg);
+	  /* Now we've examined it, drop the -arch arg.  */
+	  if (*decoded_options_count > i) {
+	    memmove (*decoded_options + i,
+		     *decoded_options + i + 1,
+		     ((*decoded_options_count - i - 1)
+		      * sizeof (struct cl_decoded_option)));
+	  }
+	  --i;
+	  --*decoded_options_count; 
 	  break;
-#endif
+
+	case OPT_m32:
+	  seenM32 = true;
+	  break;
+
+	case OPT_m64:
+	  seenM64 = true;
+	  break;
 
 	case OPT_filelist:
 	case OPT_framework:
@@ -212,10 +293,126 @@ darwin_driver_init (unsigned int *decoded_options_count,
 			   CL_DRIVER, &(*decoded_options)[i]);
 	  break;
 
+	case OPT_mmacosx_version_min_:
+	  seen_version_min = true;
+	  vers_string =
+	    validate_macosx_version_min ((*decoded_options)[i].arg);
+	  if (vers_string == NULL)
+	    warning (0, "%qs is not valid for %<mmacosx-version-min%>\n",
+		     (*decoded_options)[i].arg);
+	  else if (vers_string == (*decoded_options)[i].arg)
+	    vers_string = xstrndup ((*decoded_options)[i].arg, 32);
+	  /* Now we've examined it, and verified/re-written, put it to
+	     one side and append later.  */
+	  if (*decoded_options_count > i) {
+	    memmove (*decoded_options + i,
+		     *decoded_options + i + 1,
+		     ((*decoded_options_count - i - 1)
+		      * sizeof (struct cl_decoded_option)));
+	  }
+	  --i;
+	  --*decoded_options_count;
+	  break;
+
 	default:
 	  break;
 	}
     }
 
-  darwin_default_min_version (decoded_options_count, decoded_options);
+  /* Turn -arch xxxx into the appropriate -m32/-m64 flag.
+     If the User tried to specify multiple arch flags (which is possible with
+     some Darwin compilers) warn that this mode is not supported by this
+     compiler (and ignore the arch flags, which means that the default multi-
+     lib will be generated).  */
+  /* TODO: determine if these warnings would better be errors.  */
+#if DARWIN_X86
+  if (seenPPC || seenPPC64)
+    warning (0, "this compiler does not support PowerPC (arch flags ignored)");
+  if (seenX86)
+    {
+      if (seenX86_64 || seenM64)
+	warning (0, "%s conflicts with i386 (arch flags ignored)",
+	        (seenX86_64? "x86_64": "m64"));
+      else if (! seenM32) /* Add -m32 if the User didn't. */
+	appendM32 = true;
+    }
+  else if (seenX86_64)
+    {
+      if (seenX86 || seenM32)
+	warning (0, "%s conflicts with x86_64 (arch flags ignored)",
+		 (seenX86? "i386": "m32"));
+      else if (! seenM64) /* Add -m64 if the User didn't. */
+	appendM64 = true;
+    }  
+#elif DARWIN_PPC
+  if (seenX86 || seenX86_64)
+    warning (0, "this compiler does not support X86 (arch flags ignored)");
+  if (seenPPC)
+    {
+      if (seenPPC64 || seenM64)
+	warning (0, "%s conflicts with ppc (arch flags ignored)",
+		 (seenPPC64? "ppc64": "m64"));
+      else if (! seenM32) /* Add -m32 if the User didn't. */
+	appendM32 = true;
+    }
+  else if (seenPPC64)
+    {
+      if (seenPPC || seenM32)
+	warning (0, "%s conflicts with ppc64 (arch flags ignored)",
+		 (seenPPC? "ppc": "m32"));
+      else if (! seenM64) /* Add -m64 if the User didn't. */
+	appendM64 = true;
+    }
+#endif
+
+  if (appendM32 || appendM64)
+    {
+      ++*decoded_options_count;
+      *decoded_options = XRESIZEVEC (struct cl_decoded_option,
+				     *decoded_options,
+				     *decoded_options_count);
+      generate_option (appendM32 ? OPT_m32 : OPT_m64, NULL, 1, CL_DRIVER,
+		       &(*decoded_options)[*decoded_options_count - 1]);
+    }
+
+  /* We will need to know the OS X version we're trying to build for here
+     so that we can figure out the mechanism and source for the sysroot to
+     be used.  */
+  if (! seen_version_min && *decoded_options_count > 1)
+    /* Not set by the User, try to figure it out.  */
+    vers_string = darwin_default_min_version ();
+
+  /* Create and push a cleaned up version, plus the major version for
+     assemblers and other cases that need it.  */
+  if (vers_string != NULL)
+    {
+       ++*decoded_options_count;
+       *decoded_options = XRESIZEVEC (struct cl_decoded_option,
+				      *decoded_options,
+				      *decoded_options_count);
+      generate_option (OPT_mmacosx_version_min_, vers_string, 1, CL_DRIVER,
+		       &(*decoded_options)[*decoded_options_count - 1]);
+
+      char *asm_major = NULL;
+      const char *first_period = strchr(vers_string, '.');
+      if (first_period != NULL)
+	{
+	  const char *second_period = strchr(first_period+1, '.');
+	  if (second_period  != NULL)
+	    asm_major = xstrndup (vers_string, second_period-vers_string);
+	  else
+	    asm_major = xstrdup (vers_string);
+        }
+      /* Else we appear to have a weird macosx version with no major number.
+         Punt on this for now.  */
+      if (asm_major != NULL)
+        {
+	  ++*decoded_options_count;
+	  *decoded_options = XRESIZEVEC (struct cl_decoded_option,
+					 *decoded_options,
+					 *decoded_options_count);
+	  generate_option (OPT_asm_macosx_version_min_, asm_major, 1, CL_DRIVER,
+			  &(*decoded_options)[*decoded_options_count - 1]);
+        }
+    }
 }

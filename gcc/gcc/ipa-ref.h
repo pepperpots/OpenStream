@@ -1,5 +1,5 @@
 /* IPA reference lists.
-   Copyright (C) 2010-2015 Free Software Foundation, Inc.
+   Copyright (C) 2010-2019 Free Software Foundation, Inc.
    Contributed by Jan Hubicka
 
 This file is part of GCC.
@@ -32,8 +32,7 @@ enum GTY(()) ipa_ref_use
   IPA_REF_LOAD,
   IPA_REF_STORE,
   IPA_REF_ADDR,
-  IPA_REF_ALIAS,
-  IPA_REF_CHKP
+  IPA_REF_ALIAS
 };
 
 /* Record of reference in callgraph or varpool.  */
@@ -58,7 +57,7 @@ public:
 
   symtab_node *referring;
   symtab_node *referred;
-  gimple stmt;
+  gimple *stmt;
   unsigned int lto_stmt_uid;
   unsigned int referred_index;
   ENUM_BITFIELD (ipa_ref_use) use:3;

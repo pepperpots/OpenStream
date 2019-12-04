@@ -1,11 +1,11 @@
 /* Target-dependent costs for expmed.c.
-   Copyright (C) 1987-2015 Free Software Foundation, Inc.
+   Copyright (C) 1987-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
 GCC is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
-Software Foundation; either version 3, or (at your option; any later
+Software Foundation; either version 3, or (at your option) any later
 version.
 
 GCC is distributed in the hope that it will be useful, but WITHOUT ANY
@@ -34,6 +34,15 @@ enum alg_code {
   alg_sub_t2_m,
   alg_impossible
 };
+
+/* Indicates the type of fixup needed after a constant multiplication.
+   BASIC_VARIANT means no fixup is needed, NEGATE_VARIANT means that
+   the result should be negated, and ADD_VARIANT means that the
+   multiplicand should be added to the result.  */
+enum mult_variant {basic_variant, negate_variant, add_variant};
+
+bool choose_mult_variant (machine_mode, HOST_WIDE_INT,
+			  struct algorithm *, enum mult_variant *, int);
 
 /* This structure holds the "cost" of a multiply sequence.  The
    "cost" field holds the total rtx_cost of every operator in the
@@ -127,10 +136,10 @@ struct alg_hash_entry {
 #define NUM_MODE_INT \
   (MAX_MODE_INT - MIN_MODE_INT + 1)
 #define NUM_MODE_PARTIAL_INT \
-  (MIN_MODE_PARTIAL_INT == VOIDmode ? 0 \
+  (MIN_MODE_PARTIAL_INT == E_VOIDmode ? 0 \
    : MAX_MODE_PARTIAL_INT - MIN_MODE_PARTIAL_INT + 1)
 #define NUM_MODE_VECTOR_INT \
-  (MIN_MODE_VECTOR_INT == VOIDmode ? 0 \
+  (MIN_MODE_VECTOR_INT == E_VOIDmode ? 0 \
    : MAX_MODE_VECTOR_INT - MIN_MODE_VECTOR_INT + 1)
 
 #define NUM_MODE_IP_INT (NUM_MODE_INT + NUM_MODE_PARTIAL_INT)
@@ -609,8 +618,10 @@ static inline int *
 mul_highpart_cost_ptr (bool speed, machine_mode mode)
 {
   gcc_assert (GET_MODE_CLASS (mode) == MODE_INT);
+  int m = mode - MIN_MODE_INT;
+  gcc_assert (m < NUM_MODE_INT);
 
-  return &this_target_expmed->x_mul_highpart_cost[speed][mode - MIN_MODE_INT];
+  return &this_target_expmed->x_mul_highpart_cost[speed][m];
 }
 
 /* Set the COST for computing the high part of a multiplication in MODE
@@ -668,13 +679,17 @@ convert_cost (machine_mode to_mode, machine_mode from_mode,
 
 extern int mult_by_coeff_cost (HOST_WIDE_INT, machine_mode, bool);
 extern rtx emit_cstore (rtx target, enum insn_code icode, enum rtx_code code,
-			enum machine_mode mode, enum machine_mode compare_mode,
+			machine_mode mode, machine_mode compare_mode,
 			int unsignedp, rtx x, rtx y, int normalizep,
-			enum machine_mode target_mode);
+			machine_mode target_mode);
 
 /* Arguments MODE, RTX: return an rtx for the negation of that value.
    May emit insns.  */
 extern rtx negate_rtx (machine_mode, rtx);
+
+/* Arguments MODE, RTX: return an rtx for the flipping of that value.
+   May emit insns.  */
+extern rtx flip_storage_order (machine_mode, rtx);
 
 /* Expand a logical AND operation.  */
 extern rtx expand_and (machine_mode, rtx, rtx, rtx);
@@ -687,6 +702,8 @@ extern rtx emit_store_flag (rtx, enum rtx_code, rtx, rtx, machine_mode,
 extern rtx emit_store_flag_force (rtx, enum rtx_code, rtx, rtx,
 				  machine_mode, int, int);
 
+extern void canonicalize_comparison (machine_mode, enum rtx_code *, rtx *);
+
 /* Choose a minimal N + 1 bit approximation to 1/D that can be used to
    replace division by D, and put the least significant N bits of the result
    in *MULTIPLIER_PTR and return the most significant bit.  */
@@ -697,22 +714,20 @@ extern unsigned HOST_WIDE_INT choose_multiplier (unsigned HOST_WIDE_INT, int,
 #ifdef TREE_CODE
 extern rtx expand_variable_shift (enum tree_code, machine_mode,
 				  rtx, tree, rtx, int);
-extern rtx expand_shift (enum tree_code, machine_mode, rtx, int, rtx,
-			     int);
+extern rtx expand_shift (enum tree_code, machine_mode, rtx, poly_int64, rtx,
+			 int);
 extern rtx expand_divmod (int, enum tree_code, machine_mode, rtx, rtx,
 			  rtx, int);
 #endif
 
-extern void store_bit_field (rtx, unsigned HOST_WIDE_INT,
-			     unsigned HOST_WIDE_INT,
-			     unsigned HOST_WIDE_INT,
-			     unsigned HOST_WIDE_INT,
-			     machine_mode, rtx);
-extern rtx extract_bit_field (rtx, unsigned HOST_WIDE_INT,
-			      unsigned HOST_WIDE_INT, int, rtx,
-			      machine_mode, machine_mode);
+extern void store_bit_field (rtx, poly_uint64, poly_uint64,
+			     poly_uint64, poly_uint64,
+			     machine_mode, rtx, bool);
+extern rtx extract_bit_field (rtx, poly_uint64, poly_uint64, int, rtx,
+			      machine_mode, machine_mode, bool, rtx *);
 extern rtx extract_low_bits (machine_mode, machine_mode, rtx);
-extern rtx expand_mult (machine_mode, rtx, rtx, rtx, int);
-extern rtx expand_mult_highpart_adjust (machine_mode, rtx, rtx, rtx, rtx, int);
+extern rtx expand_mult (machine_mode, rtx, rtx, rtx, int, bool = false);
+extern rtx expand_mult_highpart_adjust (scalar_int_mode, rtx, rtx, rtx,
+					rtx, int);
 
 #endif  // EXPMED_H

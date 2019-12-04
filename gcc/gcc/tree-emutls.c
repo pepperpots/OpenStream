@@ -1,5 +1,5 @@
 /* Lower TLS operations to emulation functions.
-   Copyright (C) 2006-2015 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -20,49 +20,21 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "options.h"
-#include "wide-int.h"
-#include "inchash.h"
+#include "backend.h"
+#include "target.h"
 #include "tree.h"
+#include "gimple.h"
+#include "tree-pass.h"
+#include "ssa.h"
+#include "cgraph.h"
 #include "fold-const.h"
 #include "stor-layout.h"
 #include "varasm.h"
-#include "predict.h"
-#include "tm.h"
-#include "hard-reg-set.h"
-#include "input.h"
-#include "function.h"
-#include "dominance.h"
-#include "cfg.h"
-#include "basic-block.h"
-#include "tree-ssa-alias.h"
-#include "internal-fn.h"
-#include "gimple-expr.h"
-#include "is-a.h"
-#include "gimple.h"
 #include "gimple-iterator.h"
 #include "gimple-walk.h"
-#include "tree-pass.h"
-#include "gimple-ssa.h"
-#include "hash-map.h"
-#include "plugin-api.h"
-#include "ipa-ref.h"
-#include "cgraph.h"
-#include "tree-phinodes.h"
-#include "ssa-iterators.h"
-#include "stringpool.h"
-#include "tree-ssanames.h"
 #include "langhooks.h"
-#include "target.h"
-#include "targhooks.h"
 #include "tree-iterator.h"
+#include "gimplify.h"
 
 /* Whenever a target does not support thread-local storage (TLS) natively,
    we can emulate it with some run-time support in libgcc.  This will in
@@ -412,7 +384,6 @@ struct lower_emutls_data
   struct cgraph_node *builtin_node;
   tree builtin_decl;
   basic_block bb;
-  int bb_freq;
   location_t loc;
   gimple_seq seq;
 };
@@ -446,7 +417,7 @@ gen_emutls_addr (tree decl, struct lower_emutls_data *d)
 
       gimple_seq_add_stmt (&d->seq, x);
 
-      d->cfun_node->create_edge (d->builtin_node, x, d->bb->count, d->bb_freq);
+      d->cfun_node->create_edge (d->builtin_node, x, d->bb->count);
 
       /* We may be adding a new reference to a new variable to the function.
          This means we have to play with the ipa-reference web.  */
@@ -457,6 +428,20 @@ gen_emutls_addr (tree decl, struct lower_emutls_data *d)
     }
 
   return addr;
+}
+
+/* Callback for lower_emutls_1, return non-NULL if there is any TLS
+   VAR_DECL in the subexpressions.  */
+
+static tree
+lower_emutls_2 (tree *ptr, int *walk_subtrees, void *)
+{
+  tree t = *ptr;
+  if (TREE_CODE (t) == VAR_DECL)
+    return DECL_THREAD_LOCAL_P (t) ? t : NULL_TREE;
+  else if (!EXPR_P (t))
+    *walk_subtrees = 0;
+  return NULL_TREE;
 }
 
 /* Callback for walk_gimple_op.  D = WI->INFO is a struct lower_emutls_data.
@@ -485,6 +470,13 @@ lower_emutls_1 (tree *ptr, int *walk_subtrees, void *cb_data)
 	{
 	  bool save_changed;
 
+	  /* Gimple invariants are shareable trees, so before changing
+	     anything in them if we will need to change anything, unshare
+	     them.  */
+	  if (is_gimple_min_invariant (t)
+	      && walk_tree (&TREE_OPERAND (t, 0), lower_emutls_2, NULL, NULL))
+	    *ptr = t = unshare_expr (t);
+
 	  /* If we're allowed more than just is_gimple_val, continue.  */
 	  if (!wi->val_only)
 	    {
@@ -503,7 +495,7 @@ lower_emutls_1 (tree *ptr, int *walk_subtrees, void *cb_data)
 	     new assignment statement, and substitute yet another SSA_NAME.  */
 	  if (wi->changed)
 	    {
-	      gimple x;
+	      gimple *x;
 
 	      addr = create_tmp_var (TREE_TYPE (t));
 	      x = gimple_build_assign (addr, t);
@@ -563,7 +555,7 @@ lower_emutls_1 (tree *ptr, int *walk_subtrees, void *cb_data)
 /* Lower all of the operands of STMT.  */
 
 static void
-lower_emutls_stmt (gimple stmt, struct lower_emutls_data *d)
+lower_emutls_stmt (gimple *stmt, struct lower_emutls_data *d)
 {
   struct walk_stmt_info wi;
 
@@ -651,10 +643,6 @@ lower_emutls_function_body (struct cgraph_node *node)
 	 PHI argument for that edge.  */
       if (!gimple_seq_empty_p (phi_nodes (d.bb)))
 	{
-	  /* The calls will be inserted on the edges, and the frequencies
-	     will be computed during the commit process.  */
-	  d.bb_freq = 0;
-
 	  nedge = EDGE_COUNT (d.bb->preds);
 	  for (i = 0; i < nedge; ++i)
 	    {
@@ -678,8 +666,6 @@ lower_emutls_function_body (struct cgraph_node *node)
 		}
 	    }
 	}
-
-      d.bb_freq = compute_call_stmt_bb_frequency (current_function_decl, d.bb);
 
       /* We can re-use any SSA_NAME created during this basic block.  */
       clear_access_vars ();
