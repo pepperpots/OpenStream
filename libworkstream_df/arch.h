@@ -109,17 +109,23 @@ weak_compare_and_swap (volatile size_t *ptr, size_t oldval, size_t newval)
 #endif
 }
 
-#ifdef __i386
+#if defined(__i386)
 static inline  int64_t rdtsc() {
   int64_t x;
   __asm__ volatile ("rdtsc" : "=A" (x));
   return x;
 }
-#elif defined __amd64
+#elif defined(__amd64)
 static inline int64_t rdtsc() {
   int64_t a, d;
   __asm__ volatile ("rdtsc" : "=a" (a), "=d" (d));
   return (d<<32) | a;
+}
+#elif defined(__aarch64__)
+static inline int64_t rdtsc() {
+  int64_t virtual_timer_value;
+  __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(virtual_timer_value));
+  return virtual_timer_value;
 }
 #else
 # error "RDTSC is not defined for your architecture"
