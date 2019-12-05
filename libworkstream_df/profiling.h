@@ -10,6 +10,7 @@
 
 struct wstream_df_thread;
 struct wstream_df_numa_node;
+extern unsigned wstream_num_workers;
 
 #if ALLOW_PUSHES
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
@@ -53,8 +54,8 @@ init_papi(struct wstream_df_thread* th);
 	unsigned long long steals_fails; \
 	unsigned long long steals_owncached; \
 	unsigned long long steals_ownqueue; \
-	unsigned long long steals_mem[MEM_NUM_LEVELS]; \
-	unsigned long long bytes_mem[MEM_NUM_LEVELS]; \
+	unsigned long long *steals_mem; \
+	unsigned long long *bytes_mem; \
 	unsigned long long tasks_created; \
 	unsigned long long tasks_executed; \
 	unsigned long long tasks_executed_localalloc; \
@@ -122,7 +123,8 @@ dump_global_wqueue_counters ();
 #endif
 
 #ifdef MATRIX_PROFILE
-extern unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+extern void *tm_data;
+#define transfer_matrix ((unsigned long long(*)[wstream_num_workers])tm_data)
 
 static inline void
 inc_transfer_matrix_entry(unsigned int consumer, unsigned int producer,

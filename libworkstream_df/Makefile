@@ -54,7 +54,7 @@ endif
 ../install/bin/gcc:
 	cd .. ; $(MAKE)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c hwloc-support.c $(WSTREAM_DEPS) $(GCCDEP)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c numa.c reuse.c hwloc-support.c $(WSTREAM_DEPS) $(GCCDEP)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \

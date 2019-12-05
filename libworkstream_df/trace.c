@@ -9,9 +9,9 @@
 #include "arch.h"
 #include "numa.h"
 #include "hwloc-support.h"
-#include "interleave.h"
 
 
+#ifdef TRACE_QUEUE_STATS
 static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "wq_length",
   "wq_steals",
@@ -27,6 +27,7 @@ static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "max_resident_size",
   "inv_context_switches"
 };
+#endif
 
 #if ALLOW_WQEVENT_SAMPLING
 

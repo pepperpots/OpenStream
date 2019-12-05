@@ -8,8 +8,8 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_numa_node
 {
   slab_cache_t slab_cache;
   wstream_df_thread_p leader;
-  wstream_df_thread_p workers[MAX_CPUS];
   unsigned int num_workers;
+  wstream_df_thread_p *workers;
   int id;
   unsigned long long frame_bytes_allocated;
 } wstream_df_numa_node_t, *wstream_df_numa_node_p;

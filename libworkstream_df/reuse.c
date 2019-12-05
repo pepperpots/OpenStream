@@ -67,7 +67,6 @@ void match_reuse_output_clause_with_reuse_input_clause(wstream_df_view_p out_vie
 
 void match_reuse_input_clause_with_output_clause(wstream_df_view_p out_view, wstream_df_view_p in_view)
 {
-  wstream_df_thread_p cthread = current_thread;
 
   reuse_view_sanity_check(out_view, in_view);
   in_view->reuse_data_view = NULL;
@@ -75,6 +74,7 @@ void match_reuse_input_clause_with_output_clause(wstream_df_view_p out_view, wst
 #ifdef DEFERRED_ALLOC
   out_view->consumer_view = in_view;
 #else
+  wstream_df_thread_p cthread = current_thread;
   /* The output clause assumes that it writes to a regular input
    * clause and expects in_view->data to be a valid pointer.
    * FIXME: Do not use local slab cache here */

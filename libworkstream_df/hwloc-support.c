@@ -6,10 +6,11 @@
 #include "error.h"
 #include "hwloc-support.h"
 #include "hwloc/bitmap.h"
+#include "configs/config-hwloc.h"
 
 static hwloc_topology_t machine_topology;
-
-unsigned MEM_NUM_LEVELS;
+unsigned num_numa_nodes;
+unsigned topology_depth;
 
 bool discover_machine_topology(void) {
   if (hwloc_topology_init(&machine_topology) != 0) {
@@ -38,17 +39,18 @@ bool discover_machine_topology(void) {
     return false;
   }
 
-  unsigned num_numa_nodes =
+  num_numa_nodes =
       hwloc_get_nbobjs_by_type(machine_topology, HWLOC_OBJ_NUMANODE);
-  int topology_depth = hwloc_topology_get_depth(machine_topology);
-  // hwloc_get_obj_by_depth(machine_topology, 6, 0);
+  topology_depth = hwloc_topology_get_depth(machine_topology);
 
+#ifdef HWLOC_VERBOSE
   fprintf(stdout,
           "[hwloc info] HWLOC initialized\n"
           "[hwloc info] Machine has a depth of %d\n"
           "[hwloc info] Machine has %d numa node(s)\n"
           "[hwloc info] Retrieved distance matrice(s): %u\n",
           topology_depth, num_numa_nodes, num_distances);
+#endif
 
   return true;
 }
@@ -95,9 +97,11 @@ bool distribute_worker_on_topology(unsigned num_workers,
     hwloc_bitmap_or(restricted_set, restricted_set, distrib_sets[i]);
     (*processing_units)[i] = hwloc_get_next_obj_inside_cpuset_by_type(
         machine_topology, distrib_sets[i], HWLOC_OBJ_PU, NULL);
-    fprintf(stderr, "Worker %u mapped to core (%u,%u) (OS/Logical)\n", i,
-            (*processing_units)[i]->os_index,
-            (*processing_units)[i]->logical_index);
+#ifdef HWLOC_VERBOSE
+    fprintf(stderr, "Worker %u mapped to core %u (OS index %u)\n", i,
+            (*processing_units)[i]->logical_index,
+            (*processing_units)[i]->os_index);
+#endif
     hwloc_bitmap_free(distrib_sets[i]);
   }
   free(distrib_sets);
@@ -114,16 +118,26 @@ bool distribute_worker_on_topology(unsigned num_workers,
 static void print_topology_node_and_childrens(hwloc_obj_t node,
                                               unsigned indent) {
   char type[32], attr[1024];
-  unsigned i;
   hwloc_obj_type_snprintf(type, sizeof(type), node, 0);
   printf("%*s%s", indent, "", type);
-  if (node->os_index != (unsigned)-1)
-    printf("#%u", node->os_index);
+  if (node->logical_index != (unsigned)-1)
+    printf("#%u", node->logical_index);
   hwloc_obj_attr_snprintf(attr, sizeof(attr), node, " ", 0);
   if (*attr)
     printf("(%s)", attr);
+  for (hwloc_obj_t mem_child = node->memory_first_child; mem_child;
+       mem_child = mem_child->next_sibling) {
+    printf(" -- ");
+    hwloc_obj_type_snprintf(type, sizeof(type), mem_child, 0);
+    printf("%s", type);
+    if (mem_child->logical_index != (unsigned)-1)
+      printf("#%u", mem_child->logical_index);
+    hwloc_obj_attr_snprintf(attr, sizeof(attr), mem_child, " ", 0);
+    if (*attr)
+      printf("(%s)", attr);
+  }
   printf("\n");
-  for (i = 0; i < node->arity; i++) {
+  for (unsigned i = 0; i < node->arity; i++) {
     print_topology_node_and_childrens(node->children[i], indent + 2);
   }
 }
@@ -142,7 +156,6 @@ cpu_set_t object_glibc_cpuset(hwloc_obj_t obj) {
 
 void check_bond_to_cpu(pthread_t tid, hwloc_obj_t cpu) {
   hwloc_cpuset_t hwlocset = hwloc_bitmap_alloc();
-  fprintf(stderr, "Bound to cpu %u\n", cpu->os_index);
   if (hwloc_get_thread_cpubind(machine_topology, tid, hwlocset, 0)) {
     fprintf(stderr, "Impossible to get CPU affinity\n");
     exit(EXIT_FAILURE);
@@ -165,7 +178,7 @@ void check_bond_to_cpu(pthread_t tid, hwloc_obj_t cpu) {
               pu->os_index);
     } while (pu != NULL);
   }
-  free(hwlocset);
+  hwloc_bitmap_free(hwlocset);
 }
 
 int bind_memory_to_cpu_memspace(const void *addr, size_t len, hwloc_obj_t cpu) {
@@ -179,4 +192,38 @@ int interleave_memory_on_machine_nodes(const void *addr, size_t len) {
       machine_topology, addr, len, hwloc_get_root_obj(machine_topology)->cpuset,
       HWLOC_MEMBIND_INTERLEAVE,
       HWLOC_MEMBIND_MIGRATE | HWLOC_MEMBIND_NOCPUBIND);
+}
+
+hwloc_nodeset_t numa_memlocation_of_memory(const void *addr, size_t len) {
+  hwloc_bitmap_t node_set = hwloc_bitmap_alloc();
+  hwloc_get_area_memlocation(machine_topology, addr, len, node_set,
+                             HWLOC_MEMBIND_BYNODESET);
+  return node_set;
+}
+
+int bind_memory_to_numa_node(const void *addr, size_t len,
+                             unsigned node_index) {
+  hwloc_nodeset_t node = hwloc_bitmap_alloc();
+  hwloc_bitmap_set(node, node_index);
+  int retval = hwloc_set_area_membind(
+      machine_topology, addr, len, node, HWLOC_MEMBIND_BIND,
+      HWLOC_MEMBIND_NOCPUBIND | HWLOC_MEMBIND_MIGRATE |
+          HWLOC_MEMBIND_BYNODESET);
+  hwloc_bitmap_free(node);
+  return retval;
+}
+
+unsigned level_of_common_ancestor(const hwloc_obj_t obj1,
+                                  const hwloc_obj_t obj2) {
+  hwloc_obj_t common_ancestor =
+      hwloc_get_common_ancestor_obj(machine_topology, obj1, obj2);
+  return common_ancestor->depth;
+}
+
+unsigned numa_node_of_processing_unit(const hwloc_obj_t obj) {
+  hwloc_nodeset_t node = hwloc_bitmap_alloc();
+  hwloc_cpuset_to_nodeset(machine_topology, obj->cpuset, node);
+  int nodeid = hwloc_bitmap_first(node);
+  hwloc_bitmap_free(node);
+  return nodeid;
 }

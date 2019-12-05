@@ -1,5 +1,6 @@
 #include "profiling.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include "wstream_df.h"
 #include "numa.h"
@@ -8,12 +9,14 @@
 #include <sys/resource.h>
 
 #ifdef MATRIX_PROFILE
-unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+
+void *tm_data;
 static pthread_spinlock_t papi_spin_lock;
 
-void init_transfer_matrix(void)
-{
-	memset(transfer_matrix, 0, sizeof(transfer_matrix));
+void init_transfer_matrix(void) {
+  tm_data = calloc(
+      1, sizeof(unsigned long long[wstream_num_workers][wstream_num_workers]));
+  assert(tm_data != NULL);
 }
 
 void dump_transfer_matrix(unsigned int num_workers)
@@ -253,41 +256,50 @@ wqueue_counters_profile_rusage(struct wstream_df_thread* th)
 }
 #endif
 
-void
-init_wqueue_counters (wstream_df_thread_p th)
-{
-	th->steals_owncached = 0;
-	th->steals_ownqueue = 0;
-	memset(th->steals_mem, 0, sizeof(th->steals_mem));
+void init_wqueue_counters(wstream_df_thread_p th) {
+  th->steals_owncached = 0;
+  th->steals_ownqueue = 0;
+  th->steals_mem = calloc(topology_depth, sizeof(*th->steals_mem));
+  if (bind_memory_to_cpu_memspace(
+          th->steals_mem, topology_depth * sizeof(*th->steals_mem), th->cpu)) {
+#ifdef HWLOC_VERBOSE
+    perror("hwloc_membind");
+#endif // HWLOC_VERBOSE
+  }
 
-	th->steals_fails = 0;
-	th->tasks_created = 0;
-	th->tasks_executed = 0;
-	th->tasks_executed_localalloc = 0;
+  th->steals_fails = 0;
+  th->tasks_created = 0;
+  th->tasks_executed = 0;
+  th->tasks_executed_localalloc = 0;
 
-	memset(th->bytes_mem, 0, sizeof(th->bytes_mem));
+  th->bytes_mem = calloc(topology_depth, sizeof(*th->bytes_mem));
+  if (bind_memory_to_cpu_memspace(
+          th->bytes_mem, topology_depth * sizeof(*th->bytes_mem), th->cpu)) {
+#ifdef HWLOC_VERBOSE
+    perror("hwloc_membind");
+#endif // HWLOC_VERBOSE
+  }
 
 #if ALLOW_PUSHES
-	th->steals_pushed = 0;
-	th->pushes_fails = 0;
-	memset(th->pushes_mem, 0, sizeof(th->pushes_mem));
+  th->steals_pushed = 0;
+  th->pushes_fails = 0;
+  memset(th->pushes_mem, 0, sizeof(th->pushes_mem));
 #endif
 
-	th->reuse_addr = 0;
-	th->reuse_copy = 0;
-	th->system_time_us = 0;
-	th->major_page_faults = 0;
-	th->minor_page_faults = 0;
-	th->max_resident_size = 0;
-	th->inv_context_switches = 0;
+  th->reuse_addr = 0;
+  th->reuse_copy = 0;
+  th->system_time_us = 0;
+  th->major_page_faults = 0;
+  th->minor_page_faults = 0;
+  th->max_resident_size = 0;
+  th->inv_context_switches = 0;
 
-	init_papi(th);
+  init_papi(th);
 }
 
 void
 dump_wqueue_counters_single (wstream_df_thread_p th)
 {
-	int level;
 
 #ifdef WS_PAPI_PROFILE
 	int i;
@@ -324,10 +336,10 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 		th->worker_id,
 		th->steals_ownqueue);
 
-	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+	for(unsigned level = 0; level < topology_depth; level++) {
 		printf ("Thread %d: steals_%s = %lld\n",
 			th->worker_id,
-			mem_level_name(level),
+			level_name_hwloc(level),
 			th->steals_mem[level]);
 	}
 
@@ -343,10 +355,10 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 		th->worker_id,
 		th->steals_pushed);
 
-	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+	for(unsigned level = 0; level < topology_depth; level++) {
 		printf ("Thread %d: pushes_%s = %lld\n",
 			th->worker_id,
-			mem_level_name(level),
+			level_name_hwloc(level),
 			th->pushes_mem[level]);
 	}
 #endif
@@ -360,10 +372,10 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	}
 #endif
 
-	for(level = 0; level < MEM_NUM_LEVELS; level++) {
+	for(unsigned level = 0; level < topology_depth; level++) {
 		printf ("Thread %d: bytes_%s = %lld\n",
 		th->worker_id,
-		mem_level_name(level),
+		level_name_hwloc(level),
 		th->bytes_mem[level]);
 	}
 }

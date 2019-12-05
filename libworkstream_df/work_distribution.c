@@ -42,7 +42,7 @@ void reorder_pushes(wstream_df_thread_p cthread)
       break;
 
     cthread->push_reorder_slots[insert_pos].frame = import;
-    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->worker_id];
     insert_pos++;
 
     inc_wqueue_counter(&cthread->steals_pushed, 1);
@@ -53,7 +53,7 @@ void reorder_pushes(wstream_df_thread_p cthread)
   if(cthread->own_next_cached_thread && insert_pos < NUM_PUSH_REORDER_SLOTS) {
     import = cthread->own_next_cached_thread;
     cthread->push_reorder_slots[insert_pos].frame = import;
-    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+    cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->worker_id];
     insert_pos++;
     cthread->own_next_cached_thread = NULL;
   }
@@ -68,7 +68,7 @@ void reorder_pushes(wstream_df_thread_p cthread)
 
       if(import != NULL) {
 	cthread->push_reorder_slots[insert_pos].frame = import;
-	cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->cpu];
+	cthread->push_reorder_slots[insert_pos].cost = mem_cache_misses(cthread) - import->cache_misses[cthread->worker_id];
 	insert_pos++;
       } else {
 	break;
@@ -127,12 +127,12 @@ int work_push_beneficial_max_writer(wstream_df_frame_p fp, wstream_df_thread_p c
   get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 
   /* By default the current worker is suited best */
-  if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+  if(fp->bytes_cpu_in[cthread->worker_id] >= max_data) {
       max_worker = cthread->worker_id;
-      max_data = fp->bytes_cpu_in[cthread->cpu];
+      max_data = fp->bytes_cpu_in[cthread->worker_id];
   }
 
-  if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+  if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->worker_id])
     return 0;
 
   *target_worker = max_worker;
@@ -164,16 +164,16 @@ int work_push_beneficial_owner(wstream_df_frame_p fp, wstream_df_thread_p cthrea
       get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 
       /* By default the current worker is suited best */
-      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+      if(fp->bytes_cpu_in[cthread->worker_id] >= max_data) {
 	max_worker = cthread->worker_id;
-	max_data = fp->bytes_cpu_in[cthread->cpu];
+	max_data = fp->bytes_cpu_in[cthread->worker_id];
       }
 
-      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->worker_id])
 	return 0;
 
       max_worker = cthread->worker_id;
-      max_data = fp->bytes_cpu_in[cthread->cpu];
+      max_data = fp->bytes_cpu_in[cthread->worker_id];
   }
 
   *target_worker = max_worker;
@@ -202,16 +202,16 @@ int work_push_beneficial_split_owner(wstream_df_frame_p fp, wstream_df_thread_p 
       get_max_worker(fp->bytes_cpu_in, num_workers, &max_worker, &max_data);
 
       /* By default the current worker is suited best */
-      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+      if(fp->bytes_cpu_in[cthread->worker_id] >= max_data) {
 	max_worker = cthread->worker_id;
-	max_data = fp->bytes_cpu_in[cthread->cpu];
+	max_data = fp->bytes_cpu_in[cthread->worker_id];
       }
 
-      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->worker_id])
 	return 0;
 
       max_worker = cthread->worker_id;
-      max_data = fp->bytes_cpu_in[cthread->cpu];
+      max_data = fp->bytes_cpu_in[cthread->worker_id];
   }
 
   *target_worker = max_worker;
@@ -348,16 +348,16 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
       get_max_worker_same_node(fp->bytes_cpu_in, num_workers, &max_worker, &max_data, numa_node_id);
 
       /* By default the current worker is suited best */
-      if(fp->bytes_cpu_in[cthread->cpu] >= max_data) {
+      if(fp->bytes_cpu_in[cthread->worker_id] >= max_data) {
 	max_worker = cthread->worker_id;
-	max_data = fp->bytes_cpu_in[cthread->cpu];
+	max_data = fp->bytes_cpu_in[cthread->worker_id];
       }
 
-      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->cpu])
+      if(max_data < PUSH_MIN_REL_FRAME_SIZE * fp->bytes_cpu_in[cthread->worker_id])
 	return 0;
 
       max_worker = cthread->worker_id;
-      max_data = fp->bytes_cpu_in[cthread->cpu];
+      max_data = fp->bytes_cpu_in[cthread->worker_id];
   }
 
   *target_worker = max_worker;
@@ -496,7 +496,7 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   if(/* Only migrate to a different worker */
      lcl_target_worker != cthread->worker_id &&
      /* Do not migrate to workers that are too close in the memory hierarchy */
-     mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(lcl_target_worker)) >= PUSH_MIN_MEM_LEVEL)
+     mem_lowest_common_level(cthread->worker_id, worker_id_to_cpu(lcl_target_worker)) >= PUSH_MIN_MEM_LEVEL)
     {
       *target_worker = lcl_target_worker;
       return 1;
@@ -530,7 +530,7 @@ int work_try_push(wstream_df_frame_p fp,
 
   if(fifo_pushback(&wstream_df_worker_threads[target_worker]->push_fifo, fp)) {
     /* Push was successful, update traces and statistics */
-    level = mem_lowest_common_level(cthread->cpu, worker_id_to_cpu(target_worker));
+    level = mem_lowest_common_level(cthread->worker_id, worker_id_to_cpu(target_worker));
     inc_wqueue_counter(&cthread->pushes_mem[level], 1);
 
     trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size, fp);
@@ -547,13 +547,17 @@ int work_try_push(wstream_df_frame_p fp,
 #endif /* ALLOW_PUSHES */
 
 static wstream_df_frame_p steal_hwloc_pu(wstream_df_thread_p thief,
-                                         hwloc_obj_t current_obj) {
-  wstream_df_frame_p frame = NULL;
+                                         hwloc_obj_t current_obj,
+                                         hwloc_obj_t *stolen_from) {
   wstream_df_thread_p pu_worker_thread =
       (wstream_df_thread_p)current_obj->userdata;
-  frame = cdeque_steal(&pu_worker_thread->work_deque);
+  wstream_df_frame_p frame = cdeque_steal(&pu_worker_thread->work_deque);
   if (!frame) {
     inc_wqueue_counter(&thief->steals_fails, 1);
+  } else {
+#if CACHE_LAST_STEAL_VICTIM
+    *stolen_from = current_obj;
+#endif // CACHE_LAST_STEAL_VICTIM
   }
   return frame;
 }
@@ -574,7 +578,8 @@ static hwloc_obj_t random_hwloc_pu_in_subtree(wstream_df_thread_p thief,
  */
 static wstream_df_frame_p steal_hwloc_bottom_up(wstream_df_thread_p thief,
                                                 hwloc_obj_t current_obj,
-                                                hwloc_obj_t stop_at) {
+                                                hwloc_obj_t stop_at,
+                                                hwloc_obj_t *stolen_from) {
   wstream_df_frame_p frame = NULL;
   // Continue going up until we reach the stop node or we successfully stole work
   while (current_obj != stop_at && !frame) {
@@ -600,16 +605,16 @@ static wstream_df_frame_p steal_hwloc_bottom_up(wstream_df_thread_p thief,
         // then we search for work to steal in the tree until we reach the sibling node
         if (random_direction) { // one_side
           hwloc_obj_t sibling_pu = random_hwloc_pu_in_subtree(thief, one_side);
-          frame = steal_hwloc_pu(thief, sibling_pu);
+          frame = steal_hwloc_pu(thief, sibling_pu, stolen_from);
           if (!frame)
-            frame = steal_hwloc_bottom_up(thief, sibling_pu, one_side);
+            frame = steal_hwloc_bottom_up(thief, sibling_pu, one_side, stolen_from);
           one_side = one_side->next_sibling;
         } else { // other_side
           hwloc_obj_t sibling_pu =
               random_hwloc_pu_in_subtree(thief, other_side);
-          frame = steal_hwloc_pu(thief, sibling_pu);
+          frame = steal_hwloc_pu(thief, sibling_pu, stolen_from);
           if (!frame)
-            frame = steal_hwloc_bottom_up(thief, sibling_pu, other_side);
+            frame = steal_hwloc_bottom_up(thief, sibling_pu, other_side, stolen_from);
           other_side = other_side->prev_sibling;
         }
       }
@@ -622,47 +627,49 @@ static wstream_df_frame_p steal_hwloc_bottom_up(wstream_df_thread_p thief,
 static wstream_df_frame_p
 work_steal(wstream_df_thread_p cthread,
            wstream_df_thread_p *wstream_df_worker_threads) {
-  int level, attempt, sibling_num;
-  unsigned int steal_from = 0;
-  unsigned int steal_from_cpu = 0;
   wstream_df_frame_p fp = NULL;
-  unsigned int ncores;
 
 #if CACHE_LAST_STEAL_VICTIM
   /* Try to steal from the last victim worker's deque */
-  if (cthread->last_steal_from != -1) {
-    fp = cdeque_steal(
-        &wstream_df_worker_threads[cthread->last_steal_from]->work_deque);
+  if (cthread->last_steal_from != NULL) {
+    wstream_df_thread_p stolen_from =
+        (wstream_df_thread_p)cthread->last_steal_from->userdata;
+    fp = cdeque_steal(&stolen_from->work_deque);
 
     if (fp == NULL) {
       inc_wqueue_counter(&cthread->steals_fails, 1);
-      cthread->last_steal_from = -1;
+      cthread->last_steal_from = NULL;
     }
   }
 #endif
 
   if (fp == NULL) {
     // Try to steal from another worker's queue with locality in mind
-    fp = steal_hwloc_bottom_up(cthread, cthread->cpu, NULL);
+    hwloc_obj_t stolen_from;
+    (void)stolen_from; // To discard warning when WQUEUE_PROFILE is not set
+    fp = steal_hwloc_bottom_up(cthread, cthread->cpu, NULL, &stolen_from);
     if (fp == NULL) {
 #if CACHE_LAST_STEAL_VICTIM
-      cthread->last_steal_from = -1;
+      cthread->last_steal_from = NULL;
 #endif
     } else {
-      int real_level = mem_lowest_common_level(cthread->cpu->os_index, steal_from_cpu);
-      (void) real_level;
-      inc_wqueue_counter(&cthread->steals_mem[real_level], 1);
-      trace_steal(cthread, steal_from, worker_id_to_cpu(steal_from), fp->size,
-                  fp);
+#if WQUEUE_PROFILE
+      unsigned common_level =
+          level_of_common_ancestor(cthread->cpu, stolen_from);
+      inc_wqueue_counter(&cthread->steals_mem[common_level], 1);
 #if ALLOW_WQEVENT_SAMPLING
+      wstream_df_thread_p stolen_worker_thread =
+          (wstream_df_thread_p)stolen_from->userdata;
+      trace_steal(cthread, stolen_worker_thread->worker_id,
+                  stolen_from->logical_index, fp->size, fp);
+#endif
       fp->steal_type = STEAL_TYPE_STEAL;
-      fp->last_owner = steal_from;
+      fp->last_owner = stolen_from->logical_index;
 #endif
 
 #if CACHE_LAST_STEAL_VICTIM
-      cthread->last_steal_from = steal_from;
+      cthread->last_steal_from = stolen_from;
 #endif
-
     }
   }
   return fp;
@@ -701,8 +708,6 @@ static wstream_df_frame_p work_take(wstream_df_thread_p cthread)
 
 wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
                                wstream_df_thread_p *wstream_df_worker_threads) {
-  unsigned int cpu;
-  int level;
   wstream_df_frame_p fp = NULL;
 
 #if !DISABLE_WQUEUE_LOCAL_CACHE
@@ -718,20 +723,22 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
   if (fp == NULL)
     fp = work_steal(cthread, wstream_df_worker_threads);
 
-#if ALLOW_WQEVENT_SAMPLING
+#if WQUEUE_PROFILE
   /* A frame pointer could be obtained (locally or via a steal) */
   if (fp != NULL) {
     /* Update memory transfer statistics */
-    for (cpu = 0; cpu < MAX_CPUS; cpu++) {
-      if (fp->bytes_cpu_in[cpu]) {
-        level = mem_lowest_common_level(cthread->cpu->os_index, cpu);
-        inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu_in[cpu]);
-        inc_transfer_matrix_entry(cthread->cpu->os_index, cpu,
-                                  fp->bytes_cpu_in[cpu]);
+    for (unsigned worker_id = 0; worker_id < wstream_num_workers; worker_id++) {
+      if (fp->bytes_cpu_in[worker_id]) {
+        unsigned level = level_of_common_ancestor(
+            cthread->cpu, wstream_df_worker_threads[worker_id]->cpu);
+        inc_wqueue_counter(&cthread->bytes_mem[level],
+                           fp->bytes_cpu_in[worker_id]);
+        inc_transfer_matrix_entry(cthread->worker_id, worker_id,
+                                  fp->bytes_cpu_in[worker_id]);
       }
     }
   }
-#endif // ALLOW_WQEVENT_SAMPLING
+#endif // WQUEUE_PROFILE
 
   return fp;
 }

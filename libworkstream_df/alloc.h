@@ -10,10 +10,10 @@
 #include <sys/mman.h>
 #include <pthread.h>
 #include "config.h"
+#include "hwloc-support.h"
 #include "trace.h"
 #include "error.h"
 #include "glib_extras.h"
-#include "interleave.h"
 
 struct wstream_df_thread;
 
@@ -65,68 +65,15 @@ static inline int slab_force_huge_pages(void* addr, size_t size)
   return slab_force_advise_pages(addr, size, MADV_HUGEPAGE);
 }
 
-#ifdef UNIFORM_MEMORY_ACCESS
 static inline int slab_get_numa_node(void* address, unsigned int size)
 {
-	return 0;
-}
-#else
-static inline int slab_get_numa_node(void* address, unsigned int size)
-{
-	void* addr_aligned = (void*)(((unsigned long)address) & ~(0xfff));
-	void* addr_check[SLAB_NUMA_MAX_ADDR_AT_ONCE];
-	int on_nodes[SLAB_NUMA_MAX_ADDR_AT_ONCE];
-	int nodes[MAX_NUMA_NODES];
-
-	memset(nodes, 0, MAX_NUMA_NODES*sizeof(int));
-
-	for(unsigned int i = 0; i < size; i += SLAB_NUMA_CHUNK_SIZE*SLAB_NUMA_MAX_ADDR_AT_ONCE) {
-		int num_addr = 0;
-
-		for(num_addr = 0;
-		    num_addr < SLAB_NUMA_MAX_ADDR_AT_ONCE &&
-			    (i + num_addr*SLAB_NUMA_CHUNK_SIZE) < size;
-		    num_addr++)
-		{
-			addr_check[num_addr] = (void*)(((unsigned long)addr_aligned)+i
-						       + num_addr*SLAB_NUMA_CHUNK_SIZE);
-		}
-
-		if(move_pages(0, num_addr, addr_check, NULL, on_nodes, 0)) {
-			fprintf(stderr, "Could not get node info\n");
-			exit(1);
-		}
-
-		for(int j = 0; j < num_addr; j++)
-			if(on_nodes[j] >= 0)
-				nodes[on_nodes[j]]++;
-	}
-
-	int max_node = -1;
-	int max_size = -1;
-	for(int i = 0; i < MAX_NUMA_NODES; i++) {
-		if(max_node == -1 || max_size < nodes[i]) {
-			max_node = i;
-			max_size = nodes[i];
-		}
-	}
-
-	/* int size_covered = 0; */
-	/* for(int i = 0; i < MAX_NUMA_NODES; i++) */
-	/* 	size_covered += nodes[i]*SLAB_NUMA_CHUNK_SIZE; */
-
-	/* if(size > 100000) { */
-	/* 	if((100*SLAB_NUMA_CHUNK_SIZE*max_size) / size < 80) { */
-	/* 		fprintf(stderr, "Could not determine node of %p: max is %d, covered = %d, size = %d\n", address, SLAB_NUMA_CHUNK_SIZE*max_size, size_covered, size); */
-	/* 	} */
-	/* } */
-
+  hwloc_bitmap_t numa_nodes = numa_memlocation_of_memory(address, size);
+  hwloc_bitmap_singlify(numa_nodes);
+  int max_node = hwloc_bitmap_first(numa_nodes);
 	if(max_node < 0)
 	  fprintf(stderr, "Could not determine node of %p\n", address);
-
 	return max_node;
 }
-#endif
 
 #define __slab_max_slabs 64
 #define __slab_align 64
@@ -278,8 +225,10 @@ static inline int slab_alloc_memalign(slab_cache_p slab_cache, void** ptr, size_
   pthread_spin_lock(&slab_cache->free_mem_lock);
 
   if(slab_cache->free_mem_bytes < alloc_size) {
+#ifdef _PRINT_STATS
     if(slab_cache->free_mem_bytes)
       printf("wasted %zu bytes\n", slab_cache->free_mem_bytes);
+#endif // _PRINT_STATS
 
     size_t global_alloc_size = size_max2(alloc_size, SLAB_GLOBAL_REFILL_MEM);
 
@@ -360,7 +309,7 @@ pthread_spin_unlock(&slab_cache->locks[idx]);
 }
 
 static inline void
-slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, int node)
+slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, unsigned node)
 {
   const unsigned int slab_size = 1 << idx;
   unsigned int i;
@@ -375,7 +324,11 @@ slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, 
 			   __slab_align,
 			   alloc_size));
 
-  wstream_df_alloc_on_node(alloc, alloc_size, node);
+  if (bind_memory_to_numa_node(alloc, alloc_size, node)) {
+#ifdef HWLOC_VERBOSE
+    fprintf(stderr, "Could not slab memory to numa node %u\n", node);
+#endif // HWLOC_VERBOSE
+  }
 
   memset(alloc, 0, alloc_size);
 
