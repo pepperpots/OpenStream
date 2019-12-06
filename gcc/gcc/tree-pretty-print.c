@@ -460,6 +460,21 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
     case OMP_CLAUSE_PEEK:
       name = "peek";
       goto print_remap;
+    case OMP_CLAUSE_ACCEL_NAME:
+      name = "accel_name";
+      goto print_remap;
+    case OMP_CLAUSE_ARGS:
+      name = "args";
+      goto print_remap;
+    case OMP_CLAUSE_DIMENSIONS:
+      name = "dimensions";
+      goto print_remap;
+    case OMP_CLAUSE_WORK_OFFSET:
+      name = "work_offset";
+      goto print_remap;
+    case OMP_CLAUSE_WORK_SIZE:
+      name = "work_size";
+      goto print_remap;
     case OMP_CLAUSE_COPYIN:
       name = "copyin";
       goto print_remap;

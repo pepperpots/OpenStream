@@ -18,7 +18,7 @@ add_dependencies(${PROJECT_NAME} bit_patch)
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR})
 
-target_link_libraries(${PROJECT_NAME} /usr/lib/gcc/x86_64-linux-gnu/7/libstdc++fs.a)
+target_link_libraries(${PROJECT_NAME} libstdc++fs.a)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 

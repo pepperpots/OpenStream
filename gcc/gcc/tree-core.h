@@ -258,6 +258,21 @@ enum omp_clause_code {
   /* OpenMP clause: peek (variable_list).  */
   OMP_CLAUSE_PEEK,
 
+  /* OpenMP clause: accel_name for FPGA */
+  OMP_CLAUSE_ACCEL_NAME,
+
+  /* OpenMP clause: args for FPGA */
+  OMP_CLAUSE_ARGS,
+
+  /* OpenMP clause: dimensions for FPGA */
+  OMP_CLAUSE_DIMENSIONS,
+
+  /* OpenMP clause: work_offset for FPGA */
+  OMP_CLAUSE_WORK_OFFSET,
+
+  /* OpenMP clause: work_size for FPGA */
+  OMP_CLAUSE_WORK_SIZE,
+
   /* OpenACC/OpenMP clause: reduction (operator:variable_list).
      OMP_CLAUSE_REDUCTION_CODE: The tree_code of the operator.
      Operand 1: OMP_CLAUSE_REDUCTION_INIT: Stmt-list to initialize the var.

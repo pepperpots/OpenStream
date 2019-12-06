@@ -287,6 +287,11 @@ unsigned const char omp_clause_num_ops[] =
   7, /* OMP_CLAUSE_OUTPUT  */
   8, /* OMP_CLAUSE_INOUT_REUSE  */
   7, /* OMP_CLAUSE_PEEK  */
+  1, /* OMP_CLAUSE_ACCEL_NAME */
+  1, /* OMP_CLAUSE_ARGS */
+  1, /* OMP_CLAUSE_DIMENSIONS */
+  1, /* OMP_CLAUSE_WORK_OFFSET */
+  1, /* OMP_CLAUSE_WORK_SIZE */
   5, /* OMP_CLAUSE_REDUCTION  */
   5, /* OMP_CLAUSE_TASK_REDUCTION  */
   5, /* OMP_CLAUSE_IN_REDUCTION  */
@@ -369,6 +374,11 @@ const char * const omp_clause_code_name[] =
   "output",
   "inout_reuse",
   "peek",
+  "accel_name",
+  "args",
+  "dimensions",
+  "work_offset",
+  "work_size",
   "reduction",
   "task_reduction",
   "in_reduction",
@@ -12289,6 +12299,11 @@ walk_tree_1 (tree *tp, walk_tree_fn func, void *data,
 	case OMP_CLAUSE_OUTPUT:
 	case OMP_CLAUSE_INOUT_REUSE:
 	case OMP_CLAUSE_PEEK:
+	case OMP_CLAUSE_ACCEL_NAME:
+	case OMP_CLAUSE_ARGS:
+	case OMP_CLAUSE_DIMENSIONS:
+	case OMP_CLAUSE_WORK_OFFSET:
+	case OMP_CLAUSE_WORK_SIZE:
 	case OMP_CLAUSE_COPYIN:
 	case OMP_CLAUSE_COPYPRIVATE:
 	case OMP_CLAUSE_FINAL:

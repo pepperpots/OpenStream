@@ -3088,12 +3088,12 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 
 		  gcc_assert (TREE_CODE (view) == VAR_DECL);
 
-		  /* A view struct currently contains 7 integers and 9
+		  /* A view struct currently contains 8 integers and 9
 		     pointers.  This ugly size evaluation should be
 		     replaced with something less fragile.  */
 		  t1 = fold_build2 (MULT_EXPR, size_type_node,
 				    TYPE_SIZE_UNIT (size_type_node),
-				    size_int (7));
+				    size_int (8));
 		  t2 = fold_build2 (MULT_EXPR, size_type_node,
 				    TYPE_SIZE_UNIT (ptr_type_node),
 				    size_int (9));
@@ -9230,6 +9230,11 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_OUTPUT:
 	case OMP_CLAUSE_INOUT_REUSE:
 	case OMP_CLAUSE_TASK_NAME:
+	case OMP_CLAUSE_ACCEL_NAME:
+	case OMP_CLAUSE_ARGS:
+	case OMP_CLAUSE_DIMENSIONS:
+	case OMP_CLAUSE_WORK_OFFSET:
+	case OMP_CLAUSE_WORK_SIZE:
 	  break;
 
 	case OMP_CLAUSE_PEEK:
@@ -10316,6 +10321,11 @@ gimplify_adjust_omp_clauses (gimple_seq *pre_p, gimple_seq body, tree *list_p,
 	  gcc_unreachable ();
 	  break;
 
+	case OMP_CLAUSE_ACCEL_NAME:
+	case OMP_CLAUSE_ARGS:
+	case OMP_CLAUSE_DIMENSIONS:
+	case OMP_CLAUSE_WORK_OFFSET:
+	case OMP_CLAUSE_WORK_SIZE:
 	case OMP_CLAUSE_INPUT:
 	case OMP_CLAUSE_OUTPUT:
 	case OMP_CLAUSE_INOUT_REUSE:
@@ -10551,6 +10561,48 @@ gimplify_oacc_declare (tree *expr_p, gimple_seq *pre_p)
   *expr_p = NULL_TREE;
 }
 
+/* Gimplify OpenStream CL clauses: make sure all variables passed as
+   arguments to the kernel or used as offset/size of dimensions is
+   kept firstprivate at least.  */
+static void
+gimplify_openstream_cl_clauses (tree list_p, gimple_seq *pre_p)
+{
+  struct gimplify_omp_ctx *ctx, *outer_ctx;
+  tree c;
+
+  // Do not add overhead and bulk in the DF frame if this is not used
+  if (no_openstream_fpga_support)
+    return;
+
+  ctx = gimplify_omp_ctxp;
+  outer_ctx = ctx->outer_context;
+
+  c = list_p;
+  while (c != NULL_TREE)
+  {
+    tree clause = c;
+    c = OMP_CLAUSE_CHAIN (c);
+
+    /* Only need to do args as we would not know the type and its size.  */
+    if (OMP_CLAUSE_CODE (clause) == OMP_CLAUSE_ARGS)
+	{
+	  tree decl = OMP_CLAUSE_DECL (clause);
+
+	  if (TREE_CODE (decl) != VAR_DECL)
+	    // FIXME-apop: in case we handle non-variables as args... do it here
+	    continue;
+
+	  // Don't try re-adding those that have been handled before
+	  if (splay_tree_lookup (ctx->variables, (splay_tree_key)decl) != NULL)
+	    continue;
+
+	  omp_add_variable (ctx, decl, GOVD_FIRSTPRIVATE | GOVD_SEEN);
+	  if (outer_ctx)
+	    omp_notice_variable (outer_ctx, decl, true);
+	}
+  }
+}
+
 /* Gimplify the contents of an OMP_PARALLEL statement.  This involves
    gimplification of the body, as well as scanning the body for used
    variables.  We need to do this scan now, because variable-sized
@@ -10667,6 +10719,9 @@ gimplify_omp_task (tree *expr_p, gimple_seq *pre_p)
 			     omp_find_clause (OMP_TASK_CLAUSES (expr),
 					      OMP_CLAUSE_UNTIED)
 			     ? ORT_UNTIED_TASK : ORT_TASK, OMP_TASK);
+
+  if (omp_find_clause (OMP_TASK_CLAUSES (expr), OMP_CLAUSE_ACCEL_NAME))
+    gimplify_openstream_cl_clauses (OMP_TASK_CLAUSES (expr), pre_p);
 
   if (OMP_TASK_BODY (expr))
     {

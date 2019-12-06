@@ -11687,6 +11687,10 @@ c_parser_omp_clause_name (c_parser *parser)
 	    result = PRAGMA_OMP_CLAUSE_ALIGNED;
 	  else if (!strcmp ("async", p))
 	    result = PRAGMA_OACC_CLAUSE_ASYNC;
+	  else if (!strcmp ("accel_name", p))
+	    result = PRAGMA_OMP_CLAUSE_ACCEL_NAME;
+	  else if (!strcmp ("args", p))
+	    result = PRAGMA_OMP_CLAUSE_ARGS;
 	  break;
 	case 'c':
 	  if (!strcmp ("collapse", p))
@@ -11715,6 +11719,8 @@ c_parser_omp_clause_name (c_parser *parser)
 	    result = PRAGMA_OACC_CLAUSE_DEVICEPTR;
 	  else if (!strcmp ("device_resident", p))
 	    result = PRAGMA_OACC_CLAUSE_DEVICE_RESIDENT;
+	  else if (!strcmp ("dimensions", p))
+	    result = PRAGMA_OMP_CLAUSE_DIMENSIONS;
 	  else if (!strcmp ("dist_schedule", p))
 	    result = PRAGMA_OMP_CLAUSE_DIST_SCHEDULE;
 	  break;
@@ -11883,6 +11889,10 @@ c_parser_omp_clause_name (c_parser *parser)
 	    result = PRAGMA_OACC_CLAUSE_WAIT;
 	  else if (!strcmp ("worker", p))
 	    result = PRAGMA_OACC_CLAUSE_WORKER;
+	  else if (!strcmp ("work_offset", p))
+	    result = PRAGMA_OMP_CLAUSE_WORK_OFFSET;
+	  else if (!strcmp ("work_size", p))
+	    result = PRAGMA_OMP_CLAUSE_WORK_SIZE;
 	  break;
 	}
     }
@@ -12688,6 +12698,141 @@ c_parser_omp_var_list_parens (c_parser *parser, enum omp_clause_code kind,
       list = c_parser_omp_variable_list (parser, loc, kind, list);
       parens.skip_until_found_close (parser);
     }
+  return list;
+}
+
+/* OpenStream FPGA extension.
+   accel_name clause. */
+
+static tree
+c_parser_openstream_clause_accel_name (c_parser *parser,
+									tree list)
+{
+  tree omp_clause;
+  location_t clause_loc = c_parser_peek_token (parser)->location;
+
+  check_no_duplicate_clause (list, OMP_CLAUSE_ACCEL_NAME, "accel_name");
+
+  if (!c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
+    return list;
+
+  if (!c_parser_next_token_is (parser, CPP_NAME))
+    {
+      c_parser_error(parser, "expected identifier as accelerator name");
+      return list;
+    }
+
+  const char *p = IDENTIFIER_POINTER (c_parser_peek_token (parser)->value);
+  omp_clause = build_omp_clause (clause_loc, OMP_CLAUSE_ACCEL_NAME);
+  OMP_CLAUSE_CHAIN (omp_clause) = list;
+  // Idiotic fix for avoiding dropping the trailing \0
+  char pp[strlen(p)+1]; strncpy(pp, p, strlen(p)); pp[strlen(p)] = 0;
+  OMP_CLAUSE_FPGA_ACCEL_NAME(omp_clause) = build_string_literal(strlen(p)+1, pp);
+  list = omp_clause;
+
+  c_parser_consume_token (parser);
+  c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
+
+  return list;
+}
+
+/* OpenStream FPGA extension.
+   dimensions clause. */
+
+static tree
+c_parser_openstream_clause_dimensions (c_parser *parser,
+					  tree list)
+{
+  tree c, num = error_mark_node;
+  HOST_WIDE_INT n;
+  location_t loc = c_parser_peek_token (parser)->location;
+
+  check_no_duplicate_clause (list, OMP_CLAUSE_DIMENSIONS, "dimensions");
+
+  if (c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
+    {
+      num = c_parser_expr_no_commas (parser, NULL).value;
+      c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
+    }
+  if (num == error_mark_node)
+    return list;
+  mark_exp_read (num);
+  num = c_fully_fold (num, false, NULL);
+  if (!INTEGRAL_TYPE_P (TREE_TYPE (num))
+      || !tree_fits_shwi_p (num)
+      || (n = tree_to_shwi (num)) <= 0
+      || (int) n != n)
+    {
+      error_at (loc,
+		"dimensions argument needs positive constant integer expression");
+      return list;
+    }
+  c = build_omp_clause (loc, OMP_CLAUSE_DIMENSIONS);
+  OMP_CLAUSE_FPGA_DIMENSIONS (c) = num;
+  OMP_CLAUSE_CHAIN (c) = list;
+  return c;
+}
+
+/* OpenStream FPGA extension.
+   args ( variable-list )  */
+
+static tree
+c_parser_openstream_clause_args (c_parser *parser,
+				    enum omp_clause_code kind,
+				    tree list)
+{
+  return c_parser_omp_var_list_parens (parser, kind, list);
+}
+
+/* OpenStream FPGA extension.
+   work_offset ( expression-list )
+   work_size ( expression-list )   */
+
+static tree
+c_parser_openstream_clause_cl_list (c_parser *parser,
+				    enum omp_clause_code kind,
+				    tree list)
+{
+  if (c_parser_require (parser, CPP_OPEN_PAREN, "expected %<(%>"))
+  {
+    while (c_parser_next_token_is_not (parser, CPP_CLOSE_PAREN))
+    {
+      location_t loc = c_parser_peek_token (parser)->location;
+      tree exp = c_parser_expr_no_commas (parser, NULL).value;
+
+      /*  Skip until we find the next param.  */
+      while (c_parser_next_token_is_not (parser, CPP_CLOSE_PAREN)
+      && c_parser_next_token_is_not (parser, CPP_COMMA))
+        c_parser_consume_token (parser);
+
+      if (exp == error_mark_node)
+        return list;
+      mark_exp_read (exp);
+      exp = c_fully_fold (exp, false, NULL);
+
+      if (!INTEGRAL_TYPE_P (TREE_TYPE (exp)))
+      {
+        error_at (loc, "work_offset/work_size need [positive] integer expressions");
+        return list;
+      }
+
+      if (exp != error_mark_node)
+      {
+        tree u = build_omp_clause (loc, kind);
+        OMP_CLAUSE_DECL (u) = exp;
+        OMP_CLAUSE_CHAIN (u) = list;
+        list = u;
+      }
+
+      if (c_parser_next_token_is_not (parser, CPP_COMMA))
+        break;
+
+      c_parser_consume_token (parser);
+    }
+
+    c_parser_skip_until_found (parser, CPP_CLOSE_PAREN, "expected %<)%>");
+  }
+
   return list;
 }
 
@@ -14029,6 +14174,50 @@ static tree
 c_parser_omp_clause_peek (c_parser *parser, tree list)
 {
   return c_parser_omp_stream_clause (parser, OMP_CLAUSE_PEEK, list);
+}
+
+/* OpenStream FPGA extension:
+   accel_name ( string-literal ) */
+static tree
+c_parser_omp_clause_accel_name (c_parser *parser, tree list)
+{
+  return c_parser_openstream_clause_accel_name (parser, list);
+}
+
+/* OpenStream FPGA extension:
+   args ( variable-list ) */
+
+static tree
+c_parser_omp_clause_args (c_parser *parser, tree list)
+{
+  return c_parser_openstream_clause_args (parser, OMP_CLAUSE_ARGS, list);
+}
+
+/* OpenStream FPGA extension:
+   dimensions ( constant-expression ) */
+
+static tree
+c_parser_omp_clause_dimensions (c_parser *parser, tree list)
+{
+  return c_parser_openstream_clause_dimensions (parser, list);
+}
+
+/* OpenStream FPGA extension:
+   work_offset ( variable-list ) */
+
+static tree
+c_parser_omp_clause_work_offset (c_parser *parser, tree list)
+{
+  return c_parser_openstream_clause_cl_list (parser, OMP_CLAUSE_WORK_OFFSET, list);
+}
+
+/* OpenStream FPGA extension:
+   work_size ( variable-list ) */
+
+static tree
+c_parser_omp_clause_work_size (c_parser *parser, tree list)
+{
+  return c_parser_openstream_clause_cl_list (parser, OMP_CLAUSE_WORK_SIZE, list);
 }
 
 /* OpenMP 2.5:
@@ -15551,6 +15740,26 @@ c_parser_omp_all_clauses (c_parser *parser, omp_clause_mask mask,
 
       switch (c_kind)
 	{
+	case PRAGMA_OMP_CLAUSE_ACCEL_NAME:
+	  clauses = c_parser_omp_clause_accel_name (parser, clauses);
+	  c_name = "accel_name";
+	  break;
+	case PRAGMA_OMP_CLAUSE_ARGS:
+	  clauses = c_parser_omp_clause_args (parser, clauses);
+	  c_name = "args";
+	  break;
+	case PRAGMA_OMP_CLAUSE_DIMENSIONS:
+	  clauses = c_parser_omp_clause_dimensions (parser, clauses);
+	  c_name = "dimensions";
+	  break;
+	case PRAGMA_OMP_CLAUSE_WORK_OFFSET:
+	  clauses = c_parser_omp_clause_work_offset (parser, clauses);
+	  c_name = "work_offset";
+	  break;
+	case PRAGMA_OMP_CLAUSE_WORK_SIZE:
+	  clauses = c_parser_omp_clause_work_size (parser, clauses);
+	  c_name = "work_size";
+	  break;
 	case PRAGMA_OMP_CLAUSE_COLLAPSE:
 	  clauses = c_parser_omp_clause_collapse (parser, clauses);
 	  c_name = "collapse";
@@ -18241,7 +18450,12 @@ c_parser_omp_single (location_t loc, c_parser *parser, bool *if_p)
  	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_OUTPUT)	\
  	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_PEEK)		\
  	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_INOUT_REUSE)	\
-	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_TASK_NAME))
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_TASK_NAME)) \
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_ACCEL_NAME)	\
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_ARGS)	\
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_DIMENSIONS)\
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_WORK_OFFSET)\
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_WORK_SIZE)
 
 
 static tree

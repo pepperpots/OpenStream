@@ -89,6 +89,7 @@ typedef struct wstream_df_view
   size_t copy_count;
   size_t reuse_count;
   size_t ignore_count;
+  size_t opencl_buffer;
   struct wstream_df_broadcast_table* broadcast_table;
 } wstream_df_view_t, *wstream_df_view_p;
 
@@ -109,7 +110,7 @@ typedef struct wstream_df_stream
   int refcount;
 } wstream_df_stream_t, *wstream_df_stream_p;
 
-
+struct wstream_cl_data;
 typedef struct wstream_df_frame
 {
   int synchronization_counter;
@@ -135,6 +136,7 @@ typedef struct wstream_df_frame
   size_t refcount;
   wstream_df_view_p input_view_chain;
   wstream_df_view_p output_view_chain;
+  struct wstream_cl_data *cl_data;
   /* Variable size struct */
   //char buf [];
 } wstream_df_frame_t, *wstream_df_frame_p;

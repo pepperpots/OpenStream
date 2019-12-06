@@ -93,15 +93,15 @@ ws_prepcontext (ws_ctx_p ctx, void *sp, size_t ssz, void *fn)
 }
 
 static inline int
-ws_swapcontext (ws_ctx_p old, ws_ctx_p new)
+ws_swapcontext (ws_ctx_p old, ws_ctx_p new_ctx)
 {
-  return swapcontext (old, new);
+  return swapcontext (old, new_ctx);
 }
 
 static inline int
-ws_setcontext (ws_ctx_p new)
+ws_setcontext (ws_ctx_p new_ctx)
 {
-  return setcontext (new);
+  return setcontext (new_ctx);
 }
 
 # endif

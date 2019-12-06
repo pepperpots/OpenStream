@@ -14671,6 +14671,11 @@ c_finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 	case OMP_CLAUSE_TASK_NAME:
 	case OMP_CLAUSE_TILE:
 	case OMP_CLAUSE_IF_PRESENT:
+	case OMP_CLAUSE_ACCEL_NAME:
+	case OMP_CLAUSE_ARGS:
+	case OMP_CLAUSE_DIMENSIONS:
+	case OMP_CLAUSE_WORK_OFFSET:
+	case OMP_CLAUSE_WORK_SIZE:
 	case OMP_CLAUSE_FINALIZE:
 	  pc = &OMP_CLAUSE_CHAIN (c);
 	  continue;

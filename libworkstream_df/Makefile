@@ -6,6 +6,7 @@ THIS_DIR = $(dir $(CURDIR)/$(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST)))
 # OpenStream toplevel installation directory
 INST_DIR = $(THIS_DIR)/../install
 
+FOS_PATH= $(THIS_DIR)/../extras/fos
 FOS_CXXFLAGS= -I$(FOS_PATH)/install/include
 FOS_LDFLAGS= -L$(FOS_PATH)/install/lib -lbit_patch -lcynq -ludmalib
 
@@ -44,7 +45,7 @@ convert.h convert.c trace_file.c trace_file.h ansi_extras.h: ../extras/ostv/conf
 ../install/bin/gcc:
 	cd .. ; $(MAKE)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c $(WSTREAM_DEPS)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c fpga-support.c $(WSTREAM_DEPS)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \

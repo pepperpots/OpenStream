@@ -21,6 +21,7 @@ extern "C" {
 #include "reuse.h"
 #include "prng.h"
 #include "interleave.h"
+#include "fpga-support.h"
 
 #ifdef DEPENDENCE_AWARE_ALLOC
 	#error "Obsolete option 'dependence-aware allocation' enabled"
@@ -224,6 +225,7 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   frame_pointer->refcount = 1;
   frame_pointer->input_view_chain = NULL;
   frame_pointer->output_view_chain = NULL;
+  frame_pointer->cl_data = NULL;
 
 #if ALLOW_WQEVENT_SAMPLING
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;

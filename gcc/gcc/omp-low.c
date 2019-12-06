@@ -85,6 +85,7 @@ typedef struct wstream_df_frame
   tree wstream_df_frame_field_refcount;
   tree wstream_df_frame_field_input_view_chain;
   tree wstream_df_frame_field_output_view_chain;
+  tree wstream_df_frame_field_cl_data;
 } wstream_df_frame;
 
 /* Lowering of OMP parallel and workshare constructs proceeds in two
@@ -196,6 +197,16 @@ static void scan_omp_streaming_task (gimple_stmt_iterator *,
 
 /* Data structure used to keep track of the fields used when building
    up the records for representing views.  */
+
+enum openstream_cl_arg_direction
+{
+  OPENSTREAM_CL_ARG_UNDEFINED    = 0,
+  OPENSTREAM_CL_ARG_IN           = 1,
+  OPENSTREAM_CL_ARG_OUT          = 2,
+  OPENSTREAM_CL_ARG_INOUT        = 3,
+  OPENSTREAM_CL_ARG_FIRSTPRIVATE = 4
+};
+
 typedef struct wstream_df_view
 {
   tree wstream_df_view_type;
@@ -214,12 +225,14 @@ typedef struct wstream_df_view
   tree wstream_df_view_field_copy_count;
   tree wstream_df_view_field_reuse_count;
   tree wstream_df_view_field_ignore_count;
+  tree wstream_df_view_field_opencl_buffer;
   tree wstream_df_view_field_broadcast_table;
 
   bool is_array_view;
   tree base_offset;
   tree base_data_offset;
   tree clause;
+  enum openstream_cl_arg_direction dir;
 } wstream_df_view;
 
 static struct wstream_df_view *build_wstream_df_view_type (omp_context *, tree);
@@ -1587,6 +1600,11 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	case OMP_CLAUSE_FINALIZE:
 	case OMP_CLAUSE_TASK_REDUCTION:
 	case OMP_CLAUSE_TASK_NAME:
+	case OMP_CLAUSE_ACCEL_NAME:
+	case OMP_CLAUSE_ARGS:
+	case OMP_CLAUSE_DIMENSIONS:
+	case OMP_CLAUSE_WORK_OFFSET:
+	case OMP_CLAUSE_WORK_SIZE:
 	  break;
 
 	case OMP_CLAUSE_ALIGNED:
@@ -1773,6 +1791,11 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	case OMP_CLAUSE_TASK_NAME:
 	case OMP_CLAUSE_INPUT:
 	case OMP_CLAUSE_OUTPUT:
+	case OMP_CLAUSE_ACCEL_NAME:
+	case OMP_CLAUSE_ARGS:
+	case OMP_CLAUSE_DIMENSIONS:
+	case OMP_CLAUSE_WORK_OFFSET:
+	case OMP_CLAUSE_WORK_SIZE:
 	  break;
 
 	case OMP_CLAUSE__CACHE_:
@@ -6612,6 +6635,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
   gimple_seq dominant_input_node_call_list = NULL;
   gimple_seq pre_tcreate_list = NULL;
   gimple_seq resdep_list = NULL;
+  gimple_seq cl_data_list = NULL;
   bool is_wstream_df_frame = false;
   bool has_do_out_taskwait_call = false;
   tree metadata_size;
@@ -6708,6 +6732,11 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_reuse_data_view),
 			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_reuse_data_view, NULL);
 	      gimplify_assign (ref, null_pointer_node, &datafield_list);
+
+		  /* Set opencl_buffer to 0 */
+	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_opencl_buffer),
+			    unshare_expr (view_ref_prematch), v->wstream_df_view_field_opencl_buffer, NULL);
+	      gimplify_assign (ref, integer_zero_node, &datafield_list);
 
 	      /* Set ignore_count to 0 */
 	      ref = build3 (COMPONENT_REF, TREE_TYPE (v->wstream_df_view_field_ignore_count),
@@ -7047,10 +7076,104 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
 	    }
 	}
 
-      /* IN the case of tasks that have neither inputs nor outputs
+	/* Fourth pass: generate calls to setup the FPGA accelerator parameters. */
+	tree accel_name = omp_find_clause(clauses, OMP_CLAUSE_ACCEL_NAME);
+	if (accel_name != NULL_TREE && !no_openstream_fpga_support)
+	{
+		tree setup_accel_fn = builtin_decl_explicit(BUILT_IN_WSTREAM_DF_SETUP_FPGA_ACCEL);
+		tree set_fpga_arg_fn = builtin_decl_explicit(BUILT_IN_WSTREAM_DF_SET_FPGA_ARGS);
+		tree set_fpga_gwo_fn = builtin_decl_explicit(BUILT_IN_WSTREAM_DF_SET_FPGA_WORK_OFFSET);
+		tree set_fpga_gws_fn = builtin_decl_explicit(BUILT_IN_WSTREAM_DF_SET_FPGA_WORK_SIZE);
+
+		accel_name = OMP_CLAUSE_FPGA_ACCEL_NAME(accel_name);
+
+		tree cl_dimensions = omp_find_clause(clauses, OMP_CLAUSE_DIMENSIONS);
+		if (cl_dimensions == NULL_TREE)
+			cl_dimensions = build_int_cst(integer_type_node, 0);
+		else
+			cl_dimensions = OMP_CLAUSE_FPGA_DIMENSIONS(cl_dimensions);
+
+		// Count the number of arguments that are passed to the FPGA accelerator (necessary to know the size of the metadata)
+		int num_args = 0;
+		for (c = clauses; c; c = OMP_CLAUSE_CHAIN(c))
+			if (OMP_CLAUSE_CODE(c) == OMP_CLAUSE_ARGS)
+				num_args++;
+
+		// Issue call to setup the FPGA accelerator name, dimensions and number of arguments expected
+		t = build_call_expr(setup_accel_fn, 4, frame_ptr_prematch, accel_name,
+							build_int_cst(integer_type_node, num_args), cl_dimensions);
+		gimplify_and_add(t, &cl_data_list);
+
+		for (c = clauses; c; c = OMP_CLAUSE_CHAIN(c))
+		{
+			if (OMP_CLAUSE_CODE(c) == OMP_CLAUSE_ARGS)
+			{
+				tree arg_decl, arg_data, arg_size;
+
+				arg_decl = OMP_CLAUSE_FPGA_ARGS(c);
+
+				// There are 3 cases:
+				//   - this argument is a view
+				//   - this argument is a firstprivate variable
+				//   - this argument is an expression (e.g., constant) -- we still need to store it
+
+				splay_tree_node n = splay_tree_lookup(ctx->view_map, (splay_tree_key)arg_decl);
+				if (n != NULL) // This is a view, all data directly taken from frame
+				{
+					tree tmp, field, view_ref;
+					struct wstream_df_view *v = (struct wstream_df_view *)n->value;
+
+					field = lookup_sfield(arg_decl, ctx);
+					tmp = build_simple_mem_ref_loc(loc, frame_ptr_prematch);
+					view_ref = build3(COMPONENT_REF, TREE_TYPE(field), tmp, field, NULL);
+
+					arg_size = build3(COMPONENT_REF, TREE_TYPE(v->wstream_df_view_field_horizon),
+									  unshare_expr(view_ref), v->wstream_df_view_field_horizon, NULL);
+					arg_data = build_addr(build3(COMPONENT_REF, TREE_TYPE(v->wstream_df_view_field_data),
+												unshare_expr(view_ref), v->wstream_df_view_field_data, NULL));
+
+					t = build_call_expr(set_fpga_arg_fn, 4, frame_ptr_prematch, arg_data, arg_size,
+										build_int_cst(integer_type_node, v->dir));
+					gimplify_and_add(t, &cl_data_list);
+				}
+				else // Not a view, so either it's a firstprivate or we have to make one
+				{
+					if (TREE_CODE(arg_decl) == VAR_DECL)
+					{
+						tree field = lookup_sfield(arg_decl, ctx);
+						tree src = build_simple_mem_ref_loc(loc, frame_ptr_prematch);
+
+						arg_size = TYPE_SIZE_UNIT(TREE_TYPE(field));
+						arg_data = build_addr(build3(COMPONENT_REF, TREE_TYPE(field), src, field, NULL));
+
+						t = build_call_expr(set_fpga_arg_fn, 4, frame_ptr_prematch, arg_data, arg_size, build_int_cst(integer_type_node, OPENSTREAM_CL_ARG_FIRSTPRIVATE));
+						gimplify_and_add(t, &cl_data_list);
+					}
+					else
+					{
+						// We don't handle this case yet (we filter these out at parsing for now) --
+					}
+				}
+			}
+			if (OMP_CLAUSE_CODE(c) == OMP_CLAUSE_WORK_OFFSET)
+			{
+				tree decl = OMP_CLAUSE_FPGA_WORK_OFFSET(c);
+				t = build_call_expr(set_fpga_gwo_fn, 2, frame_ptr_prematch, decl);
+				gimplify_and_add(t, &cl_data_list);
+			}
+			if (OMP_CLAUSE_CODE(c) == OMP_CLAUSE_WORK_SIZE)
+			{
+				tree decl = OMP_CLAUSE_FPGA_WORK_SIZE(c);
+				t = build_call_expr(set_fpga_gws_fn, 2, frame_ptr_prematch, decl);
+				gimplify_and_add(t, &cl_data_list);
+			}
+		}
+	}// fourth pass - end
+
+	/* IN the case of tasks that have neither inputs nor outputs
 	 (side effects only), we need to add some more calls to get
 	 them on the ready queues.  */
-      if (synch_ctr == size_zero_node)
+	if (synch_ctr == size_zero_node)
 	{
 	  tree tdec_fn = builtin_decl_explicit (BUILT_IN_WSTREAM_DF_TDECREASE);
 	  t = build_call_expr (tdec_fn, 2, frame_ptr_prematch, build_int_cst (integer_type_node, 0));
@@ -7331,6 +7454,7 @@ lower_send_clauses (tree clauses, gimple_seq *ilist, gimple_seq *olist,
   gimple_seq_add_seq (ilist, alloc_list);
   gimple_seq_add_seq (ilist, dominant_input_node_call_list);
   gimple_seq_add_seq (ilist, resdep_list);
+  gimple_seq_add_seq (ilist, cl_data_list);
   gimple_seq_add_seq (&pre_tcreate_list, *ilist);
   *ilist = pre_tcreate_list;
 }
@@ -11784,6 +11908,12 @@ build_wstream_df_view_type (omp_context *ctx, tree data_type)
   insert_field_into_struct (view_t, field);
   ret->wstream_df_view_field_broadcast_table = field;
 
+  name = create_tmp_var_name ("opencl_buffer");
+  type = size_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  insert_field_into_struct (view_t, field);
+  ret->wstream_df_view_field_opencl_buffer = field;
+
   name = create_tmp_var_name ("ignore_count");
   type = size_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
@@ -11902,6 +12032,17 @@ build_wstream_df_frame_base_type (omp_context *ctx)
 
      Reversed order to ensure the above order is actually obtained.
   */
+  name = create_tmp_var_name ("cl_data");
+  type = ptr_type_node;
+  field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);
+  /* insert_field_into_struct (ctx->record_type, field); */
+  DECL_CONTEXT (field) = ctx->record_type;
+  DECL_CHAIN (field) = TYPE_FIELDS (ctx->record_type);
+  TYPE_FIELDS (ctx->record_type) = field;
+  if (TYPE_ALIGN (ctx->record_type) < DECL_ALIGN (field))
+    SET_TYPE_ALIGN (ctx->record_type, DECL_ALIGN (field));
+  ctx->base_frame.wstream_df_frame_field_cl_data = field;
+
   name = create_tmp_var_name ("output_view_chain");
   type = ptr_type_node;
   field = build_decl (gimple_location (ctx->stmt), FIELD_DECL, name, type);

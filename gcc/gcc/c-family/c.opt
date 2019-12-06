@@ -2197,5 +2197,9 @@ fno-openstream-update-numa-node-of-output-view-calls
 C Var(no_openstream_update_numa_node_of_output_view_calls)
 Do not add calls to __built_in_update_numa_node_of_output_view
 
+fno-openstream-fpga-support
+C Var(no_openstream_fpga_support)
+Do not add calls to __built_in_wstream_df_*_fpga_* and do not add fields in the DF frame for variables used by the OpenCL kernel
+
 
 ; This comment is to ensure we retain the blank line above.
