@@ -127,6 +127,7 @@ examples/strassen/x86_strassen_nofences
 examples/bitonic/bitonic
 examples/bitonic/stream_df_bitonic
 examples/bitonic/stream_bitonic_seqctrl
+examples/vecadd/vecadd_df_fpga
 *.out
 examples/fmradio/*.raw
 examples/fmradio/*.txt
