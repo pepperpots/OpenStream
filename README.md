@@ -1,4 +1,53 @@
-** Data-flow runtime restrictions **
+# OpenStream #
+
+This project provides the compiler and runtime of OpenStream.
+
+OpenStream is a stream programming language, designed as an incremental
+extension to the OpenMP parallel programming language, and allowing to
+express arbitrary dependence patterns between tasks in the form of task-level
+data flow dependences. Programmers expose task parallelism while providing
+the compiler with data flow information, through compiler annotations
+(pragmas), used to generate code that dynamically builds a streaming program.
+It allows to exploit task, pipeline and data parallelism.
+
+Typical targets: GNU/Linux system on amd64 or aarch64.
+
+## Using OpenStream ##
+
+### Build Dependencies ###
+
+#### On Debian / Ubuntu
+
+```bash
+sudo apt install gcc g++ cmake make autoconf automake gfortran flex bison pkg-config wget
+```
+
+#### Fedora / CentOS / Red Hat
+
+```bash
+sudo dnf install gcc cmake make autoconf automake gcc-gfortran flex bison pkgconf wget
+```
+
+#### OpenSUSE
+
+```bash
+sudo zypper install gcc g++ cmake make autoconf automake gfortran flex bison pkgconf wget
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S gcc gcc-fortran cmake make autoconf automake flex bison pkgconf wget
+```
+
+### Building OpenStream ###
+
+```bash
+make -j $(nproc)
+```
+
+
+## Data-flow runtime restrictions ##
 
 Set of restrictions on the streaming model deriving from the use of a
 DF runtime target.
@@ -25,7 +74,7 @@ producers write the data to discard (necessary if some other stream's
 data is used or if the task has side-effects).
 
 
-** Known issues **
+## Known issues ##
 
 1. Streams of arrays currently experience an ICE.
 
