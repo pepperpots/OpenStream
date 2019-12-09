@@ -3,7 +3,6 @@
 
 #include "../arch.h"
 #include <assert.h>
-#include "../hwloc-support.h"
 
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PRINT_STATS
@@ -53,9 +52,6 @@
 
 // /* #define TRACE_PAPI_COUNTERS */
 //#endif
-
-/* Description of the memory hierarchy */
-extern unsigned levels_in_machine_hierarchy;
 
 #ifndef IN_GCC
 #include <string.h>

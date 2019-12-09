@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <assert.h>
-#include "hwloc-support.h"
 
 #define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
 
