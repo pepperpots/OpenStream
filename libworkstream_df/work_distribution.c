@@ -600,6 +600,7 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
   return fp;
 }
 
+#if !DISABLE_WQUEUE_LOCAL_CACHE
 static wstream_df_frame_p work_cache_take(wstream_df_thread_p cthread)
 {
   wstream_df_frame_p fp = NULL;
@@ -616,6 +617,7 @@ static wstream_df_frame_p work_cache_take(wstream_df_thread_p cthread)
 
   return fp;
 }
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
 
 static wstream_df_frame_p work_take(wstream_df_thread_p cthread)
 {
@@ -636,8 +638,10 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
   int level;
   wstream_df_frame_p fp = NULL;
 
+#if !DISABLE_WQUEUE_LOCAL_CACHE
   /* Try to obtain frame from the local cache */
   fp = work_cache_take(cthread);
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
 
   /* Try to obtain frame from the local work deque */
   if (fp == NULL)

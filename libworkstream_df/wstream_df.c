@@ -377,10 +377,15 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	    }
 	}
 #endif
+#if DISABLE_WQUEUE_LOCAL_CACHE
+	cdeque_push_bottom (&cthread->work_deque,
+			    (wstream_df_type) fp);
+#else
       if (cthread->own_next_cached_thread != NULL)
 	cdeque_push_bottom (&cthread->work_deque,
 			    (wstream_df_type) cthread->own_next_cached_thread);
       cthread->own_next_cached_thread = fp;
+#endif
     }
 
   trace_state_restore(cthread);
@@ -1221,11 +1226,14 @@ void pre_main()
       wstream_df_worker_threads[i]->worker_id = i;
       wstream_df_worker_threads[i]->tsc_offset = 0;
       wstream_df_worker_threads[i]->tsc_offset_init = 0;
-      wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
       wstream_df_worker_threads[i]->swap_barrier = NULL;
       wstream_df_worker_threads[i]->current_work_fn = NULL;
       wstream_df_worker_threads[i]->current_frame = NULL;
       wstream_df_worker_threads[i]->yield = 0;
+#if !DISABLE_WQUEUE_LOCAL_CACHE
+      wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
+    
     }
 
   cpu_set_t cs;

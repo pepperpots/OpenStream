@@ -44,6 +44,11 @@
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
+// Disable workers local cache. A Task placed into this local cache cannot be
+// stolen by other workers. Static control program may temporarily stall until
+// the control program task finishes because of that.
+#define DISABLE_WQUEUE_LOCAL_CACHE 0
+
 //#define WS_PAPI_PROFILE
 //#define WS_PAPI_MULTIPLEX
 

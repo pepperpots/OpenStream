@@ -205,7 +205,9 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
   unsigned int worker_id;
 
   cdeque_t work_deque __attribute__((aligned (64)));
+#if !DISABLE_WQUEUE_LOCAL_CACHE
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
 
   unsigned int rands;
   unsigned int cpu;
