@@ -555,7 +555,7 @@ static wstream_df_frame_p steal_hwloc_pu(wstream_df_thread_p thief,
   if (!frame) {
     inc_wqueue_counter(&thief->steals_fails, 1);
   } else {
-#if CACHE_LAST_STEAL_VICTIM
+#if CACHE_LAST_STEAL_VICTIM || WQUEUE_PROFILE
     *stolen_from = current_obj;
 #endif // CACHE_LAST_STEAL_VICTIM
   }
