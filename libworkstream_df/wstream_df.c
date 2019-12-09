@@ -1114,7 +1114,7 @@ start_worker (wstream_df_thread_p wstream_df_worker, hwloc_obj_t cpu, size_t num
 {
   pthread_attr_t thread_attr;
 
-  unsigned numa_node = numa_node_of_processing_unit(cpu);
+  unsigned numa_node = closest_numa_node_of_processing_unit(cpu);
   numa_node_add_thread(numa_node_by_id(numa_node), wstream_df_worker);
 
 #if ALLOW_PUSHES
@@ -1223,7 +1223,7 @@ void pre_main()
 
   numa_nodes_init();
 
-  unsigned numa_node = numa_node_of_processing_unit(processor_mapping[0]);
+  unsigned numa_node = closest_numa_node_of_processing_unit(processor_mapping[0]);
   numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
 
   trace_init(current_thread);

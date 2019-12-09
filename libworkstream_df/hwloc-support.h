@@ -41,6 +41,6 @@ hwloc_nodeset_t numa_memlocation_of_memory(const void *addr, size_t len);
 
 unsigned level_of_common_ancestor(const hwloc_obj_t obj1, const hwloc_obj_t obj2);
 
-unsigned numa_node_of_processing_unit(const hwloc_obj_t obj);
+unsigned closest_numa_node_of_processing_unit(const hwloc_obj_t obj);
 
 #endif // HWLOC_SUPPORT_H_

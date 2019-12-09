@@ -11,6 +11,27 @@
 static hwloc_topology_t machine_topology;
 unsigned num_numa_nodes;
 unsigned topology_depth;
+static unsigned *cpuid_to_closest_numa_node;
+
+static void populate_closest_numa_nodes(void) {
+  for (hwloc_obj_t pu =
+           hwloc_get_next_obj_by_type(machine_topology, HWLOC_OBJ_PU, NULL);
+       pu;
+       pu = hwloc_get_next_obj_by_type(machine_topology, HWLOC_OBJ_PU, pu)) {
+    hwloc_obj_t closest_numa_node = NULL;
+    unsigned node_index;
+    hwloc_bitmap_foreach_begin(node_index, pu->nodeset) hwloc_obj_t currNode =
+        hwloc_get_numanode_obj_by_os_index(machine_topology, node_index);
+    if (closest_numa_node) {
+      if (closest_numa_node->depth < currNode->depth)
+        closest_numa_node = currNode;
+    } else {
+      closest_numa_node = currNode;
+    }
+    hwloc_bitmap_foreach_end();
+    cpuid_to_closest_numa_node[pu->logical_index] = closest_numa_node->os_index;
+  }
+}
 
 bool discover_machine_topology(void) {
   if (hwloc_topology_init(&machine_topology) != 0) {
@@ -43,6 +64,11 @@ bool discover_machine_topology(void) {
       hwloc_get_nbobjs_by_type(machine_topology, HWLOC_OBJ_NUMANODE);
   topology_depth = hwloc_topology_get_depth(machine_topology);
 
+  unsigned nproc = num_available_processing_units();
+  cpuid_to_closest_numa_node =
+      malloc(nproc * sizeof(*cpuid_to_closest_numa_node));
+  populate_closest_numa_nodes();
+
 #ifdef HWLOC_VERBOSE
   fprintf(stdout,
           "[hwloc info] HWLOC initialized\n"
@@ -74,6 +100,7 @@ bool restrict_topology_to_glibc_cpuset(cpu_set_t set) {
     return false;
   }
   bool retval = hwloc_topology_restrict(machine_topology, hwlocset, 0) == 0;
+  populate_closest_numa_nodes();
   hwloc_bitmap_free(hwlocset);
   return retval;
 }
@@ -106,8 +133,10 @@ bool distribute_worker_on_topology(unsigned num_workers,
   }
   free(distrib_sets);
   bool retval = true;
-  if (num_available_processing_units() > num_workers)
+  if (num_available_processing_units() > num_workers) {
     retval = hwloc_topology_restrict(machine_topology, restricted_set, 0) == 0;
+    populate_closest_numa_nodes();
+  }
   if (!retval) {
     *processing_units = NULL;
   }
@@ -194,22 +223,27 @@ int interleave_memory_on_machine_nodes(const void *addr, size_t len) {
       HWLOC_MEMBIND_MIGRATE | HWLOC_MEMBIND_NOCPUBIND);
 }
 
+_Thread_local hwloc_bitmap_t thread_bitmap;
+
 hwloc_nodeset_t numa_memlocation_of_memory(const void *addr, size_t len) {
-  hwloc_bitmap_t node_set = hwloc_bitmap_alloc();
-  hwloc_get_area_memlocation(machine_topology, addr, len, node_set,
+  if (!thread_bitmap) {
+    thread_bitmap = hwloc_bitmap_alloc();
+  }
+  hwloc_get_area_memlocation(machine_topology, addr, len, thread_bitmap,
                              HWLOC_MEMBIND_BYNODESET);
-  return node_set;
+  return thread_bitmap;
 }
 
 int bind_memory_to_numa_node(const void *addr, size_t len,
                              unsigned node_index) {
-  hwloc_nodeset_t node = hwloc_bitmap_alloc();
-  hwloc_bitmap_set(node, node_index);
+  if (!thread_bitmap) {
+    thread_bitmap = hwloc_bitmap_alloc();
+  }
+  hwloc_bitmap_set(thread_bitmap, node_index);
   int retval = hwloc_set_area_membind(
-      machine_topology, addr, len, node, HWLOC_MEMBIND_BIND,
+      machine_topology, addr, len, thread_bitmap, HWLOC_MEMBIND_BIND,
       HWLOC_MEMBIND_NOCPUBIND | HWLOC_MEMBIND_MIGRATE |
           HWLOC_MEMBIND_BYNODESET);
-  hwloc_bitmap_free(node);
   return retval;
 }
 
@@ -220,10 +254,6 @@ unsigned level_of_common_ancestor(const hwloc_obj_t obj1,
   return common_ancestor->depth;
 }
 
-unsigned numa_node_of_processing_unit(const hwloc_obj_t obj) {
-  hwloc_nodeset_t node = hwloc_bitmap_alloc();
-  hwloc_cpuset_to_nodeset(machine_topology, obj->cpuset, node);
-  int nodeid = hwloc_bitmap_first(node);
-  hwloc_bitmap_free(node);
-  return nodeid;
+unsigned closest_numa_node_of_processing_unit(const hwloc_obj_t obj) {
+  return cpuid_to_closest_numa_node[obj->logical_index];
 }

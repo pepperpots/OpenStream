@@ -68,7 +68,7 @@ static inline int slab_force_huge_pages(void* addr, size_t size)
 static inline int slab_get_numa_node(void* address, unsigned int size)
 {
   hwloc_bitmap_t numa_nodes = numa_memlocation_of_memory(address, size);
-  hwloc_bitmap_singlify(numa_nodes);
+  // The memory could be allocated on more than one node, return one of them
   int max_node = hwloc_bitmap_first(numa_nodes);
 	if(max_node < 0)
 	  fprintf(stderr, "Could not determine node of %p\n", address);
