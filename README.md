@@ -19,25 +19,25 @@ Typical targets: GNU/Linux system on amd64 or aarch64.
 #### On Debian / Ubuntu
 
 ```bash
-sudo apt install gcc g++ cmake make autoconf automake gfortran flex bison pkg-config wget
+sudo apt install gcc g++ gfortran flex bison cmake make autoconf automake pkg-config wget
 ```
 
 #### Fedora / CentOS / Red Hat
 
 ```bash
-sudo dnf install gcc cmake make autoconf automake gcc-gfortran flex bison pkgconf wget
+sudo dnf install gcc gcc-c++ gcc-gfortran flex bison cmake make autoconf automake pkgconf wget
 ```
 
 #### OpenSUSE
 
 ```bash
-sudo zypper install gcc g++ cmake make autoconf automake gfortran flex bison pkgconf wget
+sudo zypper install gcc gcc-c++ gcc-gfortran flex bison cmake make autoconf automake pkgconf wget
 ```
 
 #### Arch Linux
 
 ```bash
-sudo pacman -S gcc gcc-fortran cmake make autoconf automake flex bison pkgconf wget
+sudo pacman -S gcc gcc-fortran flex bison cmake make autoconf automake pkgconf wget
 ```
 
 ### Building OpenStream ###
