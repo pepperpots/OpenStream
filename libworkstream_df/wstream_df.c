@@ -364,9 +364,11 @@ tdecrease_n (void *data, size_t n, bool is_write)
       int curr_stolen = (cthread->current_frame &&
 			 ((wstream_df_frame_p)cthread->current_frame)->steal_type == STEAL_TYPE_STEAL);
 
-      if(curr_stolen && !cthread->own_next_cached_thread)
-	beneficial = 0;
-#endif
+#if !DISABLE_WQUEUE_LOCAL_CACHE
+      if (curr_stolen && !cthread->own_next_cached_thread)
+        beneficial = 0;
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
+#endif // PUSH_ONLY_IF_NOT_STOLEN_AND_CACHE_EMPTY
 
       if(beneficial)
 	{
@@ -376,16 +378,16 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	      return;
 	    }
 	}
-#endif
+#endif // ALLOW_PUSHES
 #if DISABLE_WQUEUE_LOCAL_CACHE
 	cdeque_push_bottom (&cthread->work_deque,
 			    (wstream_df_type) fp);
-#else
+#else // !DISABLE_WQUEUE_LOCAL_CACHE
       if (cthread->own_next_cached_thread != NULL)
 	cdeque_push_bottom (&cthread->work_deque,
 			    (wstream_df_type) cthread->own_next_cached_thread);
       cthread->own_next_cached_thread = fp;
-#endif
+#endif // DISABLE_WQUEUE_LOCAL_CACHE
     }
 
   trace_state_restore(cthread);

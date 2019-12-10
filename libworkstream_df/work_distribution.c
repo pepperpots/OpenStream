@@ -46,6 +46,7 @@ void reorder_pushes(wstream_df_thread_p cthread)
     inc_wqueue_counter(&cthread->steals_pushed, 1);
   }
 
+#if !DISABLE_WQUEUE_LOCAL_CACHE
   /* Put cached thread into reorder buffer */
   if(cthread->own_next_cached_thread && insert_pos < NUM_PUSH_REORDER_SLOTS) {
     import = cthread->own_next_cached_thread;
@@ -54,6 +55,7 @@ void reorder_pushes(wstream_df_thread_p cthread)
     insert_pos++;
     cthread->own_next_cached_thread = NULL;
   }
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
 
   if(insert_pos > 0) {
     trace_state_change(cthread, WORKER_STATE_RT_REORDER);
@@ -74,11 +76,15 @@ void reorder_pushes(wstream_df_thread_p cthread)
     /* Sort threads by transfer cost */
     qsort(cthread->push_reorder_slots, insert_pos, sizeof(wstream_df_frame_cost_t), compare_frame_costs);
 
+#if !DISABLE_WQUEUE_LOCAL_CACHE
     /* Put frame with lowest cost into the cache */
     cthread->own_next_cached_thread = cthread->push_reorder_slots[0].frame;
 
     /* Push other frames onto the work-stealing deque */
     for(i = insert_pos-1; i >= 1; i--)
+#else // DISABLE_WQUEUE_LOCAL_CACHE
+    for(i = insert_pos-1; i >= 0; i--)
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
       cdeque_push_bottom (&cthread->work_deque, cthread->push_reorder_slots[i].frame);
 
     trace_state_restore(cthread);
@@ -97,12 +103,16 @@ void import_pushes(wstream_df_thread_p cthread)
   while(fifo_popfront(&cthread->push_fifo, (void**)&import)) {
     inc_wqueue_counter(&cthread->steals_pushed, 1);
 
+#if !DISABLE_WQUEUE_LOCAL_CACHE
     if(cthread->own_next_cached_thread == NULL) {
       cthread->own_next_cached_thread = import;
     } else {
       cdeque_push_bottom (&cthread->work_deque, cthread->own_next_cached_thread);
       cthread->own_next_cached_thread = import;
     }
+#else // DISABLE_WQUEUE_LOCAL_CACHE
+    cdeque_push_bottom(&cthread->work_deque, import);
+#endif // !DISABLE_WQUEUE_LOCAL_CACHE
   }
 }
 
