@@ -123,23 +123,26 @@ dump_global_wqueue_counters ();
 #endif
 
 #ifdef MATRIX_PROFILE
-extern void *tm_data;
-#define transfer_matrix ((unsigned long long(*)[wstream_num_workers])tm_data)
 
-static inline void
-inc_transfer_matrix_entry(unsigned int consumer, unsigned int producer,
-			  unsigned long long num_bytes)
-{
-	transfer_matrix[consumer][producer] += num_bytes;
+extern void *tm_data__;
+#define transfer_matrix ((unsigned long long(*)[wstream_num_workers])tm_data__)
+
+inline void inc_transfer_matrix_entry(unsigned int consumer,
+                                      unsigned int producer,
+                                      unsigned long long num_bytes) {
+  transfer_matrix[consumer][producer] += num_bytes;
 }
 
 void init_transfer_matrix(void);
 void dump_transfer_matrix(unsigned int num_workers);
-#else
+
+#else // !defined(MATRIX_PROFILE)
+
 #define inc_transfer_matrix_entry(consumer, producer, num_bytes) do {} while(0)
 #define init_transfer_matrix() do {} while(0)
 #define dump_transfer_matrix(num_workers) do {} while(0)
-#endif
+
+#endif // MATRIX_PROFILE
 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS \
 	WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \

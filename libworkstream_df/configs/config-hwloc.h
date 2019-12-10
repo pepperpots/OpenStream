@@ -13,7 +13,13 @@
 #define WSTREAM_STACK_SIZE 1 << 16
 
 #define WQUEUE_PROFILE 0
-//#define MATRIX_PROFILE "wqueue_matrix.out"
+
+/*
+ * MATRIX_PROFILE profiles the amount of information exchanged between the the
+ * worker threads through the streams. The information is dumped inside the
+ * specified file in a matrix form (line worker id to column worker id).
+ */
+// #define MATRIX_PROFILE "wqueue_matrix.out"
 
 #define PUSH_MIN_MEM_LEVEL 1
 #define PUSH_MIN_FRAME_SIZE (64 * 1024)

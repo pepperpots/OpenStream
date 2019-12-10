@@ -10,13 +10,12 @@
 
 #ifdef MATRIX_PROFILE
 
-void *tm_data;
-static pthread_spinlock_t papi_spin_lock;
+void *tm_data__;
 
 void init_transfer_matrix(void) {
-  tm_data = calloc(
+  tm_data__ = calloc(
       1, sizeof(unsigned long long[wstream_num_workers][wstream_num_workers]));
-  assert(tm_data != NULL);
+  assert(tm_data__ != NULL);
 }
 
 void dump_transfer_matrix(unsigned int num_workers)
@@ -33,9 +32,16 @@ void dump_transfer_matrix(unsigned int num_workers)
 	}
 	fclose(matrix_fp);
 }
-#endif
+
+extern inline void inc_transfer_matrix_entry(unsigned int consumer,
+                                             unsigned int producer,
+                                             unsigned long long num_bytes);
+
+#endif // MATRIX_PROFILE
 
 #ifdef WS_PAPI_PROFILE
+
+static pthread_spinlock_t papi_spin_lock;
 
 void
 setup_papi(void)
