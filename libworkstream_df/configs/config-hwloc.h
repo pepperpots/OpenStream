@@ -21,6 +21,17 @@
  */
 // #define MATRIX_PROFILE "wqueue_matrix.out"
 
+/*
+ * Use linux getrusage function to gather resource usage for running threads.
+ * This includes:
+ *   - User CPU time
+ *   - Major page faults (page to be allocated to the process)
+ *   - Minor page faults (page already in memory but not mapped into the process)
+ *   - The maximum resident set size (peak RAM usage of the process)
+ *   - The number of involuntary context switches (e.g. kernel scheduler intervention)
+ */
+//#define PROFILE_RUSAGE
+
 #define PUSH_MIN_MEM_LEVEL 1
 #define PUSH_MIN_FRAME_SIZE (64 * 1024)
 #define PUSH_MIN_REL_FRAME_SIZE 1.3

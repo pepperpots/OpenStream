@@ -5,8 +5,11 @@
 #include "wstream_df.h"
 #include "numa.h"
 #include <pthread.h>
+
+#ifdef PROFILE_RUSAGE
 #include <sys/time.h>
 #include <sys/resource.h>
+#endif // defined(PROFILE_RUSAGE)
 
 #ifdef MATRIX_PROFILE
 
@@ -244,23 +247,22 @@ wqueue_counters_enter_runtime(struct wstream_df_thread* th)
 }
 
 #ifdef PROFILE_RUSAGE
-void
-wqueue_counters_profile_rusage(struct wstream_df_thread* th)
-{
-	struct rusage usage;
 
-	if(getrusage(RUSAGE_THREAD, &usage))
-		wstream_df_fatal("Call to getrusage failed!");
+void wqueue_counters_profile_rusage(struct wstream_df_thread *th) {
+  struct rusage usage;
 
-	th->system_time_us =
-		(unsigned long long)usage.ru_stime.tv_sec * 1000000 +
-		(unsigned long long)usage.ru_stime.tv_usec;
-	th->major_page_faults = usage.ru_majflt;
-	th->minor_page_faults = usage.ru_minflt;
-	th->max_resident_size = usage.ru_maxrss;
-	th->inv_context_switches = usage.ru_nivcsw;
+  if (getrusage(RUSAGE_THREAD, &usage))
+    wstream_df_fatal("Call to getrusage failed!");
+
+  th->system_time_us = (unsigned long long)usage.ru_stime.tv_sec * 1000000 +
+                       (unsigned long long)usage.ru_stime.tv_usec;
+  th->major_page_faults = usage.ru_majflt;
+  th->minor_page_faults = usage.ru_minflt;
+  th->max_resident_size = usage.ru_maxrss;
+  th->inv_context_switches = usage.ru_nivcsw;
 }
-#endif
+
+#endif // defined(PROFILE_RUSAGE)
 
 void init_wqueue_counters(wstream_df_thread_p th) {
   th->steals_owncached = 0;
@@ -294,11 +296,13 @@ void init_wqueue_counters(wstream_df_thread_p th) {
 
   th->reuse_addr = 0;
   th->reuse_copy = 0;
+#ifdef PROFILE_RUSAGE
   th->system_time_us = 0;
   th->major_page_faults = 0;
   th->minor_page_faults = 0;
   th->max_resident_size = 0;
   th->inv_context_switches = 0;
+#endif // defined(PROFILE_RUSAGE)
 
   init_papi(th);
 }
@@ -310,7 +314,8 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 #ifdef WS_PAPI_PROFILE
 	int i;
 	const char* events[] = WS_PAPI_EVENTS;
-#endif
+#endif // defined(WS_PAPI_PROFILE)
+#ifdef PROFILE_RUSAGE
 	printf ("Thread %d: system_time_us = %lld\n",
 		th->worker_id,
 		th->system_time_us);
@@ -326,6 +331,7 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	printf ("Thread %d: inv_context_switches = %lld\n",
 		th->worker_id,
 		th->inv_context_switches);
+#endif // defined(PROFILE_RUSAGE)
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
 		th->tasks_created);

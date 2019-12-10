@@ -70,11 +70,13 @@ void trace_runtime_counters(struct wstream_df_thread* cthread)
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_SLAB_REFILLS, cthread->slab_cache->slab_refills);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_REUSE_ADDR, cthread->reuse_addr);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_REUSE_COPY, cthread->reuse_copy);
+#ifdef PROFILE_RUSAGE
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_SYSTEM_TIME_US, cthread->system_time_us);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MAJOR_PAGE_FAULTS, cthread->major_page_faults);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MINOR_PAGE_FAULTS, cthread->minor_page_faults);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_MAX_RESIDENT_SIZE, cthread->max_resident_size);
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_INV_CONTEXT_SWITCHES, cthread->inv_context_switches);
+#endif // defined(PROFILE_RUSAGE)
 
   uint64_t steals = 0;
   for(int level = 0; level < MEM_NUM_LEVELS; level++)
