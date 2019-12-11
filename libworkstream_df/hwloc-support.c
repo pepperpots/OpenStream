@@ -6,7 +6,7 @@
 #include "error.h"
 #include "hwloc-support.h"
 #include "hwloc/bitmap.h"
-#include "configs/config-hwloc.h"
+#include "config.h"
 
 static hwloc_topology_t machine_topology;
 unsigned num_numa_nodes;
