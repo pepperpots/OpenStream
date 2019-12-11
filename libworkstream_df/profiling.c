@@ -12,6 +12,7 @@
 #endif // defined(PROFILE_RUSAGE)
 
 #ifdef MATRIX_PROFILE
+#include <assert.h>
 
 void *tm_data__;
 

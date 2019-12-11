@@ -2,6 +2,7 @@
 #include "alloc.h"
 #include "numa.h"
 #include "broadcast.h"
+#include <assert.h>
 
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache);
 extern __thread wstream_df_thread_p current_thread;

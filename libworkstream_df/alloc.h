@@ -279,10 +279,10 @@ slab_refill (struct wstream_df_thread* cthread, slab_cache_p slab_cache, unsigne
   if(cthread)
 	  trace_state_change(cthread, WORKER_STATE_RT_ESTIMATE_COSTS);
 
-  assert (!slab_alloc_memalign (slab_cache,
-				&alloc,
-				__slab_align,
-				alloc_size));
+  int slab_alloc_memalign_success =
+      slab_alloc_memalign(slab_cache, &alloc, __slab_align, alloc_size);
+  (void) slab_alloc_memalign_success;
+  assert (!slab_alloc_memalign_success);
   if(cthread)
 	  trace_state_restore(cthread);
 
@@ -319,10 +319,9 @@ slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, 
 
   int alloc_size = num_slabs * (slab_size + __slab_metainfo_size);
 
-
-  assert (!posix_memalign (&alloc,
-			   __slab_align,
-			   alloc_size));
+  int posix_memalign_success = posix_memalign(&alloc, __slab_align, alloc_size);
+  (void)posix_memalign_success;
+  assert(!posix_memalign_success);
 
   if (bind_memory_to_numa_node(alloc, alloc_size, node)) {
 #ifdef HWLOC_VERBOSE
@@ -376,7 +375,10 @@ slab_alloc (struct wstream_df_thread* cthread, slab_cache_p slab_cache, unsigned
   if (idx > __slab_max_size)
     {
       slab_cache->slab_toobig++;
-      assert (!posix_memalign ((void **) &res, __slab_align, size + __slab_metainfo_size));
+      int posix_memalign_success = posix_memalign((void **)&res, __slab_align,
+                                                  size + __slab_metainfo_size);
+      (void)posix_memalign_success;
+      assert(!posix_memalign_success);
       metainfo = res;
       slab_metainfo_init(slab_cache, metainfo);
       metainfo->size = size;

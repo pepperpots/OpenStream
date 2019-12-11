@@ -316,7 +316,10 @@ main (int argc, char *argv[])
   CPU_SET (0, &cpuset);
   states[0].tid = pthread_self ();
 #if !NO_TEST_SETAFFINITY
-  assert (pthread_setaffinity_np (states[0].tid, sizeof cpuset, &cpuset) == 0);
+  int pthread_setaffinity_success =
+      pthread_setaffinity_np(states[0].tid, sizeof cpuset, &cpuset);
+  (void)pthread_setaffinity_success;
+  assert(!pthread_setaffinity_success);
 #endif
 
   states[0].seed = rand ();
@@ -329,17 +332,23 @@ main (int argc, char *argv[])
       CPU_ZERO (&cpuset);
       CPU_SET (t, &cpuset);
 #if !NO_TEST_SETAFFINITY
-      assert (pthread_attr_setaffinity_np (&thrattr,
-					   sizeof cpuset, &cpuset) == 0);
+      pthread_setaffinity_success =
+          pthread_attr_setaffinity_np(&thrattr, sizeof cpuset, &cpuset);
+      assert(!pthread_setaffinity_success);
 #endif
-      assert (pthread_create (&states[t].tid, &thrattr,
-			      thief_main, &states[t]) == 0);
+      int pthread_create_success =
+          pthread_create(&states[t].tid, &thrattr, thief_main, &states[t]);
+      (void)pthread_create_success;
+      assert(!pthread_create_success);
     }
 
   worker_main (&states[0]);
 
-  for (t = 1; t < num_thread; ++t)
-    assert (pthread_join (states[t].tid, NULL) == 0);
+  for (t = 1; t < num_thread; ++t) {
+    int pthread_join_success = pthread_join (states[t].tid, NULL);
+    (void)pthread_join_success;
+    assert(!pthread_join_success);
+  }
 
   printf ("worker_time\t");
   for (t = 1; t < num_thread; ++t)

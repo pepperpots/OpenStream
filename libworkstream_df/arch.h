@@ -6,7 +6,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <assert.h>
 
 #define __compiler_fence __asm__ __volatile__ ("" ::: "memory")
 

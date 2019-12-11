@@ -1,4 +1,5 @@
 #include "numa.h"
+#include <assert.h>
 
 static wstream_df_numa_node_p *wstream_df_numa_nodes;
 

@@ -15,7 +15,9 @@ static inline int timespec_diff (struct timespec *,
 do									    \
   {									    \
     atomic_thread_fence (memory_order_seq_cst);				    \
-    assert (clock_gettime (TIME_UTIL_CLOCK, (p)) == 0);			    \
+    int clock_gettime_success = clock_gettime (TIME_UTIL_CLOCK, (p)); \
+    (void)clock_gettime_success; \
+    assert (!clock_gettime_success);			    \
     atomic_thread_fence (memory_order_seq_cst);				    \
   }									    \
 while (0)
@@ -24,8 +26,12 @@ do									    \
   {									    \
     struct timespec _end_time_tv;					    \
     atomic_thread_fence (memory_order_seq_cst);				    \
-    assert (clock_gettime (TIME_UTIL_CLOCK, &_end_time_tv) == 0);	    \
-    assert (timespec_diff ((p), &_end_time_tv, (p)) == 0);		    \
+    int clock_gettime_success = clock_gettime (TIME_UTIL_CLOCK, &_end_time_tv); \
+    (void)clock_gettime_success; \
+    assert (!clock_gettime_success);	    \
+    int timespec_diff_success = timespec_diff ((p), &_end_time_tv, (p)); \
+    (void)timespec_diff_success; \
+    assert (!timespec_diff_success);		    \
     atomic_thread_fence (memory_order_seq_cst);				    \
   }									    \
 while (0)
@@ -36,7 +42,9 @@ get_thread_cpu_time (void)
   struct timespec _tv;
   double _t;
 
-  assert (clock_gettime (CLOCK_THREAD_CPUTIME_ID, &_tv) == 0);
+  int clock_gettime_success = clock_gettime (CLOCK_THREAD_CPUTIME_ID, &_tv);
+  (void)clock_gettime_success;
+  assert (!clock_gettime_success);
   _t = _tv.tv_sec;
   _t += _tv.tv_nsec * 1e-9;
   return _t;

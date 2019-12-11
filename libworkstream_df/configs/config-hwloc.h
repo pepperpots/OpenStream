@@ -1,9 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "../arch.h"
-#include <assert.h>
-
 //#define _WSTREAM_DF_DEBUG 1
 //#define _PRINT_STATS
 //#define _WS_NO_YIELD_SPIN

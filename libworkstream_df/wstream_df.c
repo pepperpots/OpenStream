@@ -1392,35 +1392,6 @@ dec_stream_ref (void *s)
       force_empty_queues (s);
       slab_free(current_thread->slab_cache, s);
     }
-#if 0
-  int refcount = stream->refcount;
-
-  // debug --
-#ifdef _WSTREAM_DF_DEBUG
-  if (refcount < 1)
-    wstream_df_fatal ("Stream destructor called for a refcount < 1 (refcount == %d)", refcount);
-#endif
-
-  if (refcount > 1)
-    refcount = __sync_sub_and_fetch (&stream->refcount, 1);
-  else
-    {
-#ifdef _WSTREAM_DF_DEBUG
-      refcount = __sync_sub_and_fetch (&stream->refcount, 1);
-
-      if (refcount != 0)
-	wstream_df_fatal ("Stream destructor called for a refcount < 1 (refcount == %d)", refcount);
-#else
-      refcount = 0;
-#endif
-    }
-
-  if (refcount == 0)
-    {
-      force_empty_queues (s);
-      wstream_free(s, sizeof (wstream_df_stream_t));
-    }
-#endif
 }
 
 void
