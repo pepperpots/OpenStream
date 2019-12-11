@@ -1121,10 +1121,6 @@ start_worker (wstream_df_thread_p wstream_df_worker, hwloc_obj_t cpu, size_t num
   fifo_init(&wstream_df_worker->push_fifo);
 #endif
 
-#ifdef _PRINT_STATS
-  printf ("worker %d mapped to core %d\n", id, wstream_df_worker->cpu->os_index);
-#endif
-
   pthread_attr_init (&thread_attr);
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
 
@@ -1191,19 +1187,19 @@ void pre_main()
     }
   }
 #endif
-#ifdef _PRINT_STATS
-  fprintf(stdout, "Using %u workers\n", wstream_num_workers);
-#endif
 
   init_transfer_matrix();
 
+#ifdef HWLOC_VERBOSE
+  fprintf(stdout, "\n[HWLOC Info] Using %u workers distributed as:\n", wstream_num_workers);
+#endif
   hwloc_obj_t *processor_mapping = NULL;
   if (!distribute_worker_on_topology(wstream_num_workers, &processor_mapping)) {
     wstream_df_error("[hwloc] Warning: could distribute workers on %d CPUs\n",
                      wstream_num_workers);
   }
 #ifdef HWLOC_VERBOSE
-  fprintf(stdout, "Machine topology:\n");
+  fprintf(stdout, "\n[HWLOC Info] Worker placement topology:\n");
   print_topology_tree(stdout);
 #endif
 
@@ -1230,10 +1226,6 @@ void pre_main()
 
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker_threads[0]->push_fifo);
-#endif
-
-#ifdef _PRINT_STATS
-  printf ("Creating %d workers for %d cores\n", wstream_num_workers, wstream_num_workers);
 #endif
 
   for (unsigned i = 0; i < wstream_num_workers; ++i)

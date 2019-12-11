@@ -71,11 +71,12 @@ bool discover_machine_topology(void) {
 
 #ifdef HWLOC_VERBOSE
   fprintf(stdout,
-          "[hwloc info] HWLOC initialized\n"
-          "[hwloc info] Machine has a depth of %d\n"
-          "[hwloc info] Machine has %d numa node(s)\n"
-          "[hwloc info] Retrieved distance matrice(s): %u\n",
+          "[HWLOC Info] The machine has a depth of %d\n"
+          "[HWLOC Info] The machine has %d numa node(s)\n"
+          "[HWLOC Info] Retrieved distance matrice(s): %u\n",
           topology_depth, num_numa_nodes, num_distances);
+  fprintf(stdout, "\n[HWLOC Info] Machine topology:\n");
+  print_topology_tree(stdout);
 #endif
 
   return true;
@@ -125,7 +126,7 @@ bool distribute_worker_on_topology(unsigned num_workers,
     (*processing_units)[i] = hwloc_get_next_obj_inside_cpuset_by_type(
         machine_topology, distrib_sets[i], HWLOC_OBJ_PU, NULL);
 #ifdef HWLOC_VERBOSE
-    fprintf(stderr, "Worker %u mapped to core %u (OS index %u)\n", i,
+    fprintf(stderr, "Worker %u mapped to processing unit %u (OS index %u)\n", i,
             (*processing_units)[i]->logical_index,
             (*processing_units)[i]->os_index);
 #endif
