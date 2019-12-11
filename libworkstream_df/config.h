@@ -1,20 +1,62 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-//#define _PRINT_STATS
-//#define _WS_NO_YIELD_SPIN
-#define HWLOC_VERBOSE
+ /*********************** OpenStream Runtime Configuration ***********************/
 
-#define WSTREAM_DF_DEQUE_LOG_SIZE 8
+/*
+ * The stack size of the workers.
+ */
+
 #define WSTREAM_STACK_SIZE 1 << 16
 
-#define WQUEUE_PROFILE 0
+/*
+ * The log2 of the initial size of the work queue, i.e., each worker starts with a 2^(WSTREAM_DF_DEQUE_LOG_SIZE) empty queue.
+ */
+
+#define WSTREAM_DF_DEQUE_LOG_SIZE 8
+
+/*
+ * When a worker did not successfully steal some work from any other workers,
+ * the worker will relinquish the CPU and the thread is placed at the end of
+ * the scheduler queue.
+ * Activating this option will activate active polling for new task without stealing the 
+ */
+
+// #define WS_NO_YIELD_SPIN
+
+ /*********************** OpenStream Debug Options ***********************/
+
+/*
+ * Make the slab allocator more verbose by printing wasted memory and numa
+ * mapping warnings.
+ * This may have a performance impact.
+ */
+
+// #define SLAB_ALLOCATOR_VERBOSE
+
+/*
+ * Make HWLOC print information about the hardware and worker placement. This
+ * has no performance impact on the program other than the initialisation in
+ * the pre_main function.
+ */
+
+#define HWLOC_VERBOSE
+
+
+ /*********************** OpenStream Profiling Options ***********************/
+
+/*
+ * Profile the work queues.
+ */
+#define WQUEUE_PROFILE 1
 
 /*
  * MATRIX_PROFILE profiles the amount of information exchanged between the the
  * worker threads through the streams. The information is dumped inside the
  * specified file in a matrix form (line worker id to column worker id).
+ * REQUIRES WQUEUE_PROFILE
  */
+
 // #define MATRIX_PROFILE "wqueue_matrix.out"
 
 /*
@@ -26,7 +68,8 @@
  *   - The maximum resident set size (peak RAM usage of the process)
  *   - The number of involuntary context switches (e.g. kernel scheduler intervention)
  */
-//#define PROFILE_RUSAGE
+
+// #define PROFILE_RUSAGE
 
 #define PUSH_MIN_MEM_LEVEL 1
 #define PUSH_MIN_FRAME_SIZE (64 * 1024)

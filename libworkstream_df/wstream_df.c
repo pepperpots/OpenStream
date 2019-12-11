@@ -972,7 +972,7 @@ __attribute__((__optimize__("O1"))) static void worker_thread(void) {
       wqueue_counters_enter_runtime(current_thread);
       inc_wqueue_counter(&cthread->tasks_executed, 1);
     } else {
-#ifndef _WS_NO_YIELD_SPIN
+#ifndef WS_NO_YIELD_SPIN
       sched_yield();
 #endif
     }
