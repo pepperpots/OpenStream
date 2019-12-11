@@ -1,7 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-//#define _WSTREAM_DF_DEBUG 1
 //#define _PRINT_STATS
 //#define _WS_NO_YIELD_SPIN
 #define HWLOC_VERBOSE
@@ -72,10 +71,21 @@
 
 #ifdef WS_PAPI_PROFILE
 #define mem_cache_misses(th) ((th)->papi_counters[MEM_CACHE_MISS_POS])
-#else
+#else // !defined(WS_PAPI_PROFILE)
 #define mem_cache_misses(th) 0
-#endif
+#endif // !defined(WS_PAPI_PROFILE)
 
 #endif /* IN_GCC */
+
+/*
+ * Some configuration checks
+ */
+#if defined(UNIFORM_MEMORY_ACCESS) && MAX_NUMA_NODES != 1
+#error "UNIFORM_MEMORY_ACCESS defined, but MAX_NUMA_NODES != 1"
+#endif
+
+#if defined(MATRIX_PROFILE) && !WQUEUE_PROFILE
+#error "MATRIX_PROFILE defined, but WQUEUE_PROFILE != 1"
+#endif // defined(MATRIX_PROFILE) && !defined(WQUEUE_PROFILE)
 
 #endif
