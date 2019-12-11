@@ -49,7 +49,7 @@ __built_in_wstream_df_set_fpga_arg (void *frame,
 
   // Make sure we're not trying to add too many arguments
   assert (arg_index >= 0);
-  assert (direction > CL_ARG_UNDEFINED && direction <= CL_ARG_FIRSTPRIVATE);
+//  assert (direction > CL_ARG_UNDEFINED && direction <= CL_ARG_FIRSTPRIVATE);
 
   fp->cl_data->args[arg_index].size = size;
   fp->cl_data->args[arg_index].data = data;

@@ -74,7 +74,7 @@ static inline size_t *get_work_sizes (wstream_df_frame_p fp)
   return fp->cl_data->work_sizes;
 }
 
-static inline wstream_df_view_p cl_get_arg_view (wstream_df_frame_p fp, int index)
+static inline wstream_df_view_p get_arg_view (wstream_df_frame_p fp, int index)
 {
   assert (fp->cl_data);
   assert (index < fp->cl_data->args_counter);

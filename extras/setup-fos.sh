@@ -21,5 +21,5 @@ cp -r fos-cmake/* fos
 cd fos
 mkdir -p build
 cd build
-/usr/bin/cmake -DCMAKE_BUILD_TYPE=Release ..
+/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug ..
 make install

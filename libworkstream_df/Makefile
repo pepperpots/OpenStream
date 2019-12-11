@@ -10,7 +10,7 @@ FOS_PATH= $(THIS_DIR)/../extras/fos
 FOS_CXXFLAGS= -I$(FOS_PATH)/install/include
 FOS_LDFLAGS= -L$(FOS_PATH)/install/lib -lbit_patch -lcynq -ludmalib
 
-WSTREAM_CXXFLAGS= -g -O2 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CXXFLAGS) -std=c++14 -Wno-unused-parameter -fpermissive $(FOS_CXXFLAGS)
+WSTREAM_CXXFLAGS= -g -O0 -ffast-math -D_GNU_SOURCE -I . -fPIC -Wall -Wextra $(CXXFLAGS) -std=c++14 -Wno-unused-parameter -fpermissive $(FOS_CXXFLAGS)
 WSTREAM_LDFLAGS= -lpthread $(LDFLAGS) -lnuma -lrt $(FOS_LDFLAGS)
 WSTREAM_DEPS= wstream_df.h cdeque.h cbuffer.h alloc.h arch.h config.h trace.h fibers.h list.h profiling.h work_distribution.h
 WSTREAM_DEPS+= cdeque-native.c.h cdeque-c11.c.h cdeque-native.h cdeque-c11.h tsc.h
@@ -45,7 +45,7 @@ convert.h convert.c trace_file.c trace_file.h ansi_extras.h: ../extras/ostv/conf
 ../install/bin/gcc:
 	cd .. ; $(MAKE)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c fpga-support.c $(WSTREAM_DEPS)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c fpga-support.c fos-manager.c $(WSTREAM_DEPS)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \

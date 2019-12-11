@@ -252,6 +252,10 @@ void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n);
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n);
 void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt);
 
+void __built_in_wstream_df_trace_view_access(void* v, int is_write);
+void __built_in_wstream_df_prepare_data(void* v);
+void __builtin_ia32_broadcast (void *v);
+
 }
 
 #endif
