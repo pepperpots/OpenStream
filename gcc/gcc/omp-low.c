@@ -235,7 +235,7 @@ typedef struct wstream_df_view
   enum openstream_cl_arg_direction dir;
 } wstream_df_view;
 
-static struct wstream_df_view *build_wstream_df_view_type (omp_context *, tree);
+static struct wstream_df_view *build_wstream_df_view_type (omp_context *, tree, enum omp_clause_code);
 
 static struct wstream_df_view *
 lookup_wstream_df_view (omp_context *ctx, tree key)
@@ -1322,7 +1322,7 @@ scan_sharing_clauses (tree clauses, omp_context *ctx)
 	      }
 	    else
 	      {
-		v = build_wstream_df_view_type (ctx, TREE_TYPE(view));
+		v = build_wstream_df_view_type (ctx, TREE_TYPE(view), OMP_CLAUSE_CODE (c));
 		v->clause = c;
 	      }
 
@@ -11886,7 +11886,8 @@ create_wstream_df_work_function (omp_context *ctx)
 }
 
 static struct wstream_df_view *
-build_wstream_df_view_type (omp_context *ctx, tree data_type)
+build_wstream_df_view_type (omp_context *ctx, tree data_type,
+						    enum omp_clause_code c_kind)
 {
   tree field, name, type, view_t;
 
@@ -11900,6 +11901,18 @@ build_wstream_df_view_type (omp_context *ctx, tree data_type)
   DECL_ARTIFICIAL (name) = 1;
   DECL_NAMELESS (name) = 1;
   TYPE_NAME (view_t) = name;
+
+  switch (c_kind)
+  {
+	case OMP_CLAUSE_INPUT:
+  	  ret->dir = OPENSTREAM_CL_ARG_IN;
+	  break;
+	case OMP_CLAUSE_OUTPUT:
+	  ret->dir = OPENSTREAM_CL_ARG_OUT;
+	  break;
+	default:
+	  gcc_unreachable ();
+  }
 
   /* Add fields.  */
   name = create_tmp_var_name ("broadcast_table");
