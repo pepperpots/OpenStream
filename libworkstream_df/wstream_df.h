@@ -89,7 +89,7 @@ typedef struct wstream_df_view
   size_t copy_count;
   size_t reuse_count;
   size_t ignore_count;
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
   struct wstream_df_broadcast_table* broadcast_table;
 #endif
 } wstream_df_view_t, *wstream_df_view_p;
@@ -255,7 +255,7 @@ void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n);
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n);
 
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
 void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt);
 #endif // USE_BROADCAST_TABLES
 

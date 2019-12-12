@@ -2,8 +2,9 @@
 #define BROADCAST_H
 
 #include "config.h"
+#include "hwloc-support.h"
 
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
 
 typedef struct wstream_df_broadcast_table {
   volatile void **node_src;
@@ -13,7 +14,7 @@ typedef struct wstream_df_broadcast_table {
 
 static inline void broadcast_table_init(wstream_df_broadcast_table_p bt)
 {
-  bt->node_src = calloc(num_numa_nodes(), sizeof(*bt->node_src))
+  bt->node_src = calloc(num_numa_nodes, sizeof(*bt->node_src));
   bt->refcount = 0;
   bt->src_node = 0;
 }

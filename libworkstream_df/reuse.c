@@ -108,34 +108,27 @@ void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wst
   __built_in_wstream_df_inc_view_ref(out_view->reuse_associated_view, 1);
 }
 
-void __built_in_wstream_df_prepare_peek_data(void* v)
-{
-#ifdef USE_BROADCAST_TABLES
-  wstream_df_thread_p cthread = current_thread;
+#if USE_BROADCAST_TABLES
+void __built_in_wstream_df_prepare_peek_data(void *v) {
   wstream_df_view_p peek_view = v;
   wstream_df_broadcast_table_p bt = peek_view->broadcast_table;
-  int this_node_id = cthread->numa_node->id;
-  void* wait_for_update_val = (void*)1;
 
   /* Data pointer already assigned. Nothing to do */
-  if(peek_view->data)
+  if (peek_view->data)
     return;
 
-  peek_view->data = bt->node_src[bt->src_node];
+  peek_view->data = (void *)bt->node_src[bt->src_node];
   return;
-#endif
 }
 
-void __built_in_wstream_df_prepare_peek_data_vec(size_t n, void* v)
-{
-#ifdef USE_BROADCAST_TABLES
+void __built_in_wstream_df_prepare_peek_data_vec(size_t n, void *v) {
   wstream_df_view_p fake_view = v;
   wstream_df_view_p view_arr = fake_view->next;
 
-  for(size_t i = 0; i < n; i++)
+  for (size_t i = 0; i < n; i++)
     __built_in_wstream_df_prepare_peek_data(&view_arr[i]);
-#endif
 }
+#endif // USE_BROADCAST_TABLES
 
 /* The parameter v is a pointer to the fake output view of the task
  * that is to be executed.

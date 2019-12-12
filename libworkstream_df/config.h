@@ -51,6 +51,14 @@
 
 #define CACHE_LAST_STEAL_VICTIM 1
 
+/*
+ * Dont know exactly what it does!
+ * WARNING, programs using broadcast table-enabled library have to be built
+ * with a broadcast table-enabled gcc.
+ */
+
+#define USE_BROADCAST_TABLES 0
+
  /*********************** OpenStream Debug Options ***********************/
 
 /*
@@ -120,8 +128,6 @@
 #define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
-
-// #define USE_BROADCAST_TABLES
 
 //#define WS_PAPI_PROFILE
 //#define WS_PAPI_MULTIPLEX

@@ -616,22 +616,20 @@ void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n)
   __sync_add_and_fetch (&(fp->refcount), n);
 }
 
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
 
-void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt)
-{
+void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt) {
   wstream_df_thread_p cthread = current_thread;
-  int sc = __sync_sub_and_fetch (&bt->refcount, 1);
+  int sc = __sync_sub_and_fetch(&bt->refcount, 1);
 
-  if(sc == 0) {
+  if (sc == 0) {
     /* Free local copies */
-    for(int i = 0; i < MAX_NUMA_NODES; i++) {
-      if(bt->node_src[i]) {
-	wstream_df_numa_node_p node = numa_node_by_id(i);
-	slab_free(&node->slab_cache, (void*)bt->node_src[i]);
+    for (unsigned i = 0; i < num_numa_nodes; i++) {
+      if (bt->node_src[i]) {
+        wstream_df_numa_node_p node = numa_node_by_id(i);
+        slab_free(&node->slab_cache, (void *)bt->node_src[i]);
       }
     }
-
     slab_free(cthread->slab_cache, bt);
   }
 }
@@ -647,7 +645,7 @@ void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
 
   if(sc == 0) {
     /* If this is a reusing peek view check broadcast table */
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
     if(in_view->broadcast_table)
       dec_broadcast_table_ref(in_view->broadcast_table);
     else
@@ -1458,7 +1456,7 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       }
 
       view->reuse_data_view = NULL;
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
       view->broadcast_table = NULL;
 #endif
       view->consumer_view = NULL;
@@ -1495,8 +1493,9 @@ broadcast (void *v)
     return;
   }
 
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
   wstream_df_broadcast_table_p bt = NULL;
+  wstream_df_thread_p cthread = current_thread;
   /* If the producer's burst matches all of the the consumer's
    *  horizons then use a broadcast table */
   if(first_cons_view) {
@@ -1517,7 +1516,7 @@ broadcast (void *v)
     bt->refcount = 1;
     bt->node_src[bt->src_node] = first_cons_view->data;
   }
-#endif
+#endif // USE_BROADCAST_TABLES
 
   for(wstream_df_view_p peek_view = prod_view->sibling;
       peek_view;
@@ -1528,7 +1527,7 @@ broadcast (void *v)
 	 use_broadcast_table)
 	{
 	  /* Defer copy */
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
 	  peek_view->broadcast_table = bt;
 	  bt->refcount++;
 #endif
