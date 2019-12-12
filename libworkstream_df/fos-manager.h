@@ -10,7 +10,9 @@ class wstream_fpga_env
 {
 #if !OPENSTREAM_FPGA_DISABLED
 public:
-  UdmaDevice* device;
+  static constexpr unsigned NUMBER_ACCELERATORS = 3;
+
+  UdmaDevice* devices[NUMBER_ACCELERATORS];
   PRManager prmanager;
 #endif
 };
@@ -20,7 +22,7 @@ class wstream_physical_buffer_view
 public:
   char* ptr;
   long addr;
-  unsigned size;
+  int size;
 };
 
 extern "C" {
