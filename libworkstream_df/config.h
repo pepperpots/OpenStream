@@ -24,6 +24,33 @@
 
 // #define WS_NO_YIELD_SPIN
 
+/*
+ * Disable workers local cache. A Task placed into this local cache cannot be
+ * stolen by other workers. Static control program may temporarily stall until
+ * the control program task finishes because of that.
+ */
+
+#define DISABLE_WQUEUE_LOCAL_CACHE 0
+
+/*
+ * If the producer burst is equal to the consumer window, defer the allocation
+ * until the producer is scheduled for execution. If the producer burst is
+ * smaller to the consumer window, the allocation is not deferred. The same
+ * happens for views allocation, do not allocate until the producer is
+ * scheduled for execution.
+ */
+
+#define DEFERRED_ALLOC 1
+
+/*
+ * When a worker is seeking a new task to execute, if no task is available in
+ * the worker local cache or work queue, try stealing from a worker from which
+ * a previous steal succeeded before visiting the numa-aware machine topology
+ * tree to steal a task.
+ */
+
+#define CACHE_LAST_STEAL_VICTIM 1
+
  /*********************** OpenStream Debug Options ***********************/
 
 /*
@@ -40,15 +67,15 @@
  * the pre_main function.
  */
 
-#define HWLOC_VERBOSE
-
+// #define HWLOC_VERBOSE
 
  /*********************** OpenStream Profiling Options ***********************/
 
 /*
  * Profile the work queues.
  */
-#define WQUEUE_PROFILE 1
+
+#define WQUEUE_PROFILE 0
 
 /*
  * MATRIX_PROFILE profiles the amount of information exchanged between the the
@@ -71,6 +98,8 @@
 
 // #define PROFILE_RUSAGE
 
+ /*********************** OpenStream Probably Broken Options ***********************/
+
 #define PUSH_MIN_MEM_LEVEL 1
 #define PUSH_MIN_FRAME_SIZE (64 * 1024)
 #define PUSH_MIN_REL_FRAME_SIZE 1.3
@@ -79,10 +108,6 @@
 
 #define NUM_PUSH_REORDER_SLOTS 0
 #define ALLOW_PUSH_REORDER (ALLOW_PUSHES && NUM_PUSH_REORDER_SLOTS > 0)
-
-#define DEFERRED_ALLOC
-
-#define CACHE_LAST_STEAL_VICTIM 0
 
 #define MAX_WQEVENT_SAMPLES 0
 #define TRACE_RT_INIT_STATE
@@ -96,7 +121,7 @@
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
-//#define USE_BROADCAST_TABLES
+// #define USE_BROADCAST_TABLES
 
 //#define WS_PAPI_PROFILE
 //#define WS_PAPI_MULTIPLEX
