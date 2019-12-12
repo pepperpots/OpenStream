@@ -69,7 +69,7 @@ bool discover_machine_topology(void) {
       malloc(nproc * sizeof(*cpuid_to_closest_numa_node));
   populate_closest_numa_nodes();
 
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
   fprintf(stdout,
           "[HWLOC Info] The machine has a depth of %d\n"
           "[HWLOC Info] The machine has %d numa node(s)\n"
@@ -125,7 +125,7 @@ bool distribute_worker_on_topology(unsigned num_workers,
     hwloc_bitmap_or(restricted_set, restricted_set, distrib_sets[i]);
     (*processing_units)[i] = hwloc_get_next_obj_inside_cpuset_by_type(
         machine_topology, distrib_sets[i], HWLOC_OBJ_PU, NULL);
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
     fprintf(stderr, "Worker %u mapped to processing unit %u (OS index %u)\n", i,
             (*processing_units)[i]->logical_index,
             (*processing_units)[i]->os_index);

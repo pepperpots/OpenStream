@@ -47,7 +47,7 @@ static inline int slab_force_advise_pages(void* addr, size_t size, int advice)
 	       round_page_size(size),
 	       advice))
     {
-#ifdef SLAB_ALLOCATOR_VERBOSE
+#if SLAB_ALLOCATOR_VERBOSE
 	    fprintf(stderr, "Could not disable use of huge pages\n");
 	    perror("madvise");
 #endif // SLAB_ALLOCATOR_VERBOSE
@@ -72,7 +72,7 @@ static inline int slab_get_numa_node(void* address, unsigned int size)
   hwloc_bitmap_t numa_nodes = numa_memlocation_of_memory(address, size);
   // The memory could be allocated on more than one node, return one of them
   int max_node = hwloc_bitmap_first(numa_nodes);
-#ifdef SLAB_ALLOCATOR_VERBOSE
+#if SLAB_ALLOCATOR_VERBOSE
 	if(max_node < 0)
 	  fprintf(stderr, "Could not determine node of %p\n", address);
 #endif // SLAB_ALLOCATOR_VERBOSE
@@ -229,7 +229,7 @@ static inline int slab_alloc_memalign(slab_cache_p slab_cache, void** ptr, size_
   pthread_spin_lock(&slab_cache->free_mem_lock);
 
   if(slab_cache->free_mem_bytes < alloc_size) {
-#ifdef SLAB_ALLOCATOR_VERBOSE
+#if SLAB_ALLOCATOR_VERBOSE
     if(slab_cache->free_mem_bytes)
       printf("wasted %zu bytes\n", slab_cache->free_mem_bytes);
 #endif // SLAB_ALLOCATOR_VERBOSE
@@ -328,7 +328,7 @@ slab_warmup (slab_cache_p slab_cache, unsigned int idx, unsigned int num_slabs, 
   assert(!posix_memalign_success);
 
   if (bind_memory_to_numa_node(alloc, alloc_size, node)) {
-#ifdef SLAB_ALLOCATOR_VERBOSE
+#if SLAB_ALLOCATOR_VERBOSE
     fprintf(stderr, "Could not slab memory to numa node %u\n", node);
 #endif // SLAB_ALLOCATOR_VERBOSE
   }

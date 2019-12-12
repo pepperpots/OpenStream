@@ -19,10 +19,11 @@
  * When a worker did not successfully steal some work from any other workers,
  * the worker will relinquish the CPU and the thread is placed at the end of
  * the scheduler queue.
- * Activating this option will activate active polling for new task without stealing the 
+ * With this option active, workers will actively poll for new task without
+ * relinquishing the CPU.
  */
 
-// #define WS_NO_YIELD_SPIN
+#define WS_NO_YIELD_SPIN 0
 
 /*
  * Disable workers local cache. A Task placed into this local cache cannot be
@@ -67,7 +68,7 @@
  * This may have a performance impact.
  */
 
-// #define SLAB_ALLOCATOR_VERBOSE
+#define SLAB_ALLOCATOR_VERBOSE 0
 
 /*
  * Make HWLOC print information about the hardware and worker placement. This
@@ -75,7 +76,7 @@
  * the pre_main function.
  */
 
-// #define HWLOC_VERBOSE
+#define HWLOC_VERBOSE 0
 
  /*********************** OpenStream Profiling Options ***********************/
 
@@ -92,7 +93,8 @@
  * REQUIRES WQUEUE_PROFILE
  */
 
-// #define MATRIX_PROFILE "wqueue_matrix.out"
+#define MATRIX_PROFILE 0
+#define MATRIX_PROFILE_OUTPUT "wqueue_matrix.out"
 
 /*
  * Use linux getrusage function to gather resource usage for running threads.
@@ -104,7 +106,7 @@
  *   - The number of involuntary context switches (e.g. kernel scheduler intervention)
  */
 
-// #define PROFILE_RUSAGE
+#define PROFILE_RUSAGE 0
 
  /*********************** OpenStream Probably Broken Options ***********************/
 
@@ -154,12 +156,8 @@
 /*
  * Some configuration checks
  */
-#if defined(UNIFORM_MEMORY_ACCESS) && MAX_NUMA_NODES != 1
-#error "UNIFORM_MEMORY_ACCESS defined, but MAX_NUMA_NODES != 1"
-#endif
-
-#if defined(MATRIX_PROFILE) && !WQUEUE_PROFILE
+#if MATRIX_PROFILE && !WQUEUE_PROFILE
 #error "MATRIX_PROFILE defined, but WQUEUE_PROFILE != 1"
-#endif // defined(MATRIX_PROFILE) && !defined(WQUEUE_PROFILE)
+#endif
 
 #endif

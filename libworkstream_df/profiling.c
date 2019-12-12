@@ -6,12 +6,12 @@
 #include "numa.h"
 #include <pthread.h>
 
-#ifdef PROFILE_RUSAGE
+#if PROFILE_RUSAGE
 #include <sys/time.h>
 #include <sys/resource.h>
-#endif // defined(PROFILE_RUSAGE)
+#endif // PROFILE_RUSAGE
 
-#ifdef MATRIX_PROFILE
+#if MATRIX_PROFILE
 #include <assert.h>
 
 void *tm_data__;
@@ -25,7 +25,7 @@ void init_transfer_matrix(void) {
 void dump_transfer_matrix(unsigned int num_workers)
 {
 	unsigned int i, j;
-	FILE* matrix_fp = fopen(MATRIX_PROFILE, "w+");
+	FILE* matrix_fp = fopen(MATRIX_PROFILE_OUTPUT, "w+");
 	assert(matrix_fp);
 
 	for (i = 0; i < num_workers; ++i) {
@@ -247,7 +247,7 @@ wqueue_counters_enter_runtime(struct wstream_df_thread* th)
 {
 }
 
-#ifdef PROFILE_RUSAGE
+#if PROFILE_RUSAGE
 
 void wqueue_counters_profile_rusage(struct wstream_df_thread *th) {
   struct rusage usage;
@@ -263,7 +263,7 @@ void wqueue_counters_profile_rusage(struct wstream_df_thread *th) {
   th->inv_context_switches = usage.ru_nivcsw;
 }
 
-#endif // defined(PROFILE_RUSAGE)
+#endif // PROFILE_RUSAGE
 
 void init_wqueue_counters(wstream_df_thread_p th) {
   th->steals_owncached = 0;
@@ -271,7 +271,7 @@ void init_wqueue_counters(wstream_df_thread_p th) {
   th->steals_mem = calloc(topology_depth, sizeof(*th->steals_mem));
   if (bind_memory_to_cpu_memspace(
           th->steals_mem, topology_depth * sizeof(*th->steals_mem), th->cpu)) {
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
     perror("hwloc_membind");
 #endif // HWLOC_VERBOSE
   }
@@ -284,7 +284,7 @@ void init_wqueue_counters(wstream_df_thread_p th) {
   th->bytes_mem = calloc(topology_depth, sizeof(*th->bytes_mem));
   if (bind_memory_to_cpu_memspace(
           th->bytes_mem, topology_depth * sizeof(*th->bytes_mem), th->cpu)) {
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
     perror("hwloc_membind");
 #endif // HWLOC_VERBOSE
   }
@@ -297,13 +297,13 @@ void init_wqueue_counters(wstream_df_thread_p th) {
 
   th->reuse_addr = 0;
   th->reuse_copy = 0;
-#ifdef PROFILE_RUSAGE
+#if PROFILE_RUSAGE
   th->system_time_us = 0;
   th->major_page_faults = 0;
   th->minor_page_faults = 0;
   th->max_resident_size = 0;
   th->inv_context_switches = 0;
-#endif // defined(PROFILE_RUSAGE)
+#endif // PROFILE_RUSAGE
 
   init_papi(th);
 }
@@ -316,7 +316,7 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	int i;
 	const char* events[] = WS_PAPI_EVENTS;
 #endif // defined(WS_PAPI_PROFILE)
-#ifdef PROFILE_RUSAGE
+#if PROFILE_RUSAGE
 	printf ("Thread %d: system_time_us = %lld\n",
 		th->worker_id,
 		th->system_time_us);
@@ -332,7 +332,7 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	printf ("Thread %d: inv_context_switches = %lld\n",
 		th->worker_id,
 		th->inv_context_switches);
-#endif // defined(PROFILE_RUSAGE)
+#endif // PROFILE_RUSAGE
 	printf ("Thread %d: tasks_created = %lld\n",
 		th->worker_id,
 		th->tasks_created);

@@ -72,7 +72,7 @@ void match_reuse_input_clause_with_output_clause(wstream_df_view_p out_view, wst
   reuse_view_sanity_check(out_view, in_view);
   in_view->reuse_data_view = NULL;
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
   out_view->consumer_view = in_view;
 #else
   wstream_df_thread_p cthread = current_thread;
@@ -94,7 +94,7 @@ void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wst
   assert(!is_reuse_view(in_view));
   assert(in_view->refcount == 1);
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
   if(!in_view->data) {
     match_reuse_output_clause_with_reuse_input_clause(out_view, in_view);
     return;
@@ -244,7 +244,7 @@ void __built_in_wstream_df_prepare_data_vec(size_t n, void* v)
 
 void __built_in_wstream_df_reuse_update_data(void* v)
 {
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
     const int deferred_alloc_enabled = 1;
 #else
     const int deferred_alloc_enabled = 0;

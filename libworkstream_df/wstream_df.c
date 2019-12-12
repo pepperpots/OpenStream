@@ -558,7 +558,7 @@ void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
 
 void __built_in_wstream_df_alloc_view_data_deferred(void* v, size_t size)
 {
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	wstream_df_view_p view = v;
 	view->data = NULL;
 #else
@@ -761,7 +761,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 		  match_reuse_output_clause_with_input_clause(prod_view, view);
 	      }
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	      /* Data of the consumer view has not been allocated
 	       * yet. If we are the only producer, we further defer
 	       * allocation until the producer gets ready. Otherwise
@@ -828,7 +828,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	      match_reuse_output_clause_with_input_clause(view, cons_view);
 	  }
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	  /* Data of the consumer view has not been allocated
 	   * yet. If we are the only producer, we further defer
 	   * allocation until the producer gets ready. Otherwise
@@ -970,7 +970,7 @@ __attribute__((__optimize__("O1"))) static void worker_thread(void) {
       wqueue_counters_enter_runtime(current_thread);
       inc_wqueue_counter(&cthread->tasks_executed, 1);
     } else {
-#ifndef WS_NO_YIELD_SPIN
+#if WS_NO_YIELD_SPIN
       sched_yield();
 #endif
     }
@@ -1188,7 +1188,7 @@ void pre_main()
 
   init_transfer_matrix();
 
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
   fprintf(stdout, "\n[HWLOC Info] Using %u workers distributed as:\n", wstream_num_workers);
 #endif
   hwloc_obj_t *processor_mapping = NULL;
@@ -1196,7 +1196,7 @@ void pre_main()
     wstream_df_error("[hwloc] Warning: could distribute workers on %d CPUs\n",
                      wstream_num_workers);
   }
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
   fprintf(stdout, "\n[HWLOC Info] Worker placement topology:\n");
   print_topology_tree(stdout);
 #endif
@@ -1532,7 +1532,7 @@ broadcast (void *v)
 	  bt->refcount++;
 #endif
       } else {
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	  if(!peek_view->data)
 	    __built_in_wstream_df_alloc_view_data(peek_view, peek_view->horizon);
 #endif

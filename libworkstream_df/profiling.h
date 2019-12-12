@@ -49,16 +49,16 @@ init_papi(struct wstream_df_thread* th);
 #define update_papi_timestamp(th, ts) do { } while(0)
 #endif
 
-#ifdef PROFILE_RUSAGE
+#if PROFILE_RUSAGE
 #define PROFILE_RUSAGE_FIELDS \
 	unsigned long long system_time_us; \
 	unsigned long long major_page_faults; \
 	unsigned long long minor_page_faults; \
 	unsigned long long max_resident_size; \
 	unsigned long long inv_context_switches;
-#else // !defined(PROFILE_RUSAGE)
+#else // !PROFILE_RUSAGE
 #define PROFILE_RUSAGE_FIELDS
-#endif // defined(PROFILE_RUSAGE)
+#endif // PROFILE_RUSAGE
 
 #if WQUEUE_PROFILE 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
@@ -85,11 +85,11 @@ stop_wqueue_counters (void);
 void
 wqueue_counters_enter_runtime(struct wstream_df_thread* th);
 
-#ifdef PROFILE_RUSAGE
+#if PROFILE_RUSAGE
 void wqueue_counters_profile_rusage(struct wstream_df_thread *th);
-#else // !defined(PROFILE_RUSAGE)
+#else // !PROFILE_RUSAGE
   #define wqueue_counters_profile_rusage(th) do {} while(0)
-#endif // defined(PROFILE_RUSAGE)
+#endif // PROFILE_RUSAGE
 
 void
 dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread** wstream_df_worker_threads);
@@ -127,7 +127,7 @@ dump_global_wqueue_counters ();
 #define set_wqueue_counter_if_zero(ctr, val) do {} while(0)
 #endif
 
-#ifdef MATRIX_PROFILE
+#if MATRIX_PROFILE
 
 extern void *tm_data__;
 #define transfer_matrix ((unsigned long long(*)[wstream_num_workers])tm_data__)
@@ -141,7 +141,7 @@ inline void inc_transfer_matrix_entry(unsigned int consumer,
 void init_transfer_matrix(void);
 void dump_transfer_matrix(unsigned int num_workers);
 
-#else // !defined(MATRIX_PROFILE)
+#else // !MATRIX_PROFILE
 
 #define inc_transfer_matrix_entry(consumer, producer, num_bytes) do {} while(0)
 #define init_transfer_matrix() do {} while(0)

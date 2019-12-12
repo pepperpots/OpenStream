@@ -14,7 +14,7 @@ static inline void numa_node_init(wstream_df_numa_node_p node, int node_id) {
   if (bind_memory_to_numa_node(node->workers,
                                wstream_num_workers * sizeof(*node->workers),
                                node_id)) {
-#ifdef HWLOC_VERBOSE 
+#if HWLOC_VERBOSE 
     fprintf(stderr, "Could not bind memory to numa node %u\n", node_id);
 #endif // HWLOC_VERBOSE
   }
@@ -30,7 +30,7 @@ int numa_nodes_init(void)
       wstream_df_fatal("Cannot allocate numa node structure");
 
     if (bind_memory_to_numa_node(ptr, size, i)) {
-#ifdef HWLOC_VERBOSE
+#if HWLOC_VERBOSE
       fprintf(stderr, "Could not bind memory to numa node %u\n", i);
 #endif // HWLOC_VERBOSE
     }
