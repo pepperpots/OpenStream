@@ -49,9 +49,10 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   wstream_physical_buffer_view in_buffers[get_num_args(fp)];
   wstream_physical_buffer_view out_buffers[get_num_args(fp)];
 
-  // Process output arguments
-  for (int i = 0; i < 1; i++)
+  for(int i = 0; i < num_args; i++)
   {
+    if(get_arg_direction(fp, i) == CL_ARG_OUT)
+    {
       // Create view for output
       out_view_list[out_index] = get_arg_view(fp, i);
       wstream_df_frame_p cons = out_view_list[out_index]->owner;
@@ -68,11 +69,9 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
 
       // Increment number of processed output buffers
       out_index++;
-  }
-
-  // Process input arguments
-  for (int i = 1; i < 3; i++)
-  {
+    }
+    else if (get_arg_direction(fp, i) == CL_ARG_IN)
+    {
       // Create view for input
       in_view_list[in_index] = get_arg_view(fp, i);
 
@@ -90,6 +89,7 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
 
       // Increment number of processed input buffers
       in_index++;
+    }
   }
 
   // Create parameters list for a given accelerator
@@ -103,8 +103,8 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   {
     case 0:
       params = init_params_vecadd(out_buffers[0].addr,
-   	         in_buffers[0].addr, in_buffers[1].addr,
-	         out_buffers[0].size / sizeof(int));
+             in_buffers[0].addr, in_buffers[1].addr,
+           out_buffers[0].size / sizeof(int));
       break;
   }
 
