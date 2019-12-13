@@ -124,7 +124,7 @@ typedef struct worker_event {
 struct wstream_df_thread;
 struct wstream_df_frame;
 
-#include "trace_inline.c.h"
+#include "trace_inline.h"
 
 
 void trace_init(struct wstream_df_thread* cthread);

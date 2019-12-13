@@ -53,9 +53,13 @@
 #define CACHE_LAST_STEAL_VICTIM 1
 
 /*
- * Dont know exactly what it does!
- * WARNING, programs using broadcast table-enabled library have to be built
- * with a broadcast table-enabled gcc.
+ * In openStream, a broadcast (peek operation) creates a copy of the viewed
+ * data for each peeking task. With a broadcast table, the number of copy is
+ * limited to one per numa node. This can significantly reduce the number of
+ * copies but comes with extra runtime overhead of managing the table.
+ * 
+ * WARNING: Enabling broadcast tables requires rebuilding the source codes
+ * using OpenStream.
  */
 
 #define USE_BROADCAST_TABLES 0
@@ -82,6 +86,9 @@
 
 /*
  * Profile the work queues.
+ *
+ * WARNING: Enabling queue profiling requires rebuilding the source codes
+ * using OpenStream.
  */
 
 #define WQUEUE_PROFILE 0
@@ -90,7 +97,8 @@
  * MATRIX_PROFILE profiles the amount of information exchanged between the the
  * worker threads through the streams. The information is dumped inside the
  * specified file in a matrix form (line worker id to column worker id).
- * REQUIRES WQUEUE_PROFILE
+ * 
+ * Option requirement: WQUEUE_PROFILE
  */
 
 #define MATRIX_PROFILE 0
@@ -107,8 +115,32 @@
  */
 
 #define PROFILE_RUSAGE 0
+ 
+ /*********************** OpenStream Tracing Aftermath ***********************/
 
- /*********************** OpenStream Probably Broken Options ***********************/
+/*
+ * Enable a per-worker event sampling queue which is capable to store up to
+ * MAX_WQEVENT_SAMPLES events. The trace will be stored in the file defined by
+ * WQEVENT_SAMPLING_OUTFILE.
+ */
+
+#define MAX_WQEVENT_SAMPLES 0
+#define WQEVENT_SAMPLING_OUTFILE "events.ost"
+
+/*
+ * The worker initialization state is registered into the trace. Otherwise, the
+ * first state will be a work seeking state.
+ */
+
+#define TRACE_RT_INIT_STATE
+
+/*
+ * What on the silicon is this?
+ */
+
+#define MAX_WQEVENT_PARAVER_CYCLES -1
+
+ /*********************** OpenStream Probably Broken Options (Post-HWLOC untested) ***********************/
 
 #define PUSH_MIN_MEM_LEVEL 1
 #define PUSH_MIN_FRAME_SIZE (64 * 1024)
@@ -119,17 +151,6 @@
 #define NUM_PUSH_REORDER_SLOTS 0
 #define ALLOW_PUSH_REORDER (ALLOW_PUSHES && NUM_PUSH_REORDER_SLOTS > 0)
 
-#define MAX_WQEVENT_SAMPLES 0
-#define TRACE_RT_INIT_STATE
-/* #define TRACE_DATA_READS */
-#define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
-#define MAX_WQEVENT_PARAVER_CYCLES -1
-#define NUM_WQEVENT_TASKHIST_BINS 1000
-
-#define WQEVENT_SAMPLING_OUTFILE "events.ost"
-#define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
-#define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
-#define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
 
 //#define WS_PAPI_PROFILE
 //#define WS_PAPI_MULTIPLEX
@@ -141,6 +162,10 @@
 
 // /* #define TRACE_PAPI_COUNTERS */
 //#endif
+
+/*********************** You Shall Not Touch ***********************/
+
+#define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
 
 #ifndef IN_GCC
 #include <string.h>
@@ -156,6 +181,10 @@
 /*
  * Some configuration checks
  */
+#if ALLOW_WQEVENT_SAMPLING && !WQUEUE_PROFILE
+#error "ALLOW_WQEVENT_SAMPLING defined, but WQUEUE_PROFILE != 1"
+#endif
+
 #if MATRIX_PROFILE && !WQUEUE_PROFILE
 #error "MATRIX_PROFILE defined, but WQUEUE_PROFILE != 1"
 #endif

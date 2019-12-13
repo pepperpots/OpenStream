@@ -52,7 +52,7 @@ void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame
 
   cthread->events[cthread->num_events].time = rdtsc() - cthread->tsc_offset;
   cthread->events[cthread->num_events].type = WQEVENT_FRAME_INFO;
-  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].cpu = cthread->cpu->logical_index;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
   cthread->events[cthread->num_events].frame_info.addr = (uint64_t)frame;
@@ -339,7 +339,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 
     /* Write CPU info */
     dsk_ci.header.type = EVENT_TYPE_CPU_INFO;
-    dsk_ci.header.cpu = th->cpu;
+    dsk_ci.header.cpu = th->cpu->logical_index;
     dsk_ci.numa_node = th->numa_node->id;
 
     write_struct_convert(fp, &dsk_ci, sizeof(dsk_ci), trace_cpu_info_conversion_table, 0);

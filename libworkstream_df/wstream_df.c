@@ -224,6 +224,9 @@ void *__builtin_ia32_tcreate(size_t sc, size_t size, void *wfn, bool has_lp) {
   trace_state_change(cthread, WORKER_STATE_RT_TCREATE);
   trace_tcreate(cthread, NULL);
 
+#if ALLOW_WQEVENT_SAMPLING
+  int curr_idx = cthread->num_events - 1;
+#endif // ALLOW_WQEVENT_SAMPLING
   frame_pointer = slab_alloc(cthread, cthread->slab_cache, size + extra_size);
 
   //  printf("F+ Allocating %p\n", frame_pointer);
@@ -275,7 +278,6 @@ void *__builtin_ia32_tcreate(size_t sc, size_t size, void *wfn, bool has_lp) {
 #endif
 
 #if ALLOW_WQEVENT_SAMPLING
-  int curr_idx = cthread->num_events - 1;
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
 #endif
 
@@ -1220,8 +1222,6 @@ void pre_main()
   unsigned numa_node = closest_numa_node_of_processing_unit(processor_mapping[0]);
   numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
 
-  trace_init(current_thread);
-
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker_threads[0]->push_fifo);
 #endif
@@ -1245,7 +1245,7 @@ void pre_main()
       wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
 #endif // !DISABLE_WQUEUE_LOCAL_CACHE
     }
-
+  
     cs = object_glibc_cpuset(current_thread->cpu);
 
     int error_val = pthread_setaffinity_np(pthread_self(), sizeof(cs), &cs);
@@ -1268,6 +1268,8 @@ void pre_main()
 
     wstream_df_worker_threads[0]->current_work_fn = (void *)main;
     wstream_df_worker_threads[0]->current_frame = NULL;
+
+  trace_init(current_thread);
 
 #if ALLOW_WQEVENT_SAMPLING
   if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
@@ -1475,9 +1477,12 @@ static inline void
 broadcast (void *v)
 {
   wstream_df_view_p prod_view = (wstream_df_view_p) v;
-#if ALLOW_WQEVENT_SAMPLING
-  wstream_df_thread_p cthread = current_thread;
 
+#if ALLOW_WQEVENT_SAMPLING || USE_BROADCAST_TABLES
+  wstream_df_thread_p cthread = current_thread;
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING
   trace_state_change(cthread, WORKER_STATE_RT_BCAST);
 #endif
 
@@ -1495,7 +1500,6 @@ broadcast (void *v)
 
 #if USE_BROADCAST_TABLES
   wstream_df_broadcast_table_p bt = NULL;
-  wstream_df_thread_p cthread = current_thread;
   /* If the producer's burst matches all of the the consumer's
    *  horizons then use a broadcast table */
   if(first_cons_view) {
@@ -1668,7 +1672,7 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
       if(!leader)
 	trace_data_read(cthread, 0, slab_size_of(view->data), 0, view->data);
       else
-	trace_data_read(cthread, leader->cpu, slab_size_of(view->data), 0, view->data);
+	trace_data_read(cthread, leader->cpu->logical_index, slab_size_of(view->data), 0, view->data);
   }
 #endif // ALLOW_WQEVENT_SAMPLING
 }
