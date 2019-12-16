@@ -30,7 +30,7 @@ paramlist init_params_vecadd(long C, long A, long B, int n)
   return params;
 }
 
-void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_env_p)
+void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_env_p, int slot_id)
 {
   wstream_df_view_p out_view_list[get_num_args(fp)];
   wstream_df_view_p in_view_list[get_num_args(fp)];
@@ -41,8 +41,7 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   int num_args = get_num_args(fp);
 
   // Mapping is cached so it is safe to call it here
-  // TODO: Device number should depend on managing thread number
-  char* accelerator_memory = (char*) fpga_env_p->devices[0]->map();
+  char* accelerator_memory = (char*) fpga_env_p->devices[slot_id]->map();
   int accelerator_memory_offset = 0; 
 
   // Create views for accelerator buffers
@@ -59,9 +58,8 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
       __built_in_wstream_df_prepare_data(out_view_list[out_index]);
 
       // Assign next free chunk of memory to the buffer
-      // TODO: Device number should depend on managing thread number
       out_buffers[out_index].ptr = accelerator_memory + accelerator_memory_offset;
-      out_buffers[out_index].addr = fpga_env_p->devices[0]->phys_addr + accelerator_memory_offset;
+      out_buffers[out_index].addr = fpga_env_p->devices[slot_id]->phys_addr + accelerator_memory_offset;
       out_buffers[out_index].size = fp->cl_data->args[i].size;
 
       // Move pointer to point to the next free chunk
@@ -76,9 +74,8 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
       in_view_list[in_index] = get_arg_view(fp, i);
 
       // Assign next free chunk of memory to the buffer
-      // TODO: Device number should depend on managing thread number
       in_buffers[in_index].ptr = accelerator_memory + accelerator_memory_offset;
-      in_buffers[in_index].addr = fpga_env_p->devices[0]->phys_addr + accelerator_memory_offset;
+      in_buffers[in_index].addr = fpga_env_p->devices[slot_id]->phys_addr + accelerator_memory_offset;
       in_buffers[in_index].size = fp->cl_data->args[i].size;
 
       // Move pointer to point to the next free chunk
@@ -93,6 +90,8 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   }
 
   // Create parameters list for a given accelerator
+  // TODO: String is available on compile time is there
+  // any way to reduce overhead of making the decision?
   std::map<std::string, int> params_lookup({
     {"Partial_vec_add", 0}
   });

@@ -31,7 +31,7 @@ typedef struct wstream_fpga_env  wstream_fpga_env_t;
 typedef struct wstream_fpga_env* wstream_fpga_env_p;
 
 wstream_fpga_env_p create_fpga_environment();
-void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_env_p);
+void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_env_p, int slot_id);
 void destroy_fpga_environment(wstream_fpga_env_p fpga_env_p);
 
 }

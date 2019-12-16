@@ -207,6 +207,8 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 {
   pthread_t posix_thread_id;
   unsigned int worker_id;
+  // TODO: Used for FPGA acceleration
+  int fpga_worker;
 
   cdeque_t work_deque __attribute__((aligned (64)));
   wstream_df_frame_p own_next_cached_thread __attribute__((aligned (64)));

@@ -836,7 +836,6 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 __attribute__((__optimize__("O1"))) static void
 worker_thread(void)
 {
-
   wstream_df_thread_p cthread = current_thread;
 
   current_barrier = NULL;
@@ -872,82 +871,125 @@ worker_thread(void)
         nanosleep(&ts, NULL);
       }
 
-#if ALLOW_PUSHES
-#if !ALLOW_PUSH_REORDER
-    import_pushes(cthread);
-#else
-    reorder_pushes(cthread);
-#endif
-#endif
-
-    wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
-
-    if (fp != NULL)
+    // TODO: Used by FPGA acceleration only
+    if (cthread->fpga_worker)
     {
-      cthread->current_work_fn = fp->work_fn;
-      cthread->current_frame = fp;
+      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
 
-      wqueue_counters_enter_runtime(current_thread);
-      trace_task_exec_start(cthread, fp);
-      trace_state_change(cthread, WORKER_STATE_TASKEXEC);
-
-      wqueue_counters_profile_rusage(cthread);
-      update_papi(cthread);
-      trace_runtime_counters(cthread);
-
-      if (fpga_available(fp))
+      if (fp != NULL)
       {
-        execute_task_on_accelerator(fp, fpga_env_p);
+        cthread->current_work_fn = fp->work_fn;
+        cthread->current_frame = fp; 
+
+        if (fpga_available(fp))
+        {
+          execute_task_on_accelerator(fp, fpga_env_p, cthread->worker_id - 3);
+        }
+        else
+        {
+          fp->work_fn(fp);
+        }
+
+        __compiler_fence;
+
+        if (cthread != NULL)
+        {
+#ifdef __aarch64__
+          __asm __volatile("str %[current_thread], %[cthread]"
+                           : [cthread] "=m"(cthread)
+                           : [current_thread] "r"(current_thread)
+                           : "memory");
+#else
+          __asm__ __volatile__("mov %[current_thread], %[cthread]"
+                               : [cthread] "=m"(cthread)
+                               : [current_thread] "R"(current_thread)
+                               : "memory");
+#endif
+        }
+        __compiler_fence;
+
+        cthread->current_work_fn = NULL;
+        cthread->current_frame = NULL;
       }
       else
       {
-        fp->work_fn(fp);
-      }
-
-      wqueue_counters_profile_rusage(cthread);
-      trace_runtime_counters(cthread);
-      update_papi(cthread);
-
-      __compiler_fence;
-
-      /* It is possible that the work function was suspended then
-	     its continuation migrated.  We need to restore TLS local
-	     saves.  */
-
-      /* WARNING: Hack to prevent GCC from deadcoding the next
-	     assignment (volatile qualifier does not prevent the
-	     optimization).  CTHREAD is guaranteed not to be null
-	     here.  */
-      if (cthread != NULL)
-      {
-#ifdef __aarch64__
-        __asm __volatile("str %[current_thread], %[cthread]"
-                         : [cthread] "=m"(cthread)
-                         : [current_thread] "r"(current_thread)
-                         : "memory");
-#else
-        __asm__ __volatile__("mov %[current_thread], %[cthread]"
-                             : [cthread] "=m"(cthread)
-                             : [current_thread] "R"(current_thread)
-                             : "memory");
+#ifndef _WS_NO_YIELD_SPIN
+        sched_yield();
 #endif
       }
-      __compiler_fence;
-
-      trace_task_exec_end(cthread, fp);
-      cthread->current_work_fn = NULL;
-      cthread->current_frame = NULL;
-
-      trace_state_restore(cthread);
-
-      wqueue_counters_enter_runtime(current_thread);
-      inc_wqueue_counter(&cthread->tasks_executed, 1);
     }
     else
     {
-#ifndef _WS_NO_YIELD_SPIN
-      sched_yield();
+#if ALLOW_PUSHES
+#if !ALLOW_PUSH_REORDER
+      import_pushes(cthread);
+#else
+      reorder_pushes(cthread);
 #endif
+#endif
+
+      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
+
+      if (fp != NULL)
+      {
+        cthread->current_work_fn = fp->work_fn;
+        cthread->current_frame = fp;
+
+        wqueue_counters_enter_runtime(current_thread);
+        trace_task_exec_start(cthread, fp);
+        trace_state_change(cthread, WORKER_STATE_TASKEXEC);
+
+        wqueue_counters_profile_rusage(cthread);
+        update_papi(cthread);
+        trace_runtime_counters(cthread);
+
+        fp->work_fn(fp);
+
+        wqueue_counters_profile_rusage(cthread);
+        trace_runtime_counters(cthread);
+        update_papi(cthread);
+
+        __compiler_fence;
+
+        /* It is possible that the work function was suspended then
+         its continuation migrated.  We need to restore TLS local
+         saves.  */
+
+        /* WARNING: Hack to prevent GCC from deadcoding the next
+         assignment (volatile qualifier does not prevent the
+         optimization).  CTHREAD is guaranteed not to be null
+         here.  */
+        if (cthread != NULL)
+        {
+#ifdef __aarch64__
+          __asm __volatile("str %[current_thread], %[cthread]"
+                           : [cthread] "=m"(cthread)
+                           : [current_thread] "r"(current_thread)
+                           : "memory");
+#else
+          __asm__ __volatile__("mov %[current_thread], %[cthread]"
+                               : [cthread] "=m"(cthread)
+                               : [current_thread] "R"(current_thread)
+                               : "memory");
+#endif
+        }
+        __compiler_fence;
+
+        trace_task_exec_end(cthread, fp);
+        cthread->current_work_fn = NULL;
+        cthread->current_frame = NULL;
+
+        trace_state_restore(cthread);
+
+        wqueue_counters_enter_runtime(current_thread);
+        inc_wqueue_counter(&cthread->tasks_executed, 1);
+      }
+      else
+      {
+#ifndef _WS_NO_YIELD_SPIN
+        sched_yield();
+#endif
+      }
     }
   }
 }
@@ -1102,10 +1144,11 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
 
   int id = wstream_df_worker->worker_id;
 
-  if (cpu_affinities == NULL)
-    wstream_df_worker->cpu = id % ncores;
-  else
-    wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
+  // TODO: Used by FPGA acceleration only
+  // if (cpu_affinities == NULL)
+  //   wstream_df_worker->cpu = id % ncores;
+  // else
+  //  wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
 
   numa_node_id = mem_numa_node(wstream_df_worker->cpu);
   numa_node = numa_node_by_id(numa_node_id);
@@ -1126,10 +1169,10 @@ start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
   CPU_ZERO (&cs);
   CPU_SET (wstream_df_worker->cpu, &cs);
 
-  if(cpu_used(wstream_df_worker->cpu)) {
-	  printf("WORKER %d fails for cpu %d!\n", wstream_df_worker->worker_id, wstream_df_worker->cpu);
-  }
-  assert(!cpu_used(wstream_df_worker->cpu));
+  // if(cpu_used(wstream_df_worker->cpu)) {
+	//  printf("WORKER %d fails for cpu %d!\n", wstream_df_worker->worker_id, wstream_df_worker->cpu);
+  // }
+  // assert(!cpu_used(wstream_df_worker->cpu));
   wstream_df_worker_cpus[wstream_df_worker->cpu] = wstream_df_worker->worker_id;
 
   int error_no = pthread_attr_setaffinity_np (&thread_attr, sizeof (cs), &cs);
@@ -1181,6 +1224,9 @@ void pre_main()
 #else
   num_workers = _WSTREAM_DF_NUM_THREADS;
 #endif
+
+  // TODO: Used for FPGA acceleration only
+  num_workers += 2;
 
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
 		      num_workers * sizeof (wstream_df_thread_t*)))
@@ -1235,25 +1281,36 @@ void pre_main()
 #endif
 
   for (i = 0; i < num_workers; ++i)
-    {
-      if (cpu_affinities == NULL)
-	cpu = i % ncores;
-      else
-	cpu = cpu_affinities[i % num_cpu_affinities];
+  {
+    if (cpu_affinities == NULL)
+      cpu = i % ncores;
+    else
+      cpu = cpu_affinities[i % num_cpu_affinities];
 
-      if(i != 0)
-	wstream_df_worker_threads[i] = allocate_worker_struct(cpu);
+    // TODO: Used by FPGA acceleration only
+    if(i >= num_workers - 2)
+      cpu = num_workers - 3;
 
-      cdeque_init (&wstream_df_worker_threads[i]->work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
-      wstream_df_worker_threads[i]->worker_id = i;
-      wstream_df_worker_threads[i]->tsc_offset = 0;
-      wstream_df_worker_threads[i]->tsc_offset_init = 0;
-      wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
-      wstream_df_worker_threads[i]->swap_barrier = NULL;
-      wstream_df_worker_threads[i]->current_work_fn = NULL;
-      wstream_df_worker_threads[i]->current_frame = NULL;
-      wstream_df_worker_threads[i]->yield = 0;
-    }
+    if(i != 0)
+      wstream_df_worker_threads[i] = allocate_worker_struct(cpu);
+
+    cdeque_init (&wstream_df_worker_threads[i]->work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
+    wstream_df_worker_threads[i]->worker_id = i;
+    wstream_df_worker_threads[i]->tsc_offset = 0;
+    wstream_df_worker_threads[i]->tsc_offset_init = 0;
+    wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
+    wstream_df_worker_threads[i]->swap_barrier = NULL;
+    wstream_df_worker_threads[i]->current_work_fn = NULL;
+    wstream_df_worker_threads[i]->current_frame = NULL;
+    wstream_df_worker_threads[i]->yield = 0;
+    wstream_df_worker_threads[i]->cpu = cpu;
+
+    // TODO: Used by FPGA acceleration only
+    wstream_df_worker_threads[i]->fpga_worker = 0;
+
+    if(i >= num_workers - 3)
+      wstream_df_worker_threads[i]->fpga_worker = 1;
+  }
 
   cpu_set_t cs;
   CPU_ZERO (&cs);
