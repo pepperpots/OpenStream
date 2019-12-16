@@ -549,6 +549,8 @@ int work_try_push(wstream_df_frame_p fp,
 static wstream_df_frame_p steal_hwloc_pu(wstream_df_thread_p thief,
                                          hwloc_obj_t current_obj,
                                          hwloc_obj_t *stolen_from) {
+  if (current_obj->type != HWLOC_OBJ_PU)
+    return NULL;
   wstream_df_thread_p pu_worker_thread =
       (wstream_df_thread_p)current_obj->userdata;
   wstream_df_frame_p frame = cdeque_steal(&pu_worker_thread->work_deque);
@@ -563,13 +565,27 @@ static wstream_df_frame_p steal_hwloc_pu(wstream_df_thread_p thief,
 }
 
 static hwloc_obj_t random_hwloc_pu_in_subtree(wstream_df_thread_p thief,
-                                                     hwloc_obj_t root) {
-  hwloc_obj_t bottom = root;
-  while (bottom->arity > 0) {
-    unsigned randval = prng_nextn(&thief->rands, bottom->arity);
-    bottom = bottom->children[randval];
+                                              hwloc_obj_t root) {
+  hwloc_obj_t child = root;
+  if (root->arity == 0) {
+    return root;
+  } else {
+    unsigned right = prng_nextn(&thief->rands, 2);
+    if (right) {
+      for (unsigned i = 0; i < root->arity; ++i) {
+        child = random_hwloc_pu_in_subtree(thief, root->children[i]);
+        if (child->type == HWLOC_OBJ_PU)
+          break;
+      }
+    } else {
+      for (unsigned i = root->arity - 1; i < root->arity; --i) {
+        child = random_hwloc_pu_in_subtree(thief, root->children[i]);
+        if (child->type == HWLOC_OBJ_PU)
+          break;
+      }
+    }
   }
-  return bottom;
+  return child;
 }
 
 /* Steal from processing units that are close hierarchically
@@ -610,8 +626,7 @@ static wstream_df_frame_p steal_hwloc_bottom_up(wstream_df_thread_p thief,
             frame = steal_hwloc_bottom_up(thief, sibling_pu, one_side, stolen_from);
           one_side = one_side->next_sibling;
         } else { // other_side
-          hwloc_obj_t sibling_pu =
-              random_hwloc_pu_in_subtree(thief, other_side);
+          hwloc_obj_t sibling_pu = random_hwloc_pu_in_subtree(thief, other_side);
           frame = steal_hwloc_pu(thief, sibling_pu, stolen_from);
           if (!frame)
             frame = steal_hwloc_bottom_up(thief, sibling_pu, other_side, stolen_from);
