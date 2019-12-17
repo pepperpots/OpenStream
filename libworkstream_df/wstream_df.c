@@ -1270,6 +1270,7 @@ void pre_main()
     wstream_df_worker_threads[0]->current_work_fn = (void *)main;
     wstream_df_worker_threads[0]->current_frame = NULL;
 
+  free(processor_mapping);
   trace_init(current_thread);
 
 #if ALLOW_WQEVENT_SAMPLING
@@ -1295,6 +1296,7 @@ void post_main()
   dump_events_ostv(wstream_num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(wstream_num_workers, wstream_df_worker_threads);
   dump_transfer_matrix(wstream_num_workers);
+  openstream_hwloc_cleanup();
 }
 
 

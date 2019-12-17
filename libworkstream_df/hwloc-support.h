@@ -58,4 +58,6 @@ unsigned level_of_common_ancestor(const hwloc_obj_t obj1,
 
 unsigned closest_numa_node_of_processing_unit(const hwloc_obj_t obj);
 
+void openstream_hwloc_cleanup(void);
+
 #endif // HWLOC_SUPPORT_H_

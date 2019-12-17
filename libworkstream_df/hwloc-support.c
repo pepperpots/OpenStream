@@ -476,3 +476,11 @@ unsigned level_of_common_ancestor(const hwloc_obj_t obj1,
 unsigned closest_numa_node_of_processing_unit(const hwloc_obj_t obj) {
   return cpuid_to_closest_numa_node[obj->logical_index];
 }
+void openstream_hwloc_cleanup(void) {
+  hwloc_topology_destroy(machine_topology);
+  free_distance_matrices();
+  free(cpuid_to_closest_numa_node);
+  cpuid_to_closest_numa_node = NULL;
+  num_numa_nodes = 0;
+  topology_depth = 0;
+}
