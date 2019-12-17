@@ -82,6 +82,13 @@
 
 #define HWLOC_VERBOSE 0
 
+/*
+ * Print the matrix representing the latency between two processing units. This
+ * information should be provided by the operating system.
+ */
+
+#define HWLOC_PRINT_DISTANCE_MATRICES 0
+
  /*********************** OpenStream Profiling Options ***********************/
 
 /*

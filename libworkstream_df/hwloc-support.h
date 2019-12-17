@@ -9,6 +9,12 @@
 
 extern unsigned num_numa_nodes;
 extern unsigned topology_depth;
+extern unsigned pu_latency_matrix_size;
+extern void *pu_latency_distances_arr__;
+#define pu_latency_distances ((unsigned (*)[pu_latency_matrix_size])pu_latency_distances_arr__)
+extern unsigned pu_bandwidth_matrix_size;
+extern void *pu_bandwidth_distances_arr__;
+#define pu_bandwidth_distances ((unsigned (*)[pu_bandwidth_matrix_size])pu_bandwidth_distances_arr__)
 
 // Initializes the hwloc support by discovereing the current machine topology
 bool discover_machine_topology(void);

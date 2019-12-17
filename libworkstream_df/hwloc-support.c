@@ -3,15 +3,22 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "config.h"
 #include "error.h"
 #include "hwloc-support.h"
 #include "hwloc/bitmap.h"
-#include "config.h"
 
 static hwloc_topology_t machine_topology;
 unsigned num_numa_nodes;
 unsigned topology_depth;
 static unsigned *cpuid_to_closest_numa_node;
+unsigned pu_latency_matrix_size;
+void *pu_latency_distances_arr__;
+unsigned pu_bandwidth_matrix_size;
+void *pu_bandwidth_distances_arr__;
+
+static void print_topology_node_and_childrens(hwloc_obj_t node,
+                                              unsigned indent);
 
 static void populate_closest_numa_nodes(void) {
   for (hwloc_obj_t pu =
@@ -20,7 +27,8 @@ static void populate_closest_numa_nodes(void) {
        pu = hwloc_get_next_obj_by_type(machine_topology, HWLOC_OBJ_PU, pu)) {
     hwloc_obj_t closest_numa_node = NULL;
     unsigned node_index;
-    hwloc_bitmap_foreach_begin(node_index, pu->nodeset) hwloc_obj_t currNode =
+    hwloc_bitmap_foreach_begin(node_index, pu->nodeset);
+    hwloc_obj_t currNode =
         hwloc_get_numanode_obj_by_os_index(machine_topology, node_index);
     if (closest_numa_node) {
       if (closest_numa_node->depth < currNode->depth)
@@ -31,6 +39,171 @@ static void populate_closest_numa_nodes(void) {
     hwloc_bitmap_foreach_end();
     cpuid_to_closest_numa_node[pu->logical_index] = closest_numa_node->os_index;
   }
+}
+
+static void alloc_distance_matrix(unsigned num_pu, void **arr,
+                                  unsigned *size_store) {
+  *arr = calloc(1, sizeof(unsigned[num_pu][num_pu]));
+  *size_store = num_pu;
+}
+
+static void free_distance_matrices(void) {
+  pu_latency_matrix_size = 0;
+  free(pu_latency_distances_arr__);
+  pu_latency_distances_arr__ = NULL;
+
+  pu_bandwidth_matrix_size = 0;
+  free(pu_bandwidth_distances_arr__);
+  pu_bandwidth_distances_arr__ = NULL;
+}
+
+#if HWLOC_PRINT_DISTANCE_MATRICES
+static inline unsigned unsignedlog10(unsigned x) {
+  unsigned logval = 0u;
+  while (x != 0u) {
+    x /= 10u;
+    logval += 1u;
+  }
+  return logval;
+}
+
+static inline unsigned unsignedmaximum(unsigned x, unsigned y) {
+  return x > y ? x : y;
+}
+
+static void print_distance_matrix(FILE *out, unsigned size,
+                                  unsigned (*matrix)[size]) {
+  unsigned biggest_number_pow10 = unsignedlog10(size);
+  for (unsigned i = 0; i < size; ++i) {
+    for (unsigned j = 0; j < size; ++j) {
+      biggest_number_pow10 =
+          unsignedmaximum(biggest_number_pow10, unsignedlog10(matrix[i][j]));
+    }
+  }
+  fprintf(out, "%*s  ", biggest_number_pow10, "");
+  for (unsigned j = 0; j < size; ++j) {
+    if (j > 0)
+      fprintf(out, " ");
+    fprintf(out, "%*u", biggest_number_pow10, j);
+  }
+  fprintf(out, "\n%*s -", biggest_number_pow10, "");
+  for (unsigned j = 0; j < size; ++j) {
+    if (j > 0)
+      fprintf(out, "-");
+    for (unsigned k = 0; k < biggest_number_pow10; ++k)
+      fprintf(out, "-");
+  }
+  for (unsigned i = 0; i < size; ++i) {
+    fprintf(out, "-\n%*u |", biggest_number_pow10, i);
+    for (unsigned j = 0; j < size; ++j) {
+      if (j > 0)
+        fprintf(out, "|");
+      fprintf(out, "%*u", biggest_number_pow10, matrix[i][j]);
+    }
+    fprintf(out, "|\n%*s -", biggest_number_pow10, "");
+    for (unsigned j = 0; j < size; ++j) {
+      if (j > 0)
+        fprintf(out, "-");
+      for (unsigned k = 0; k < biggest_number_pow10; ++k)
+        fprintf(out, "-");
+    }
+  }
+  fprintf(out, "-\n");
+}
+#else // !HWLOC_PRINT_DISTANCE_MATRICES
+#define print_distance_matrix(a, b, c)                                         \
+  do {                                                                         \
+  } while (0)
+#endif // HWLOC_PRINT_DISTANCE_MATRICES
+
+static void populate_distance_matrix_for_pu_from_numa_distances(
+    struct hwloc_distances_s *distances, unsigned num_pu,
+    unsigned (*dist_array)[num_pu]) {
+  for (unsigned i = 0; i < distances->nbobjs; ++i) {
+    for (unsigned j = i; j < distances->nbobjs; ++j) {
+      hwloc_obj_t numa_node_i = distances->objs[i];
+      unsigned pu_i_os_index;
+      hwloc_bitmap_foreach_begin(pu_i_os_index, numa_node_i->cpuset);
+      hwloc_obj_t pu_i =
+          hwloc_get_pu_obj_by_os_index(machine_topology, pu_i_os_index);
+      if (cpuid_to_closest_numa_node[pu_i->logical_index] ==
+          numa_node_i->os_index) {
+        unsigned pu_j_os_index;
+        hwloc_obj_t numa_node_j = distances->objs[j];
+        hwloc_bitmap_foreach_begin(pu_j_os_index, numa_node_j->cpuset);
+        hwloc_obj_t pu_j =
+            hwloc_get_pu_obj_by_os_index(machine_topology, pu_j_os_index);
+        if (cpuid_to_closest_numa_node[pu_j->logical_index] ==
+            numa_node_j->os_index) {
+          dist_array[pu_i->logical_index][pu_j->logical_index] =
+              distances->values[i * distances->nbobjs + j];
+          dist_array[pu_j->logical_index][pu_i->logical_index] =
+              distances->values[j * distances->nbobjs + i];
+        }
+        hwloc_bitmap_foreach_end();
+      }
+      hwloc_bitmap_foreach_end();
+    }
+  }
+}
+
+static bool retrieve_numa_distances() {
+  unsigned num_distances = 2;
+  struct hwloc_distances_s *distancesMatrices[2];
+
+  if (hwloc_distances_get_by_type(machine_topology, HWLOC_OBJ_NUMANODE,
+                                  &num_distances, distancesMatrices, 0,
+                                  0) != 0) {
+    hwloc_topology_destroy(machine_topology);
+    return false;
+  }
+  unsigned nproc = num_available_processing_units();
+
+  if (num_distances) { // NUMA With Latency matrix
+    for (unsigned i = 0; i < num_distances; ++i) {
+      if (distancesMatrices[i]->kind & HWLOC_DISTANCES_KIND_MEANS_LATENCY) {
+#if HWLOC_VERBOSE
+        if (distancesMatrices[i]->kind & HWLOC_DISTANCES_KIND_FROM_OS) {
+          fprintf(stdout,
+                  "[HWLOC] OS provided latencies between NUMA nodes.\n");
+        }
+#endif // HWLOC_VERBOSE
+        alloc_distance_matrix(nproc, &pu_latency_distances_arr__,
+                              &pu_latency_matrix_size);
+        populate_distance_matrix_for_pu_from_numa_distances(
+            distancesMatrices[i], nproc, pu_latency_distances_arr__);
+        print_distance_matrix(stdout, nproc, pu_latency_distances_arr__);
+      }
+      if (distancesMatrices[i]->kind & HWLOC_DISTANCES_KIND_MEANS_BANDWIDTH) {
+        if (distancesMatrices[i]->kind & HWLOC_DISTANCES_KIND_FROM_OS) {
+#if HWLOC_VERBOSE
+          fprintf(stdout,
+                  "[HWLOC] OS provided bandwidth between NUMA nodes.\n");
+#endif // HWLOC_VERBOSE
+        }
+        alloc_distance_matrix(nproc, &pu_bandwidth_distances_arr__,
+                              &pu_bandwidth_matrix_size);
+        populate_distance_matrix_for_pu_from_numa_distances(
+            distancesMatrices[i], nproc, pu_bandwidth_distances_arr__);
+        print_distance_matrix(stdout, nproc, pu_bandwidth_distances_arr__);
+      }
+      hwloc_distances_release(machine_topology, distancesMatrices[i]);
+    }
+  } else { // UMA
+#if HWLOC_VERBOSE
+    fprintf(stdout, "[HWLOC] No distance matrices provided by the OS, assuming "
+                    "UMA machine.\n");
+#endif // HWLOC_VERBOSE
+    alloc_distance_matrix(nproc, &pu_latency_distances_arr__,
+                          &pu_latency_matrix_size);
+    for (unsigned i = 0; i < nproc; ++i) {
+      for (unsigned j = 0; j < nproc; ++j) {
+        pu_latency_distances[i][j] = 1u;
+      }
+    }
+    print_distance_matrix(stdout, nproc, pu_latency_distances_arr__);
+  }
+  return true;
 }
 
 bool discover_machine_topology(void) {
@@ -50,16 +223,6 @@ bool discover_machine_topology(void) {
     return false;
   }
 
-  unsigned num_distances = 5;
-  struct hwloc_distances_s *distancesMatrices[5];
-
-  if (hwloc_distances_get_by_type(machine_topology, HWLOC_OBJ_PU,
-                                  &num_distances, distancesMatrices, 0,
-                                  0) != 0) {
-    hwloc_topology_destroy(machine_topology);
-    return false;
-  }
-
   num_numa_nodes =
       hwloc_get_nbobjs_by_type(machine_topology, HWLOC_OBJ_NUMANODE);
   topology_depth = hwloc_topology_get_depth(machine_topology);
@@ -72,14 +235,11 @@ bool discover_machine_topology(void) {
 #if HWLOC_VERBOSE
   fprintf(stdout,
           "[HWLOC Info] The machine has a depth of %d\n"
-          "[HWLOC Info] The machine has %d numa node(s)\n"
-          "[HWLOC Info] Retrieved distance matrice(s): %u\n",
-          topology_depth, num_numa_nodes, num_distances);
-  fprintf(stdout, "\n[HWLOC Info] Machine topology:\n");
-  print_topology_tree(stdout);
+          "[HWLOC Info] The machine has %d numa node(s)\n",
+          topology_depth, num_numa_nodes);
 #endif
 
-  return true;
+  return retrieve_numa_distances();
 }
 
 unsigned num_available_processing_units(void) {
@@ -100,8 +260,12 @@ bool restrict_topology_to_glibc_cpuset(cpu_set_t set) {
     hwloc_bitmap_free(hwlocset);
     return false;
   }
-  bool retval = hwloc_topology_restrict(machine_topology, hwlocset, 0) == 0;
+  bool retval =
+      hwloc_topology_restrict(machine_topology, hwlocset,
+                              HWLOC_RESTRICT_FLAG_REMOVE_CPULESS) == 0;
   populate_closest_numa_nodes();
+  free_distance_matrices();
+  retrieve_numa_distances();
   hwloc_bitmap_free(hwlocset);
   return retval;
 }
@@ -137,6 +301,8 @@ bool distribute_worker_on_topology(unsigned num_workers,
   if (num_available_processing_units() > num_workers) {
     retval = hwloc_topology_restrict(machine_topology, restricted_set, 0) == 0;
     populate_closest_numa_nodes();
+    free_distance_matrices();
+    retrieve_numa_distances();
   }
   if (!retval) {
     *processing_units = NULL;
