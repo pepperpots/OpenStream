@@ -1194,7 +1194,8 @@ void pre_main()
   fprintf(stdout, "\n[HWLOC Info] Using %u workers distributed as:\n", wstream_num_workers);
 #endif
   hwloc_obj_t *processor_mapping = NULL;
-  if (!distribute_worker_on_topology(wstream_num_workers, &processor_mapping)) {
+  if (!distribute_worker_on_topology(wstream_num_workers, &processor_mapping,
+                                     WORKER_DISTRIBUTION_ALGORITHM)) {
     wstream_df_error("[hwloc] Warning: could distribute workers on %d CPUs\n",
                      wstream_num_workers);
   }

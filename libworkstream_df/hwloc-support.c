@@ -270,8 +270,49 @@ bool restrict_topology_to_glibc_cpuset(cpu_set_t set) {
   return retval;
 }
 
-bool distribute_worker_on_topology(unsigned num_workers,
-                                   hwloc_obj_t **processing_units) {
+static void
+distrib_minimizing_latency(unsigned num_workers, unsigned wanted_workers,
+                           unsigned (*restrict latency_matrix)[num_workers],
+                           hwloc_cpuset_t sets[wanted_workers]) {
+  hwloc_cpuset_t logical_indexes = hwloc_bitmap_alloc();
+  hwloc_bitmap_set(logical_indexes, 0);
+  // The greedy algorithm should work reasonably well
+  for (unsigned i = 1; i < wanted_workers; ++i) {
+    unsigned best_cost = UINT_MAX;
+    unsigned best_candidate = 0;
+    for (unsigned j = 0; j < num_workers; ++j) {
+      if (!hwloc_bitmap_isset(logical_indexes, j)) {
+        unsigned one_of_the_chosen;
+        unsigned j_cost = 0;
+        hwloc_bitmap_foreach_begin(one_of_the_chosen, logical_indexes);
+        j_cost += latency_matrix[j][one_of_the_chosen] +
+                  latency_matrix[one_of_the_chosen][j];
+        hwloc_bitmap_foreach_end();
+        if (j_cost < best_cost) {
+          best_candidate = j;
+          best_cost = j_cost;
+        }
+      }
+    }
+    assert(best_candidate != 0);
+    hwloc_bitmap_set(logical_indexes, best_candidate);
+  }
+  unsigned one_of_the_chosen;
+  unsigned num_chosen = 0;
+  hwloc_bitmap_foreach_begin(one_of_the_chosen, logical_indexes);
+  hwloc_obj_t pu =
+      hwloc_get_obj_by_type(machine_topology, HWLOC_OBJ_PU, one_of_the_chosen);
+  hwloc_bitmap_set(sets[num_chosen], pu->os_index);
+  num_chosen++;
+  hwloc_bitmap_foreach_end();
+  hwloc_bitmap_free(logical_indexes);
+}
+
+bool distribute_worker_on_topology(
+    unsigned num_workers, hwloc_obj_t **processing_units,
+    enum hwloc_wstream_worker_distribution_algorithm howto_distribute) {
+  if (num_workers <= 1)
+    howto_distribute = distribute_maximise_per_worker_resources;
   hwloc_cpuset_t *distrib_sets = malloc(num_workers * sizeof(*distrib_sets));
   if (posix_memalign((void **)processing_units, 64,
                      num_workers * sizeof(**processing_units)))
@@ -279,9 +320,20 @@ bool distribute_worker_on_topology(unsigned num_workers,
   for (unsigned i = 0; i < num_workers; ++i) {
     distrib_sets[i] = hwloc_bitmap_alloc();
   }
-  hwloc_obj_t topo_root = hwloc_get_root_obj(machine_topology);
-  hwloc_distrib(machine_topology, &topo_root, 1u, distrib_sets, num_workers,
-                INT_MAX, 0);
+  switch (howto_distribute) {
+  case distribute_maximise_per_worker_resources: {
+    hwloc_obj_t topo_root = hwloc_get_root_obj(machine_topology);
+    hwloc_distrib(machine_topology, &topo_root, 1u, distrib_sets, num_workers,
+                  INT_MAX, 0);
+  } break;
+  case distribute_minimize_worker_communication: {
+    unsigned nproc = num_available_processing_units();
+    distrib_minimizing_latency(nproc, num_workers, pu_latency_distances_arr__,
+                               distrib_sets);
+  } break;
+  default:
+    break;
+  }
 
   hwloc_cpuset_t restricted_set = hwloc_bitmap_alloc();
   for (unsigned i = 0; i < num_workers; ++i) {

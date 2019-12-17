@@ -64,6 +64,22 @@
 
 #define USE_BROADCAST_TABLES 0
 
+/*
+ * How should the workers be places when OMP_NUM_THREADS specifies a lower
+ * amount of worker than what is available on the system. You can select
+ * between the following options:
+ * 
+ * - distribute_minimize_worker_communication
+ *      The workers are placed on processing units to maximize the resources
+ *      available to each worker (cache and memory)
+ * 
+ * - distribute_maximise_per_worker_resources
+ *      The workers are placed on processing units to minimize the communication
+ *      latency between all the workers
+ */
+
+#define WORKER_DISTRIBUTION_ALGORITHM distribute_minimize_worker_communication
+
  /*********************** OpenStream Debug Options ***********************/
 
 /*
