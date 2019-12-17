@@ -22,7 +22,7 @@ target_link_libraries(${PROJECT_NAME} libstdc++fs.a)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "cynq.h;mmio.h")
+set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "cynq.h;mmio.h;fpga.h")
 
 install(TARGETS ${PROJECT_NAME}
         LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/install/lib

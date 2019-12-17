@@ -10,10 +10,14 @@ class wstream_fpga_env
 {
 #if !OPENSTREAM_FPGA_DISABLED
 public:
-  static constexpr unsigned NUMBER_ACCELERATORS = 3;
+  static constexpr unsigned NUMBER_SLOTS = 3;
 
-  UdmaDevice* devices[NUMBER_ACCELERATORS];
-  PRManager prmanager;
+  UdmaDevice* devices[NUMBER_SLOTS];
+  Shell shell;
+  Region* regions[NUMBER_SLOTS];
+  std::map<std::string, Accel> accelerators;
+
+  wstream_fpga_env(std::string shell_name);
 #endif
 };
 

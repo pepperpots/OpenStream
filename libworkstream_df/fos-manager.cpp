@@ -1,16 +1,38 @@
+#include "cynq/fpga.h"
+
 #include "fos-manager.h"
 #include "fpga-support.h"
 
+wstream_fpga_env::wstream_fpga_env(std::string shell_name)
+{
+  this->shell = Shell::loadFromJSON("../bitstreams/" + shell_name + ".json");
+
+  int i = 0;
+  for(auto& blank : this->shell.blanks)
+  {
+    this->regions[i++] = new Region(blank.first, blank.second, 
+        this->shell.blockers[blank.first], this->shell.addrs[blank.first]);
+  }
+
+  std::string accelerators_names[] = {"Partial_vec_add"};
+
+  for(auto& name : accelerators_names)
+  {
+    this->accelerators.emplace(name, Accel::loadFromJSON("../bitstreams/" + name + ".json"));
+  }
+
+  FPGAManager fpga0(0);
+  fpga0.loadFull(this->shell.bitstream);
+}
+
 wstream_fpga_env_p create_fpga_environment()
 {
-  wstream_fpga_env_p fpga_env_p = new wstream_fpga_env();
+  wstream_fpga_env_p fpga_env_p = new wstream_fpga_env("Ultra96_100MHz_2");
 
   UdmaRepo repo;
 
-  for(int i = 0; i < wstream_fpga_env::NUMBER_ACCELERATORS; i++)
+  for(int i = 0; i < wstream_fpga_env::NUMBER_SLOTS; i++)
     fpga_env_p->devices[i] = repo.device(i);
-
-  fpga_env_p->prmanager.fpgaLoadShell("Ultra96_100MHz_2");
 
   return fpga_env_p;
 }
@@ -54,7 +76,6 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
     {
       // Create view for output
       out_view_list[out_index] = get_arg_view(fp, i);
-      wstream_df_frame_p cons = out_view_list[out_index]->owner;
       __built_in_wstream_df_prepare_data(out_view_list[out_index]);
 
       // Assign next free chunk of memory to the buffer
@@ -108,8 +129,23 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   }
 
   // Run the accelerator
-  AccelInst accel = fpga_env_p->prmanager.fpgaRun(fp->cl_data->accel_name, params);
-  accel.wait();
+  AccelInst inst;
+
+  Accel &accel = fpga_env_p->accelerators[fp->cl_data->accel_name];
+  inst.accel = &accel;
+
+  Bitstream &bitstream = accel.bitstreams.at(slot_id);
+  inst.bitstream = &bitstream;
+
+  inst.region = fpga_env_p->regions[slot_id];
+
+  fpga_env_p->regions[slot_id]->loadAccel(accel, bitstream);
+
+  inst.programAccel(params);
+  inst.runAccel();
+  inst.wait();
+
+  fpga_env_p->regions[slot_id]->unloadAccel();
 
   // Release input views
   for (int i = 0; i < in_index; i++)
@@ -131,7 +167,10 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
 }
 
 void destroy_fpga_environment(wstream_fpga_env_p fpga_env_p)
-{
+{ 
+  for(int i = 0; i < wstream_fpga_env::NUMBER_SLOTS; i++)
+    delete fpga_env_p->regions[i];
+
   delete fpga_env_p;
 }
 

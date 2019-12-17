@@ -46,7 +46,7 @@ convert.h convert.c trace_file.c trace_file.h ansi_extras.h: ../extras/ostv/conf
 ../install/bin/gcc:
 	cd .. ; $(MAKE)
 
-libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c fpga-support.c fos-manager.c $(WSTREAM_DEPS)
+libwstream_df.so: wstream_df.c error.c trace.c fibers.c profiling.c work_distribution.c trace_file.c trace_file.h ansi_extras.h convert.c convert.h tsc.c interleave.c numa.c reuse.c fpga-support.c fos-manager.cpp $(WSTREAM_DEPS)
 ifeq ($(PAPI_CHECKED),)
 	@$(MAKE) -C ../extras -f Makefile.papi_enabled
 	@PAPI_ENABLED=`../extras/papi_enabled` ; \
@@ -60,7 +60,7 @@ ifeq ($(PAPI_CHECKED),)
 	fi ;\
 	$(MAKE) PAPI_CHECKED=1 PAPI_ENABLED=$$PAPI_ENABLED $@ ;
 else
-	$(CXX) $(WSTREAM_CXXFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+	$(CXX) $(WSTREAM_CXXFLAGS) -shared $(filter %.c,$^) $(filter %.cpp,$^) -o $@ $(WSTREAM_LDFLAGS)
 endif
 
 $(TEST_PROGS.cdeque): test-cdeque.c
@@ -96,7 +96,7 @@ libwstream_df_c11.so: WSTREAM_CXXFLAGS+=-DUSE_STDATOMIC=1
 libwstream_df_dumbc11.so: WSTREAM_CXXFLAGS+=-DUSE_STDATOMIC=1 -DUSE_SEQ_CST_STDATOMIC=1
 libwstream_df_nofences.so: WSTREAM_CXXFLAGS+=-DNO_FENCES=1
 libwstream_df_%.so: wstream_df.c error.c $(WSTREAM_DEPS)
-	$(CXX) $(WSTREAM_CXXFLAGS) -shared $(filter %.c,$^) -o $@ $(WSTREAM_LDFLAGS)
+	$(CXX) $(WSTREAM_CXXFLAGS) -shared $(filter %.c,$^) $(filter %.cpp,$^) -o $@ $(WSTREAM_LDFLAGS)
 install-alternative: alternative
 	mkdir -p ../install/lib64
 	cp libwstream_df_*.so ../install/lib64
