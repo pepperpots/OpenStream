@@ -18,6 +18,7 @@ examples/cholesky/openmp_loop_cholesky
 examples/cholesky/openmp_task_cholesky
 examples/cholesky/stream_cholesky
 examples/cholesky/stream_df_cholesky
+examples/cholesky/stream_df_cholesky_FPGA
 examples/cholesky/stream_starss_translation_cholesky
 examples/cholesky/block_seq_cholesky
 examples/cholesky/stream_cholesky_from_df

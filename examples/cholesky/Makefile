@@ -4,6 +4,7 @@ TESTS = cholesky \
 	stream_cholesky \
 	block_seq_cholesky \
 	stream_df_cholesky \
+	stream_df_cholesky_FPGA \
 	stream_cholesky_from_df \
 	stream_df_cholesky_reuse \
 	stream_starss_translation_cholesky \
