@@ -34,12 +34,13 @@
 
 #define MAX_WQEVENT_SAMPLES 0
 #define TRACE_RT_INIT_STATE
-/* #define TRACE_DATA_READS */
 #define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
 #define MAX_WQEVENT_PARAVER_CYCLES -1
 #define NUM_WQEVENT_TASKHIST_BINS 1000
 
-#define WQEVENT_SAMPLING_OUTFILE "events.ost"
+#define WQEVENT_SAMPLING_OUTFILE_ENV_VAR "WQEVENT_SAMPLING_OUTFILE"
+#define WQEVENT_SAMPLING_OUTFILE "events.ost" /* Default output tracefile if env var unspecified */
+
 #define WQEVENT_SAMPLING_PARFILE "parallelism.gpdata"
 #define WQEVENT_SAMPLING_TASKHISTFILE "task_histogram.gpdata"
 #define WQEVENT_SAMPLING_TASKLENGTHFILE "task_length.gpdata"
@@ -49,16 +50,19 @@
 // the control program task finishes because of that.
 #define DISABLE_WQUEUE_LOCAL_CACHE 0
 
-//#define WS_PAPI_PROFILE
-//#define WS_PAPI_MULTIPLEX
+/* Tracing configuration */
 
-//#ifdef WS_PAPI_PROFILE
-//#define WS_PAPI_NUM_EVENTS 2
-//#define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_L2_DCM" }
-//#define MEM_CACHE_MISS_POS 0 /* Use L1_DCM as cache miss indicator */
+//#define TRACE_COMMUNICATION
+//#define TRACE_WORKER_STATES
+//#define PROFILE_RUSAGE
+#define WS_PAPI_PROFILE
 
-// /* #define TRACE_PAPI_COUNTERS */
-//#endif
+#ifdef WS_PAPI_PROFILE
+	#define WS_PAPI_MAX_NUM_EVENTS 45
+	#define WS_PAPI_EVENTS_ENV_VAR "WS_PAPI_EVENTS"
+	#define WS_PAPI_MULTIPLEX_ENV_VAR "WS_PAPI_MULTIPLEX"
+	#define WS_PAPI_MULTIPLEX 0 /* Multiplexing disabled by default if env var unspecified */
+#endif
 
 /* Description of the memory hierarchy */
 #define MEM_NUM_LEVELS 2
@@ -176,8 +180,6 @@ static inline unsigned int mem_numa_node(unsigned int cpu)
 }
 
 #ifdef WS_PAPI_PROFILE
-#define mem_cache_misses(th) ((th)->papi_counters[MEM_CACHE_MISS_POS])
-#else
 #define mem_cache_misses(th) 0
 #endif
 #endif /* IN_GCC */

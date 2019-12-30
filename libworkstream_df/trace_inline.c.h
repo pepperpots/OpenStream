@@ -1,3 +1,10 @@
+#ifdef TRACE_WORKER_STATES
+
+static inline void trace_state_change(wstream_df_thread_p cthread, unsigned int state){}
+static inline void trace_state_restore(wstream_df_thread_p cthread){}
+
+#else
+
 static inline void trace_state_change(wstream_df_thread_p cthread, unsigned int state)
 {
   assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
@@ -42,43 +49,16 @@ static inline void trace_state_restore(wstream_df_thread_p cthread)
   cthread->num_events++;
 }
 
-static inline void trace_event(wstream_df_thread_p cthread, unsigned int type)
-{
-  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  assert(cthread->tsc_offset_init);
+#endif
 
-  int64_t this_rdtsc = rdtsc();
+#ifdef TRACE_COMMUNICATION
 
-  cthread->events[cthread->num_events].time = this_rdtsc - cthread->tsc_offset;
-  cthread->events[cthread->num_events].type = type;
-  cthread->events[cthread->num_events].cpu = cthread->cpu;
-  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
-  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
-  cthread->num_events++;
-}
+static inline void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame){}
+static inline void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame){}
+static inline void trace_data_read(struct wstream_df_thread* cthread, unsigned int src_cpu, unsigned int size, long long prod_ts, void* src_addr){}
+static inline void trace_data_write(struct wstream_df_thread* cthread, unsigned int size, uint64_t dst_addr){}
 
-static inline void trace_update_tcreate_fp(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
-{
-  cthread->last_tcreate_event->tcreate.frame = (uint64_t)frame;
-  cthread->last_tcreate_event = NULL;
-}
-
-static inline void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
-{
-  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
-  assert(cthread->tsc_offset_init);
-
-  int64_t this_rdtsc = rdtsc();
-
-  cthread->events[cthread->num_events].time = this_rdtsc - cthread->tsc_offset;
-  cthread->events[cthread->num_events].type = WQEVENT_TCREATE;
-  cthread->events[cthread->num_events].cpu = cthread->cpu;
-  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
-  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
-  cthread->events[cthread->num_events].tcreate.frame = (uint64_t)frame;
-  cthread->last_tcreate_event = &cthread->events[cthread->num_events];
-  cthread->num_events++;
-}
+#else 
 
 static inline void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame)
 {
@@ -147,6 +127,47 @@ static inline void trace_data_write(struct wstream_df_thread* cthread, unsigned 
   cthread->events[cthread->num_events].cpu = cthread->cpu;
   cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
   cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->num_events++;
+}
+
+
+#endif
+
+static inline void trace_event(wstream_df_thread_p cthread, unsigned int type)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  assert(cthread->tsc_offset_init);
+
+  int64_t this_rdtsc = rdtsc();
+
+  cthread->events[cthread->num_events].time = this_rdtsc - cthread->tsc_offset;
+  cthread->events[cthread->num_events].type = type;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->num_events++;
+}
+
+static inline void trace_update_tcreate_fp(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
+{
+  cthread->last_tcreate_event->tcreate.frame = (uint64_t)frame;
+  cthread->last_tcreate_event = NULL;
+}
+
+static inline void trace_tcreate(struct wstream_df_thread* cthread, struct wstream_df_frame* frame)
+{
+  assert(cthread->num_events < MAX_WQEVENT_SAMPLES-1);
+  assert(cthread->tsc_offset_init);
+
+  int64_t this_rdtsc = rdtsc();
+
+  cthread->events[cthread->num_events].time = this_rdtsc - cthread->tsc_offset;
+  cthread->events[cthread->num_events].type = WQEVENT_TCREATE;
+  cthread->events[cthread->num_events].cpu = cthread->cpu;
+  cthread->events[cthread->num_events].active_task = (uint64_t)cthread->current_work_fn;
+  cthread->events[cthread->num_events].active_frame = (uint64_t)cthread->current_frame;
+  cthread->events[cthread->num_events].tcreate.frame = (uint64_t)frame;
+  cthread->last_tcreate_event = &cthread->events[cthread->num_events];
   cthread->num_events++;
 }
 
