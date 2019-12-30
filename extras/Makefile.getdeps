@@ -17,7 +17,7 @@ WXWIDGETS_VERSION=2.8.12
 LIBXML2_VERSION=2.9.0
 PARAVER_VERSION=4.3.5
 WXPROPERTYGRID_VERSION=1.4.15
-PAPI_VERSION=5.1.0.2
+PAPI_VERSION=5.7.0
 CILK_VERSION=5.4.6
 MPC_VERSION=1.0.3
 MPFR_VERSION=3.1.3
@@ -381,8 +381,8 @@ $(CONTRIB_DIR)/papi-$(PAPI_VERSION)/exdep: $(ARCHIVES_DIR)/papi-$(PAPI_VERSION).
 	mkdir -p $(CONTRIB_DIR)
 	if [ -d $(CONTRIB_DIR)/papi-$(PAPI_VERSION) ] ; \
 		then rm -rf "$(CONTRIB_DIR)/papi-$(PAPI_VERSION)" ; fi
-	cd $(CONTRIB_DIR); tar xf $<
-	cd $(CONTRIB_DIR); mv `tar tf $< | head -n1 | cut -d/ -f 1` papi-$(PAPI_VERSION)
+	cd $(CONTRIB_DIR); mkdir "$(CONTRIB_DIR)/papi_temp"; tar xf $< -C "$(CONTRIB_DIR)/papi_temp" --strip-components=1
+	cd $(CONTRIB_DIR); mv papi_temp papi-$(PAPI_VERSION)
 	touch $@
 
 $(ARCHIVES_DIR)/papi-$(PAPI_VERSION).tar.gz:

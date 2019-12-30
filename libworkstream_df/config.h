@@ -193,11 +193,13 @@
 
 /*
  * Enable a per-worker event sampling queue which is capable to store up to
- * MAX_WQEVENT_SAMPLES events. The trace will be stored in the file defined by
- * WQEVENT_SAMPLING_OUTFILE.
+ * MAX_WQEVENT_SAMPLES events. The trace will be stored in the file specified
+ * by the environment variable WQEVENT_SAMPLING_OUTFILE_ENV_VAR or default to
+ * WQEVENT_SAMPLING_OUTFILE if not set.
  */
 
 #define MAX_WQEVENT_SAMPLES 0
+#define WQEVENT_SAMPLING_OUTFILE_ENV_VAR "WQEVENT_SAMPLING_OUTFILE"
 #define WQEVENT_SAMPLING_OUTFILE "events.ost"
 
 /*
@@ -215,16 +217,17 @@
 
  /*********************** OpenStream Probably Broken Options (Post-HWLOC untested) ***********************/
 
-//#define WS_PAPI_PROFILE
-//#define WS_PAPI_MULTIPLEX
+//#define TRACE_COMMUNICATION
+//#define TRACE_WORKER_STATES
+//#define PROFILE_RUSAGE
+// #define WS_PAPI_PROFILE
 
-//#ifdef WS_PAPI_PROFILE
-//#define WS_PAPI_NUM_EVENTS 2
-//#define WS_PAPI_EVENTS { "PAPI_L1_DCM", "PAPI_L2_DCM" }
-//#define MEM_CACHE_MISS_POS 0 /* Use L1_DCM as cache miss indicator */
-
-// /* #define TRACE_PAPI_COUNTERS */
-//#endif
+#ifdef WS_PAPI_PROFILE
+	#define WS_PAPI_MAX_NUM_EVENTS 45
+	#define WS_PAPI_EVENTS_ENV_VAR "WS_PAPI_EVENTS"
+	#define WS_PAPI_MULTIPLEX_ENV_VAR "WS_PAPI_MULTIPLEX"
+	#define WS_PAPI_MULTIPLEX 0 /* Multiplexing disabled by default if env var unspecified */
+#endif
 
 /*********************** You Shall Not Touch ***********************/
 
@@ -239,7 +242,7 @@
 
 #ifdef WS_PAPI_PROFILE
 #define mem_cache_misses(th) ((th)->papi_counters[MEM_CACHE_MISS_POS])
-#else // !defined(WS_PAPI_PROFILE)
+#else
 #define mem_cache_misses(th) 0
 #endif // !defined(WS_PAPI_PROFILE)
 

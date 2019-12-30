@@ -264,7 +264,6 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
   struct tm * now = localtime(&t);
   int64_t max_time = get_max_time(num_workers, wstream_df_worker_threads);
   int64_t min_time = get_min_time(num_workers, wstream_df_worker_threads);
-  FILE* fp = fopen(WQEVENT_SAMPLING_OUTFILE, "w+");
   int last_state_idx;
   unsigned int state;
   unsigned long long state_durations[WORKER_STATE_MAX];
@@ -280,6 +279,15 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
   struct trace_global_single_event dsk_gse;
 
   int do_dump;
+
+  FILE* fp;
+
+	/* Environment variable specifies output tracefile, otherwise use default */
+  const char* env_output_file = getenv(WQEVENT_SAMPLING_OUTFILE_ENV_VAR);
+  if(env_output_file != NULL)
+    fp = fopen(env_output_file, "w+");
+  else
+    fp = fopen(WQEVENT_SAMPLING_OUTFILE, "w+");
 
   assert(fp != NULL);
 
@@ -299,12 +307,10 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 
   write_struct_convert(fp, &dsk_header, sizeof(dsk_header), trace_header_conversion_table, 0);
 
-#ifdef TRACE_PAPI_COUNTERS
-  const char* events[] = WS_PAPI_EVENTS;
-
-  for(int i = 0; i < WS_PAPI_NUM_EVENTS; i++) {
+#ifdef WS_PAPI_PROFILE 
+  for(int i = 0; i < papi_num_events; i++) {
     struct trace_counter_description dsk_cd;
-    int name_len = strlen(events[i]);
+    int name_len = strlen(papi_event_names[i]);
 
     dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
     dsk_cd.name_len = name_len;
@@ -312,7 +318,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 
     write_struct_convert(fp, &dsk_cd, sizeof(dsk_cd), trace_counter_description_conversion_table, 0);
 
-    fwrite(events[i], name_len, 1, fp);
+    fwrite(papi_event_names[i], name_len, 1, fp);
   }
 #endif
 

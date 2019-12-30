@@ -1702,45 +1702,13 @@ static void trace_signal_handler(int sig)
 }
 #endif
 
-void openstream_start_hardware_counters_single(wstream_df_thread_p th)
-{
-#ifdef WS_PAPI_PROFILE
-	int err;
-
-	if(th->papi_num_events > 0) {
-		/* reset */
-		if ((err = PAPI_reset(th->papi_event_set)) != PAPI_OK) {
-			fprintf(stderr, "Could not reset counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
-
-		/* Start counting */
-		if ((err = PAPI_start(th->papi_event_set)) != PAPI_OK) {
-			fprintf(stderr, "Could not start counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
-
-		th->papi_count = 1;
-	}
-#endif
-}
-
 void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th, int64_t timestamp)
 {
 #ifdef WS_PAPI_PROFILE
-	int err;
-
+	/* Event set will continue counting, but no values will be recorded */
 	if(th->papi_num_events > 0) {
-		long long dump[th->papi_num_events];
-
 		update_papi_timestamp(th, timestamp);
 		th->papi_count = 0;
-
-		/* Stop counting */
-		if ((err = PAPI_stop(th->papi_event_set, dump)) != PAPI_OK) {
-			fprintf(stderr, "Could not stop counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
 	}
 #endif
 }
@@ -1756,8 +1724,15 @@ void openstream_start_hardware_counters(void) {
   trace_measure_start(cthread);
 #endif
 
-  for (unsigned i = 0; i < wstream_num_workers; i++)
-    openstream_start_hardware_counters_single(wstream_df_worker_threads[i]);
+#ifdef WS_PAPI_PROFILE
+	/* Potentially re-starting after stopping, so reset the values before reading
+	*  in order to discard counts from the unmonitored phase
+	*/
+	for(unsigned i = 0; i < wstream_num_workers; i++){
+	  wstream_df_worker_threads[i]->papi_reset = 1;
+	  wstream_df_worker_threads[i]->papi_count = 1;
+	}
+#endif // WS_PAPI_PROFILE
 }
 
 void openstream_pause_hardware_counters(void)

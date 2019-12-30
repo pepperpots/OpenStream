@@ -25,8 +25,9 @@ extern unsigned wstream_num_workers;
 
 #define WSTREAM_DF_THREAD_PAPI_FIELDS \
 	int papi_count; \
-	long long papi_counters[WS_PAPI_NUM_EVENTS]; \
-	long long papi_event_mapping[WS_PAPI_NUM_EVENTS]; \
+	int papi_reset; \
+	long long papi_counters[WS_PAPI_MAX_NUM_EVENTS]; \
+	long long papi_event_mapping[WS_PAPI_MAX_NUM_EVENTS]; \
 	int papi_event_set; \
 	int papi_num_events;
 
@@ -41,6 +42,14 @@ update_papi_timestamp(struct wstream_df_thread* th, int64_t timestamp);
 
 void
 init_papi(struct wstream_df_thread* th);
+
+extern int papi_multiplex_enable;
+extern int papi_num_events;
+extern char* papi_event_names[WS_PAPI_MAX_NUM_EVENTS];
+int papi_multiplex_enable;
+int papi_num_events;
+char* papi_event_names[WS_PAPI_MAX_NUM_EVENTS];
+
 #else
 #define WSTREAM_DF_THREAD_PAPI_FIELDS
 #define setup_papi() do { } while(0)
