@@ -14,7 +14,8 @@ wstream_fpga_env::wstream_fpga_env(std::string shell_name)
         this->shell.blockers[blank.first], this->shell.addrs[blank.first]);
   }
 
-  std::string accelerators_names[] = {"Partial_vec_add"};
+  // TODO: Add accelerator
+  std::string accelerators_names[] = {"Partial_trsm", "Partial_gemm", "Partial_syrk"};
 
   for(auto& name : accelerators_names)
   {
@@ -37,16 +38,55 @@ wstream_fpga_env_p create_fpga_environment()
   return fpga_env_p;
 }
 
-paramlist init_params_vecadd(long C, long A, long B, int n)
+// TODO: Add new functions here
+
+paramlist init_params_trsm(long A, long B, int block_size)
 {
   paramlist params({
-    {"C_1",   C},
-    {"C_2",   0},
-    {"A_1",   A},
-    {"A_2",   0},
-    {"B_1",   B},
-    {"B_2",   0},
-    {"n",     n}
+    {"N", block_size},
+    {"M", block_size},
+    {"A_int_1", A},
+    {"A_int_2", 0},
+    {"lda", block_size},
+    {"B_int_1", B},
+    {"B_int_2", 0},
+    {"ldb", block_size}
+  });
+
+  return params;
+}
+
+paramlist init_params_gemm(long A, long B, long C, int block_size)
+{
+  paramlist params({
+    {"N", block_size},
+    {"M", block_size},
+    {"K", block_size},
+    {"A_int_1", A},
+    {"A_int_2", 0},
+    {"lda", block_size},
+    {"B_int_1", B},
+    {"B_int_2", 0},
+    {"ldb", block_size},
+    {"C_int_1", C},
+    {"C_int_2", 0},
+    {"ldc", block_size}
+  });
+
+  return params;
+}
+
+paramlist init_params_syrk(long A, long C, int block_size)
+{
+  paramlist params({
+    {"N", block_size},
+    {"K", block_size},
+    {"A_int_1", A},
+    {"A_int_2", 0},
+    {"lda", block_size},
+    {"C_int_1", C},
+    {"C_int_2", 0},
+    {"ldc", block_size}
   });
 
   return params;
@@ -111,20 +151,34 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   }
 
   // Create parameters list for a given accelerator
-  // TODO: String is available on compile time is there
-  // any way to reduce overhead of making the decision?
   std::map<std::string, int> params_lookup({
-    {"Partial_vec_add", 0}
+    {"Partial_trsm", 0},
+    {"Partial_gemm", 1},
+    {"Partial_syrk", 2}
   });
 
   paramlist params;
 
+  // TODO: Add new accelerators here
   switch(params_lookup.at(fp->cl_data->accel_name))
   {
     case 0:
-      params = init_params_vecadd(out_buffers[0].addr,
-             in_buffers[0].addr, in_buffers[1].addr,
-           out_buffers[0].size / sizeof(int));
+      // FIXME: Hack to match 3 streams task to standard CBLAS function
+      memcpy(out_buffers[0].ptr, in_buffers[1].ptr, out_buffers[0].size);
+      params = init_params_trsm(in_buffers[0].addr,
+             out_buffers[0].addr, 64);
+      break;
+    case 1:
+      // FIXME: Hack to match 4 streams task to standard CBLAS function
+      memcpy(out_buffers[0].ptr, in_buffers[2].ptr, out_buffers[0].size);
+      params = init_params_gemm(in_buffers[0].addr, in_buffers[1].addr,
+             out_buffers[0].addr, 64);
+      break;
+    case 2:
+      // FIXME: Hack to match 3 streams task to standard CBLAS function
+      memcpy(out_buffers[0].ptr, in_buffers[1].ptr, out_buffers[0].size);
+      params = init_params_syrk(in_buffers[0].addr,
+             out_buffers[0].addr, 64);
       break;
   }
 

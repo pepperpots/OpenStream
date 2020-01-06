@@ -38,7 +38,7 @@
 #endif
 
 #define _SPEEDUPS 0
-#define _VERIFY 0
+#define _VERIFY 1
 
 #include <unistd.h>
 
@@ -287,10 +287,9 @@ void create_dgemm_task(double *input_data, int x, int blocks, int block_size, in
                  input(streams[lower_stream] >> lower_in[block_size * block_size]) \
                  input(streams3[y - 1] >> self_in[block_size * block_size]) \
                  output(streams[out_stream] << out[block_size * block_size]) \
-                 accel_name(Partial_dgemm) \
+                 accel_name(Partial_gemm) \
                  args(upper_in, lower_in, self_in, out)
     {
-      // copy_block_from_global(input_data, out, x, y, N, block_size);
       memcpy(out, self_in, block_size * block_size * sizeof(double));
 
       cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
@@ -307,7 +306,7 @@ void create_dgemm_task(double *input_data, int x, int blocks, int block_size, in
                        streams[lower_stream] >> lower_in[block_size * block_size], \
                        streams[self_stream] >> self_in[block_size * block_size])   \
                        output(streams[out_stream] << out[block_size * block_size]) \
-                       accel_name(Partial_dgemm) \
+                       accel_name(Partial_gemm) \
                        args(upper_in, lower_in, self_in, out)
     {
       memcpy(out, self_in, block_size * block_size * sizeof(double));
@@ -351,18 +350,14 @@ void create_dsyrk_task(double *input_data, int x, int blocks, int block_size, in
 #pragma omp task input(streams[left_stream] >> left_in[block_size * block_size]) \
                  input(streams[self_stream] >> self_in[block_size * block_size]) \
                  output(streams[out_stream] << out[block_size * block_size]) \
-                 accel_name(Partial_dsyrk) \
+                 accel_name(Partial_syrk) \
                  args(left_in, self_in, out)
     {
-      // copy_block_from_global(input_data, out, x, x, N, block_size);
       memcpy(out, self_in, block_size * block_size * sizeof(double));
       cblas_dsyrk(CblasRowMajor, CblasLower, CblasNoTrans,
                   block_size, block_size,
                   -1.0, left_in, block_size,
                   1.0, out, block_size);
-
-      // if (stage + 2 < x)
-      //   create_dsyrk_task(input_data, x, blocks, block_size, stage + 2);
     }
   }
   else
@@ -371,11 +366,10 @@ void create_dsyrk_task(double *input_data, int x, int blocks, int block_size, in
 #pragma omp task input(streams[left_stream] >> left_in[block_size * block_size], \
                        streams[self_stream] >> self_in[block_size * block_size]) \
                        output(streams[out_stream] << out[block_size * block_size]) \
-                       accel_name(Partial_dsyrk) \
+                       accel_name(Partial_syrk) \
                        args(left_in, self_in, out)
     {
       memcpy(out, self_in, block_size * block_size * sizeof(double));
-
       cblas_dsyrk(CblasRowMajor, CblasLower, CblasNoTrans,
                   block_size, block_size,
                   -1.0, left_in, block_size,
@@ -452,10 +446,9 @@ void create_dtrsm_task(double *input_data, double *work_data, int x, int blocks,
 #pragma omp task input(streams[top_stream] >> top_in[block_size * block_size]) \
                  input(streams2[y - 1] >> self_in[block_size * block_size]) \
                  output(streams[out_stream] << out[block_size * block_size]) \
-                 accel_name(Partial_dtrsm) \
+                 accel_name(Partial_trsm) \
                  args(top_in, self_in, out)
     {
-      // copy_block_from_global(input_data, out, x, y, N, block_size);
       memcpy(out, self_in, block_size * block_size * sizeof(double));
 
       cblas_dtrsm(CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
@@ -470,10 +463,11 @@ void create_dtrsm_task(double *input_data, double *work_data, int x, int blocks,
 #pragma omp task input(streams[top_stream] >> top_in[block_size * block_size],   \
                        streams[self_stream] >> self_in[block_size * block_size]) \
                        output(streams[out_stream] << out[block_size * block_size]) \
-                       accel_name(Partial_dtrsm) \
+                       accel_name(Partial_trsm) \
                        args(top_in, self_in, out)
     {
       memcpy(out, self_in, block_size * block_size * sizeof(double));
+
       cblas_dtrsm(CblasRowMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
                   block_size, block_size,
                   1.0, top_in, block_size,
@@ -539,7 +533,9 @@ verify(int N, double *data, double *seq_data)
       if (!double_equal(data[y * N + x], seq_data[y * N + x]))
       {
         fprintf(stderr, "Data differs at Y = %d, X = %d: expect %.20f, but was %.20f, diff is %.20f, reldiff = %.20f\n", y, x, seq_data[y * N + x], data[y * N + x], fabs(seq_data[y * N + x] - data[y * N + x]), fabs(seq_data[y * N + x] - data[y * N + x]) / fabs(seq_data[y * N + x]));
-        exit(1);
+        if(fabs(seq_data[y * N + x] - data[y * N + x]) / fabs(seq_data[y * N + x]) > 0.0001)
+          exit(1);
+        fprintf(stderr, "Difference within 0.01%% tolerance\n");
       }
     }
   }
