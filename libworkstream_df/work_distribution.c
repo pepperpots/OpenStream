@@ -1,3 +1,5 @@
+extern "C" {
+
 #include "work_distribution.h"
 #include "arch.h"
 #include "numa.h"
@@ -572,6 +574,10 @@ static wstream_df_frame_p work_steal(wstream_df_thread_p cthread, wstream_df_thr
 
 	  if(cpu_used(steal_from_cpu)) {
 	    steal_from = cpu_to_worker_id(steal_from_cpu);
+
+      if(!wstream_df_worker_threads[steal_from]->fpga_worker && cthread->fpga_worker)
+        break;
+
 	    fp = cdeque_steal (&wstream_df_worker_threads[steal_from]->work_deque);
 
 	    if(fp == NULL) {
@@ -649,18 +655,20 @@ wstream_df_frame_p obtain_work(wstream_df_thread_p cthread,
 
   /* A frame pointer could be obtained (locally or via a steal) */
   if (fp != NULL)
-    {
-      /* Update memory transfer statistics */
-      for(cpu = 0; cpu < MAX_CPUS; cpu++)
-	{
-	  if(fp->bytes_cpu_in[cpu])
+  {
+    /* Update memory transfer statistics */
+    for(cpu = 0; cpu < MAX_CPUS; cpu++)
+	  {
+	    if(fp->bytes_cpu_in[cpu])
 	    {
 	      level = mem_lowest_common_level(cthread->cpu, cpu);
 	      inc_wqueue_counter(&cthread->bytes_mem[level], fp->bytes_cpu_in[cpu]);
 	      inc_transfer_matrix_entry(cthread->cpu, cpu, fp->bytes_cpu_in[cpu]);
 	    }
-	}
-    }
+	  }
+  }
 
   return fp;
+}
+
 }

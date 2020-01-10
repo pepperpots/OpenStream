@@ -96,9 +96,11 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
 {
   wstream_df_view_p out_view_list[get_num_args(fp)];
   wstream_df_view_p in_view_list[get_num_args(fp)];
+  wstream_df_view_p firstprivate_view_list[get_num_args(fp)];  
 
   int out_index = 0;
   int in_index = 0;
+  int firstprivate_index = 0;
 
   int num_args = get_num_args(fp);
 
@@ -148,6 +150,14 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
       // Increment number of processed input buffers
       in_index++;
     }
+    else if (get_arg_direction(fp, i) == CL_ARG_FIRSTPRIVATE)
+    {
+      // Create view from input
+      firstprivate_view_list[firstprivate_index] = get_arg_view(fp, i);
+
+      // Increment number of processed firstprivate variables
+      firstprivate_index++; 
+    }
   }
 
   // Create parameters list for a given accelerator
@@ -160,6 +170,7 @@ void execute_task_on_accelerator(wstream_df_frame_p fp, wstream_fpga_env_p fpga_
   paramlist params;
 
   // TODO: Add new accelerators here
+  // FIXME: Make block size not fixed
   switch(params_lookup.at(fp->cl_data->accel_name))
   {
     case 0:

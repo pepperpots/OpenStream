@@ -1,6 +1,8 @@
 #ifndef MPSC_FIFO_H
 #define MPSC_FIFO_H
 
+extern "C" {
+
 #include <assert.h>
 #include <stdalign.h>
 #include <stdatomic.h>
@@ -56,7 +58,7 @@ new_mpsc_fifo (void)
 /* Multi-producer queue: pushback is called concurrently by multiple
    threads.  */
 static inline bool
-fifo_pushback (mpsc_fifo_p restrict q, const void * restrict elem)
+fifo_pushback (mpsc_fifo_p __restrict__ q, const void * __restrict__ elem)
 {
   size_t b, f;
 
@@ -77,7 +79,7 @@ fifo_pushback (mpsc_fifo_p restrict q, const void * restrict elem)
 }
 
 static inline bool
-fifo_popfront (mpsc_fifo_p restrict q, void ** restrict elem)
+fifo_popfront (mpsc_fifo_p __restrict__ q, void ** __restrict__ elem)
 {
   size_t b, f;
   uintptr_t e;
@@ -104,5 +106,6 @@ fifo_popfront (mpsc_fifo_p restrict q, void ** restrict elem)
   return true;
 }
 
+}
 
 #endif  /* MPSC_FIFO_H */

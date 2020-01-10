@@ -367,6 +367,26 @@ tdecrease_n (void *data, size_t n, bool is_write)
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
 
 #if ALLOW_PUSHES
+
+    // Push FPGA task to FPGA thread
+  if(fp->cl_data != NULL)
+  {
+    if(work_try_push(fp, 3, cthread, wstream_df_worker_threads))
+	  {
+	    trace_state_restore(cthread);
+	    return;
+	  }
+  }
+  else
+  {
+    if(work_try_push(fp, 0, cthread, wstream_df_worker_threads))
+	  {
+	    trace_state_restore(cthread);
+	    return;
+	  }
+  }
+
+goto SKIPP;
       int target_worker;
       /* Check whether the frame should be pushed somewhere else */
       int beneficial = work_push_beneficial(fp, cthread, num_workers, &target_worker);
@@ -388,11 +408,12 @@ tdecrease_n (void *data, size_t n, bool is_write)
 	    }
 	}
 #endif
-      if (cthread->own_next_cached_thread != NULL)
-	cdeque_push_bottom (&cthread->work_deque,
-			    (wstream_df_type) cthread->own_next_cached_thread);
-      cthread->own_next_cached_thread = fp;
-    }
+SKIPP:
+    if (cthread->own_next_cached_thread != NULL)
+	    cdeque_push_bottom (&cthread->work_deque, (wstream_df_type) cthread->own_next_cached_thread);
+    
+    cthread->own_next_cached_thread = fp;
+  }
 
   trace_state_restore(cthread);
 }
@@ -874,6 +895,8 @@ worker_thread(void)
     // TODO: Used by FPGA acceleration only
     if (cthread->fpga_worker)
     {
+      import_pushes(cthread);
+
       wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
 
       if (fp != NULL)

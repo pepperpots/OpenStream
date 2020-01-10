@@ -5,7 +5,7 @@ project(cynq VERSION 0.1.0 DESCRIPTION "C++ FPGA Manager")
 set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g -Wall -Wpedantic")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -Wpedantic")
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -Wall -Wpedantic")
 
 set(SOURCES
     "cynq.cpp"
