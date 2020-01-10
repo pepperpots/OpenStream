@@ -328,22 +328,15 @@ void create_terminal_task(int id_x, int id_y)
 	int token;
 
 	if(id_x == id_y) {
-		if(id_x == ntiles-1) {
-			#pragma omp task peek(sdpotrf_ref[IDX_DPOTRF(id_x)] >> in[T*T]) \
-				output(sfinal_ref[0] << token)
-			{
-				copy_block_to_global(in, id_x, id_y);
-				debug_printf("Terminal Task %d, %d\n", id_x, id_y);
-			}
-		} else {
-			#pragma omp task peek(sdpotrf_ref[IDX_DPOTRF(id_x)] >> in[T*T])
-			{
-				copy_block_to_global(in, id_x, id_y);
-				debug_printf("Terminal Task %d, %d\n", id_x, id_y);
-			}
+		#pragma omp task peek(sdpotrf_ref[IDX_DPOTRF(id_x)] >> in[T*T]) \
+			output(sfinal_ref[0] << token)
+		{
+			copy_block_to_global(in, id_x, id_y);
+			debug_printf("Terminal Task %d, %d\n", id_x, id_y);
 		}
 	} else {
-		#pragma omp task peek(sdtrsm_ref[IDX_DTRSM(id_x, id_y)] >> in[T*T])
+		#pragma omp task peek(sdtrsm_ref[IDX_DTRSM(id_x, id_y)] >> in[T*T]) \
+			output(sfinal_ref[0] << token)
 		{
 			copy_block_to_global(in, id_x, id_y);
 			debug_printf("Terminal Task %d, %d\n", id_x, id_y);
@@ -521,7 +514,7 @@ int main(int argc, char** argv)
 	int px = 4;
 	int py = px;
 
-	int token;
+	int token[ntiles*(ntiles+1)/2];
 	int ntasks = 0;
 	int nntasks = 0;
 
@@ -600,7 +593,7 @@ int main(int argc, char** argv)
 		}
 	}
 
-	#pragma omp task input(sfinal_ref[0] >> token)
+	#pragma omp task input(sfinal_ref[0] >> token[ntiles*(ntiles+1)/2])
 	{
 		printf("All tasks finished\n");
 	}
