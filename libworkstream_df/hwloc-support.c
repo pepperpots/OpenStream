@@ -326,7 +326,7 @@ bool distribute_worker_on_topology(
     hwloc_distrib(machine_topology, &topo_root, 1u, distrib_sets, num_workers,
                   INT_MAX, 0);
   } break;
-  case distribute_minimize_worker_communication: {
+  case distribute_minimise_worker_communication: {
     unsigned nproc = num_available_processing_units();
     distrib_minimizing_latency(nproc, num_workers, pu_latency_distances_arr__,
                                distrib_sets);

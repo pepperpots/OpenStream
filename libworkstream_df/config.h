@@ -69,16 +69,16 @@
  * amount of worker than what is available on the system. You can select
  * between the following options:
  * 
- * - distribute_minimize_worker_communication
- *      The workers are placed on processing units to maximize the resources
- *      available to each worker (cache and memory)
+ * - distribute_minimise_worker_communication
+ *      The workers are placed on processing units to minimise the communication
+ *      latency between all the workers
  * 
  * - distribute_maximise_per_worker_resources
- *      The workers are placed on processing units to minimize the communication
- *      latency between all the workers
+ *      The workers are placed on processing units to maximise the resources
+ *      available to each worker (cache and memory)
  */
 
-#define WORKER_DISTRIBUTION_ALGORITHM distribute_minimize_worker_communication
+#define WORKER_DISTRIBUTION_ALGORITHM distribute_minimise_worker_communication
 
  /*********************** OpenStream Debug Options ***********************/
 
