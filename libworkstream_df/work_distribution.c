@@ -118,7 +118,7 @@ void import_pushes(wstream_df_thread_p cthread)
   }
 }
 
-int work_push_beneficial_max_writer(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+int work_push_beneficial_max_writer(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, unsigned* target_worker)
 {
   unsigned int max_worker;
   int max_data;
@@ -223,7 +223,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   unsigned int max_worker;
   int numa_node_id;
   int max_data;
-  size_t data[MAX_NUMA_NODES];
+  size_t data[num_numa_nodes];
   wstream_df_numa_node_p numa_node;
   unsigned int rand_idx;
 
@@ -247,7 +247,7 @@ int work_push_beneficial_split_owner_chain(wstream_df_frame_p fp, wstream_df_thr
   max_data = data[cthread->numa_node->id];
   numa_node_id = cthread->numa_node->id;
 
-  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+  for(unsigned i = 0; i < num_numa_nodes; i++) {
     if((int)data[i] > max_data) {
       max_data = data[i];
       numa_node_id = i;
@@ -272,13 +272,13 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   unsigned int max_worker;
   int numa_node_id;
   int max_data;
-  size_t data[MAX_NUMA_NODES];
+  size_t data[num_numa_nodes];
   wstream_df_numa_node_p numa_node;
   unsigned int rand_idx;
   int node_id;
 
 #if defined(PUSH_EQUAL_RANDOM)
-    size_t others[MAX_NUMA_NODES];
+    size_t others[num_numa_nodes];
     int num_others = 0;
 #endif
 
@@ -308,14 +308,14 @@ int work_push_beneficial_split_owner_chain_inner_mw(wstream_df_frame_p fp, wstre
   numa_node_id = cthread->numa_node->id;
 
 #if defined(PUSH_EQUAL_SEQ)
-  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+  for(unsigned i = 0; i < num_numa_nodes; i++) {
     if((int)data[i] > max_data) {
       max_data = data[i];
       numa_node_id = i;
     }
   }
 #elif defined(PUSH_EQUAL_RANDOM)
-  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+  for(unsigned i = 0; i < num_numa_nodes; i++) {
     if((int)data[i] > max_data)
       others[num_others++] = i;
 
@@ -368,9 +368,8 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
 {
   unsigned int max_worker;
   int numa_node_id;
-  int max_data;
-  size_t data[MAX_NUMA_NODES];
-  size_t scores[MAX_NUMA_NODES];
+  size_t data[num_numa_nodes];
+  size_t scores[num_numa_nodes];
   size_t min_score;
   wstream_df_numa_node_p numa_node;
   int factor;
@@ -379,7 +378,7 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   int input_size = 0;
 
 #if defined(PUSH_EQUAL_RANDOM)
-    size_t others[MAX_NUMA_NODES];
+    size_t others[num_numa_nodes];
     int num_others = 0;
 #endif
 
@@ -390,8 +389,10 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
     /* By default assume that data is going to be reused */
     if(vi->reuse_data_view)
       node_id = slab_numa_node_of(vi->reuse_data_view->data);
+#if USE_BROADCAST_TABLES
     else if(vi->broadcast_table) /* Peek view with deferred copy */
       node_id = -1;
+#endif // USE_BROADCAST_TABLES
     else
       node_id = slab_numa_node_of(vi->data);
 
@@ -407,22 +408,22 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
   if(input_size < PUSH_MIN_FRAME_SIZE)
     return 0;
 
-  for(int target_node = 0; target_node < MAX_NUMA_NODES; target_node++)
-    for(int source_node = 0; source_node < MAX_NUMA_NODES; source_node++)
-      scores[target_node] += data[source_node] * mem_transfer_costs(target_node, source_node);
+  for(unsigned target_node = 0; target_node < num_numa_nodes; target_node++)
+    for(unsigned source_node = 0; source_node < num_numa_nodes; source_node++)
+      scores[target_node] += data[source_node] * hwloc_mem_transfer_cost(target_node, source_node);
 
   min_score = scores[cthread->numa_node->id];
   numa_node_id = cthread->numa_node->id;
 
 #if defined(PUSH_EQUAL_SEQ)
-  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+  for(unsigned i = 0; i < num_numa_nodes; i++) {
     if(scores[i] < min_score) {
       min_score = scores[i];
       numa_node_id = i;
     }
   }
 #elif defined(PUSH_EQUAL_RANDOM)
-  for(int i = 0; i < MAX_NUMA_NODES; i++) {
+  for(int i = 0; i < num_numa_nodes; i++) {
     if(scores[i] == min_score)
       others[num_others++] = i;
 
@@ -466,7 +467,7 @@ int work_push_beneficial_split_score_nodes(wstream_df_frame_p fp, wstream_df_thr
  * of the worker suited best for execution in target_worker. Otherwise 0 is
  * returned.
  */
-int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, int* target_worker)
+int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int num_workers, wstream_df_thread_p* wstream_df_worker_threads, int* target_worker)
 {
   int res;
   unsigned int lcl_target_worker;
@@ -496,7 +497,7 @@ int work_push_beneficial(wstream_df_frame_p fp, wstream_df_thread_p cthread, int
   if(/* Only migrate to a different worker */
      lcl_target_worker != cthread->worker_id &&
      /* Do not migrate to workers that are too close in the memory hierarchy */
-     mem_lowest_common_level(cthread->worker_id, worker_id_to_cpu(lcl_target_worker)) >= PUSH_MIN_MEM_LEVEL)
+     level_of_common_ancestor(cthread->cpu, wstream_df_worker_threads[lcl_target_worker]->cpu) >= PUSH_MIN_MEM_LEVEL)
     {
       *target_worker = lcl_target_worker;
       return 1;
@@ -517,7 +518,6 @@ int work_try_push(wstream_df_frame_p fp,
 {
   int level;
   int curr_owner;
-  int fp_size;
 
   /* Save current owner for statistics and update new owner */
   curr_owner = fp->last_owner;
@@ -526,11 +526,14 @@ int work_try_push(wstream_df_frame_p fp,
   /* We need to copy frame attributes used afterwards as the frame will
    * be under control of the target worker once it is pushed.
    */
-  fp_size = fp->size;
+
+#if ALLOW_WQEVENT_SAMPLING
+  int fp_size = fp->size;
+#endif // ALLOW_WQEVENT_SAMPLING
 
   if(fifo_pushback(&wstream_df_worker_threads[target_worker]->push_fifo, fp)) {
     /* Push was successful, update traces and statistics */
-    level = mem_lowest_common_level(cthread->worker_id, worker_id_to_cpu(target_worker));
+    level = level_of_common_ancestor(cthread->cpu, wstream_df_worker_threads[target_worker]->cpu);
     inc_wqueue_counter(&cthread->pushes_mem[level], 1);
 
     trace_push(cthread, target_worker, worker_id_to_cpu(target_worker), fp_size, fp);

@@ -292,7 +292,7 @@ void init_wqueue_counters(wstream_df_thread_p th) {
 #if ALLOW_PUSHES
   th->steals_pushed = 0;
   th->pushes_fails = 0;
-  memset(th->pushes_mem, 0, sizeof(th->pushes_mem));
+  th->pushes_mem = calloc(topology_depth, sizeof(*th->pushes_mem));
 #endif
 
   th->reuse_addr = 0;
@@ -434,7 +434,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p* wstrea
 {
 #ifdef WS_PAPI_PROFILE
 	#ifdef DUMP_NUMA_COUNTERS
-	for(int i = 0; i < MAX_NUMA_NODES; i++) {
+	for(int i = 0; i < num_numa_nodes; i++) {
 		dump_numa_counters_single(numa_node_by_id(i));
 	}
 	#endif

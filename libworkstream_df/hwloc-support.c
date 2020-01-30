@@ -484,3 +484,16 @@ void openstream_hwloc_cleanup(void) {
   num_numa_nodes = 0;
   topology_depth = 0;
 }
+
+unsigned hwloc_mem_transfer_cost(unsigned numa_node_a, unsigned numa_node_b) {
+  // Best information source should be provided by inter-node bandwith
+  if (pu_bandwidth_matrix_size) {
+    return pu_bandwidth_distances[numa_node_a][numa_node_b];
+  }
+  // Second best information source can be extracted by looking at the latency
+  if (pu_latency_matrix_size) {
+    return pu_latency_distances[numa_node_a][numa_node_b];
+  }
+  // Assume uniform transfer cost when no other data is available
+  return 1;
+}

@@ -12,10 +12,10 @@ struct wstream_df_thread;
 struct wstream_df_numa_node;
 extern unsigned wstream_num_workers;
 
-#if ALLOW_PUSHES
+#if ALLOW_PUSHES && WQUEUE_PROFILE
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
 	unsigned long long steals_pushed; \
-	unsigned long long pushes_mem[MEM_NUM_LEVELS]; \
+	unsigned long long *pushes_mem; \
 	unsigned long long pushes_fails;
 #else
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS

@@ -397,8 +397,9 @@ tdecrease_n (void *data, size_t n, bool is_write)
 #if ALLOW_PUSHES
       int target_worker;
       /* Check whether the frame should be pushed somewhere else */
-      int beneficial = work_push_beneficial(fp, cthread, wstream_num_workers,
-      &target_worker);
+      int beneficial =
+          work_push_beneficial(fp, cthread, wstream_num_workers,
+                               wstream_df_worker_threads, &target_worker);
 
 #ifdef PUSH_ONLY_IF_NOT_STOLEN_AND_CACHE_EMPTY
       int curr_stolen = (cthread->current_frame &&
@@ -904,11 +905,12 @@ __attribute__((__optimize__("O1"))) static void worker_thread(void) {
 
   trace_state_change(cthread, WORKER_STATE_SEEKING);
   while (true) {
-    if (cthread->yield)
+    if (cthread->yield) {
       while (true) {
         struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
         nanosleep(&ts, NULL);
       }
+    }
 
 #if ALLOW_PUSHES
 #if !ALLOW_PUSH_REORDER

@@ -60,4 +60,6 @@ unsigned closest_numa_node_of_processing_unit(const hwloc_obj_t obj);
 
 void openstream_hwloc_cleanup(void);
 
+unsigned hwloc_mem_transfer_cost(unsigned numa_node_a, unsigned numa_node_b);
+
 #endif // HWLOC_SUPPORT_H_
