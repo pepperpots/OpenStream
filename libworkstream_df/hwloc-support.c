@@ -273,39 +273,73 @@ bool restrict_topology_to_glibc_cpuset(cpu_set_t set) {
 static void
 distrib_minimizing_latency(unsigned num_workers, unsigned wanted_workers,
                            unsigned (*restrict latency_matrix)[num_workers],
-                           hwloc_cpuset_t sets[wanted_workers]) {
+                           hwloc_cpuset_t sets[wanted_workers],
+                           bool use_hyperthreaded_pu_last) {
+  hwloc_const_cpuset_t topology_cpuset =
+      hwloc_topology_get_complete_cpuset(machine_topology);
+
   hwloc_cpuset_t logical_indexes = hwloc_bitmap_alloc();
+  hwloc_cpuset_t tmp_set = hwloc_bitmap_alloc();
   hwloc_bitmap_set(logical_indexes, 0);
   // The greedy algorithm should work reasonably well
   for (unsigned i = 1; i < wanted_workers; ++i) {
     unsigned best_cost = UINT_MAX;
     unsigned best_candidate = 0;
-    for (unsigned j = 0; j < num_workers; ++j) {
+    hwloc_bitmap_zero(tmp_set);
+    hwloc_bitmap_set(tmp_set, 0);
+    hwloc_obj_t core = hwloc_get_next_obj_covering_cpuset_by_type(
+        machine_topology, tmp_set, HWLOC_OBJ_CORE, NULL);
+    hwloc_bitmap_and(tmp_set, core->cpuset, logical_indexes);
+    int num_pu_used = hwloc_bitmap_weight(tmp_set);
+    unsigned j;
+    hwloc_bitmap_foreach_begin(j, topology_cpuset);
+    {
       if (!hwloc_bitmap_isset(logical_indexes, j)) {
+        hwloc_bitmap_zero(tmp_set);
+        hwloc_bitmap_set(tmp_set, j);
+        hwloc_obj_t core = hwloc_get_next_obj_covering_cpuset_by_type(
+            machine_topology, tmp_set, HWLOC_OBJ_CORE, NULL);
+        hwloc_bitmap_and(tmp_set, core->cpuset, logical_indexes);
+        int num_pu_used_in_core = hwloc_bitmap_weight(tmp_set);
         unsigned one_of_the_chosen;
         unsigned j_cost = 0;
         hwloc_bitmap_foreach_begin(one_of_the_chosen, logical_indexes);
-        j_cost += latency_matrix[j][one_of_the_chosen] +
-                  latency_matrix[one_of_the_chosen][j];
+        {
+          j_cost += latency_matrix[j][one_of_the_chosen] +
+                    latency_matrix[one_of_the_chosen][j];
+        }
         hwloc_bitmap_foreach_end();
-        if (j_cost < best_cost) {
-          best_candidate = j;
-          best_cost = j_cost;
+        if (use_hyperthreaded_pu_last) {
+          if (num_pu_used_in_core < num_pu_used ||
+              (num_pu_used_in_core == num_pu_used && j_cost < best_cost)) {
+            best_candidate = j;
+            best_cost = j_cost;
+            num_pu_used = num_pu_used_in_core;
+          }
+        } else {
+          if (j_cost < best_cost) {
+            best_candidate = j;
+            best_cost = j_cost;
+          }
         }
       }
     }
+    hwloc_bitmap_foreach_end();
     assert(best_candidate != 0);
     hwloc_bitmap_set(logical_indexes, best_candidate);
   }
   unsigned one_of_the_chosen;
   unsigned num_chosen = 0;
   hwloc_bitmap_foreach_begin(one_of_the_chosen, logical_indexes);
-  hwloc_obj_t pu =
-      hwloc_get_obj_by_type(machine_topology, HWLOC_OBJ_PU, one_of_the_chosen);
-  hwloc_bitmap_set(sets[num_chosen], pu->os_index);
-  num_chosen++;
+  {
+    hwloc_obj_t pu = hwloc_get_obj_by_type(machine_topology, HWLOC_OBJ_PU,
+                                           one_of_the_chosen);
+    hwloc_bitmap_set(sets[num_chosen], pu->os_index);
+    num_chosen++;
+  }
   hwloc_bitmap_foreach_end();
   hwloc_bitmap_free(logical_indexes);
+  hwloc_bitmap_free(tmp_set);
 }
 
 bool distribute_worker_on_topology(
@@ -320,16 +354,20 @@ bool distribute_worker_on_topology(
   for (unsigned i = 0; i < num_workers; ++i) {
     distrib_sets[i] = hwloc_bitmap_alloc();
   }
+  bool use_hyperthreaded_cores_last = false;
   switch (howto_distribute) {
   case distribute_maximise_per_worker_resources: {
     hwloc_obj_t topo_root = hwloc_get_root_obj(machine_topology);
     hwloc_distrib(machine_topology, &topo_root, 1u, distrib_sets, num_workers,
                   INT_MAX, 0);
   } break;
+  case distribute_minimise_worker_communication_hyperthreading_last:
+    use_hyperthreaded_cores_last = true;
+    // fallthrough
   case distribute_minimise_worker_communication: {
     unsigned nproc = num_available_processing_units();
     distrib_minimizing_latency(nproc, num_workers, pu_latency_distances_arr__,
-                               distrib_sets);
+                               distrib_sets, use_hyperthreaded_cores_last);
   } break;
   default:
     break;

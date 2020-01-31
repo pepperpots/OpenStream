@@ -72,13 +72,63 @@
  * - distribute_minimise_worker_communication
  *      The workers are placed on processing units to minimise the communication
  *      latency between all the workers
+ *
+ * - distribute_minimise_worker_communication_hyperthreading_last
+ *      The workers are placed on processing units to minimise the communication
+ *      latency between all the workers but selects a hyperthreaded processing unit
+ *      as a last resort
  * 
  * - distribute_maximise_per_worker_resources
  *      The workers are placed on processing units to maximise the resources
  *      available to each worker (cache and memory)
  */
 
-#define WORKER_DISTRIBUTION_ALGORITHM distribute_minimise_worker_communication
+#define WORKER_DISTRIBUTION_ALGORITHM distribute_minimise_worker_communication_hyperthreading_last
+
+/*
+ * Task pushing
+ */
+
+#define NUM_PUSH_SLOTS 0
+
+/*
+ * When pushing work to another worker, only allow to push to workers that are
+ * not too close. PUSH_MIN_MEM_LEVEL represents the level in the HWLOC
+ * hierarchy when such push is allowed.
+ */
+
+#define PUSH_MIN_MEM_LEVEL 1
+
+/*
+ * ??
+ */
+
+#define NUM_PUSH_REORDER_SLOTS 0
+
+/*
+ * ??
+ */
+
+#define PUSH_MIN_FRAME_SIZE (64 * 1024)
+#define PUSH_MIN_REL_FRAME_SIZE 1.3
+
+/*
+ * Push to numa node in the order of numa nodes (SEQ) or randomly.
+ */
+
+#define PUSH_EQUAL_SEQ
+// #define PUSH_EQUAL_RANDOM
+
+/*
+ * ??
+ */
+
+#define PUSH_STRATEGY_MAX_WRITER
+//#define PUSH_STRATEGY_OWNER
+//#define PUSH_STRATEGY_SPLIT_OWNER
+//#define PUSH_STRATEGY_SPLIT_OWNER_CHAIN
+//#define PUSH_STRATEGY_SPLIT_OWNER_CHAIN_INNER_MW
+//#define PUSH_STRATEGY_SPLIT_SCORE_NODES
 
  /*********************** OpenStream Debug Options ***********************/
 
@@ -165,16 +215,6 @@
 
  /*********************** OpenStream Probably Broken Options (Post-HWLOC untested) ***********************/
 
-#define PUSH_MIN_MEM_LEVEL 1
-#define PUSH_MIN_FRAME_SIZE (64 * 1024)
-#define PUSH_MIN_REL_FRAME_SIZE 1.3
-#define NUM_PUSH_SLOTS 0
-#define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
-
-#define NUM_PUSH_REORDER_SLOTS 0
-#define ALLOW_PUSH_REORDER (ALLOW_PUSHES && NUM_PUSH_REORDER_SLOTS > 0)
-
-
 //#define WS_PAPI_PROFILE
 //#define WS_PAPI_MULTIPLEX
 
@@ -189,6 +229,10 @@
 /*********************** You Shall Not Touch ***********************/
 
 #define ALLOW_WQEVENT_SAMPLING (MAX_WQEVENT_SAMPLES > 0)
+
+#define ALLOW_PUSHES (NUM_PUSH_SLOTS > 0)
+
+#define ALLOW_PUSH_REORDER (ALLOW_PUSHES && NUM_PUSH_REORDER_SLOTS > 0)
 
 #ifndef IN_GCC
 #include <string.h>
@@ -210,6 +254,10 @@
 
 #if MATRIX_PROFILE && !WQUEUE_PROFILE
 #error "MATRIX_PROFILE defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if ALLOW_PUSHES && !WQUEUE_PROFILE
+#error "WORK_PUSHING defined, but WQUEUE_PROFILE != 1"
 #endif
 
 #endif

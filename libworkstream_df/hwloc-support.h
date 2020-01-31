@@ -21,6 +21,7 @@ extern void *pu_bandwidth_distances_arr__;
 enum hwloc_wstream_worker_distribution_algorithm {
   distribute_maximise_per_worker_resources,
   distribute_minimise_worker_communication,
+  distribute_minimise_worker_communication_hyperthreading_last,
 };
 
 // Initializes the hwloc support by discovereing the current machine topology
