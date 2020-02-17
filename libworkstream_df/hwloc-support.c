@@ -278,43 +278,45 @@ distrib_minimizing_latency(unsigned num_workers, unsigned wanted_workers,
   hwloc_const_cpuset_t topology_cpuset =
       hwloc_topology_get_complete_cpuset(machine_topology);
 
-  hwloc_cpuset_t logical_indexes = hwloc_bitmap_alloc();
+  hwloc_cpuset_t allocated_cpu_set = hwloc_bitmap_alloc();
   hwloc_cpuset_t tmp_set = hwloc_bitmap_alloc();
-  hwloc_bitmap_set(logical_indexes, 0);
+  int the_chosen_one = hwloc_bitmap_first(topology_cpuset);
+  hwloc_bitmap_set(allocated_cpu_set, the_chosen_one);
   // The greedy algorithm should work reasonably well
   for (unsigned i = 1; i < wanted_workers; ++i) {
     unsigned best_cost = UINT_MAX;
-    unsigned best_candidate = 0;
+    unsigned best_candidate = the_chosen_one;
     hwloc_bitmap_zero(tmp_set);
-    hwloc_bitmap_set(tmp_set, 0);
+    hwloc_bitmap_set(tmp_set, the_chosen_one);
     hwloc_obj_t core = hwloc_get_next_obj_covering_cpuset_by_type(
         machine_topology, tmp_set, HWLOC_OBJ_CORE, NULL);
-    hwloc_bitmap_and(tmp_set, core->cpuset, logical_indexes);
-    int num_pu_used = hwloc_bitmap_weight(tmp_set);
+    hwloc_bitmap_and(tmp_set, core->cpuset, allocated_cpu_set);
+    int lowest_pu_per_core = hwloc_bitmap_weight(tmp_set);
     unsigned j;
     hwloc_bitmap_foreach_begin(j, topology_cpuset);
     {
-      if (!hwloc_bitmap_isset(logical_indexes, j)) {
+      if (!hwloc_bitmap_isset(allocated_cpu_set, j)) {
         hwloc_bitmap_zero(tmp_set);
         hwloc_bitmap_set(tmp_set, j);
         hwloc_obj_t core = hwloc_get_next_obj_covering_cpuset_by_type(
             machine_topology, tmp_set, HWLOC_OBJ_CORE, NULL);
-        hwloc_bitmap_and(tmp_set, core->cpuset, logical_indexes);
-        int num_pu_used_in_core = hwloc_bitmap_weight(tmp_set);
+        hwloc_bitmap_and(tmp_set, core->cpuset, allocated_cpu_set);
+        int pu_in_considered_core = hwloc_bitmap_weight(tmp_set);
         unsigned one_of_the_chosen;
         unsigned j_cost = 0;
-        hwloc_bitmap_foreach_begin(one_of_the_chosen, logical_indexes);
+        hwloc_bitmap_foreach_begin(one_of_the_chosen, allocated_cpu_set);
         {
           j_cost += latency_matrix[j][one_of_the_chosen] +
                     latency_matrix[one_of_the_chosen][j];
         }
         hwloc_bitmap_foreach_end();
         if (use_hyperthreaded_pu_last) {
-          if (num_pu_used_in_core < num_pu_used ||
-              (num_pu_used_in_core == num_pu_used && j_cost < best_cost)) {
+          if (pu_in_considered_core < lowest_pu_per_core ||
+              (pu_in_considered_core == lowest_pu_per_core &&
+               j_cost < best_cost)) {
             best_candidate = j;
             best_cost = j_cost;
-            num_pu_used = num_pu_used_in_core;
+            lowest_pu_per_core = pu_in_considered_core;
           }
         } else {
           if (j_cost < best_cost) {
@@ -326,19 +328,17 @@ distrib_minimizing_latency(unsigned num_workers, unsigned wanted_workers,
     }
     hwloc_bitmap_foreach_end();
     assert(best_candidate != 0);
-    hwloc_bitmap_set(logical_indexes, best_candidate);
+    hwloc_bitmap_set(allocated_cpu_set, best_candidate);
   }
   unsigned one_of_the_chosen;
   unsigned num_chosen = 0;
-  hwloc_bitmap_foreach_begin(one_of_the_chosen, logical_indexes);
+  hwloc_bitmap_foreach_begin(one_of_the_chosen, allocated_cpu_set);
   {
-    hwloc_obj_t pu = hwloc_get_obj_by_type(machine_topology, HWLOC_OBJ_PU,
-                                           one_of_the_chosen);
-    hwloc_bitmap_set(sets[num_chosen], pu->os_index);
+    hwloc_bitmap_set(sets[num_chosen], one_of_the_chosen);
     num_chosen++;
   }
   hwloc_bitmap_foreach_end();
-  hwloc_bitmap_free(logical_indexes);
+  hwloc_bitmap_free(allocated_cpu_set);
   hwloc_bitmap_free(tmp_set);
 }
 
