@@ -1701,20 +1701,14 @@ static void trace_signal_handler(int sig)
 }
 #endif
 
-void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th, int64_t timestamp)
+void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
 {
 #if WS_PAPI_PROFILE
 	/* Event set will continue counting, but no values will be recorded */
 	if(th->papi_num_events > 0) {
-		update_papi_timestamp(th, timestamp);
 		th->papi_count = 0;
 	}
 #endif
-}
-
-void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
-{
-  openstream_pause_hardware_counters_single_timestamp(th, rdtsc());
 }
 
 void openstream_start_hardware_counters(void) {
@@ -1741,11 +1735,8 @@ void openstream_pause_hardware_counters(void)
 	int64_t local_ts = rdtsc();
 	wstream_df_thread_p cthread = current_thread;
 
-	for(unsigned i = 0; i < wstream_num_workers; i++) {
-	  wstream_df_thread_p target_thread = wstream_df_worker_threads[i];
-	  openstream_pause_hardware_counters_single_timestamp(wstream_df_worker_threads[i],
-							      local_ts - cthread->tsc_offset + target_thread->tsc_offset);
-	}
+	for(unsigned i = 0; i < wstream_num_workers; i++) 
+	  openstream_pause_hardware_counters_single(wstream_df_worker_threads[i]);
 
 	trace_measure_end(cthread);
 }
