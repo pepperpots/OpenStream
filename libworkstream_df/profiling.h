@@ -4,7 +4,7 @@
 #include "config.h"
 #include <stdint.h>
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 #include <papi.h>
 #endif
 
@@ -21,7 +21,7 @@ extern unsigned wstream_num_workers;
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
 #endif
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 
 #define WSTREAM_DF_THREAD_PAPI_FIELDS \
 	int papi_count; \

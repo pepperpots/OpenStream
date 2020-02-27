@@ -158,13 +158,13 @@
  /*********************** OpenStream Profiling Options ***********************/
 
 /*
- * Profile the work queues.
+ * Profile the work queues. 
  *
- * WARNING: Enabling queue profiling requires rebuilding the source codes
+ * WARNING: Enabling profiling requires rebuilding the source codes
  * using OpenStream.
  */
 
-#define WQUEUE_PROFILE 0
+#define WQUEUE_PROFILE 1
 
 /*
  * MATRIX_PROFILE profiles the amount of information exchanged between the the
@@ -185,6 +185,9 @@
  *   - Minor page faults (page already in memory but not mapped into the process)
  *   - The maximum resident set size (peak RAM usage of the process)
  *   - The number of involuntary context switches (e.g. kernel scheduler intervention)
+ * Only traced to disk if TRACE_QUEUE_STATS enabled
+ * 
+ * Option requirement: WQUEUE_PROFILE
  */
 
 #define PROFILE_RUSAGE 0
@@ -196,9 +199,11 @@
  * MAX_WQEVENT_SAMPLES events. The trace will be stored in the file specified
  * by the environment variable WQEVENT_SAMPLING_OUTFILE_ENV_VAR or default to
  * WQEVENT_SAMPLING_OUTFILE if not set.
+ *
+ * All tracing to disk requires WQUEUE_PROFILE and sufficient MAX_WQEVENT_SAMPLES
  */
 
-#define MAX_WQEVENT_SAMPLES 0
+#define MAX_WQEVENT_SAMPLES 100000000
 #define WQEVENT_SAMPLING_OUTFILE_ENV_VAR "WQEVENT_SAMPLING_OUTFILE"
 #define WQEVENT_SAMPLING_OUTFILE "events.ost"
 
@@ -210,19 +215,42 @@
 #define TRACE_RT_INIT_STATE
 
 /*
- * What on the silicon is this?
+ * If MAX_WQEVENT_CYCLES set to 0 or more, trace event samples will only be recorded
+ * until MAX_WQEVENT_CYCLES CPU cycles have elapsed since initialisation (on each
+ * thread)
  */
 
-#define MAX_WQEVENT_PARAVER_CYCLES -1
+#define MAX_WQEVENT_CYCLES -1
 
- /*********************** OpenStream Probably Broken Options (Post-HWLOC untested) ***********************/
+/*
+ * Enable communication events (steal, push, data read, data write) to be traced
+ */
 
-//#define TRACE_COMMUNICATION
-//#define TRACE_WORKER_STATES
-//#define PROFILE_RUSAGE
-// #define WS_PAPI_PROFILE
+#define TRACE_COMMUNICATION 1
 
-#ifdef WS_PAPI_PROFILE
+/*
+ * Enable runtime counters (wq_length, num tcreates, rusage events, etc) to be traced
+ */
+
+#define TRACE_QUEUE_STATS 1
+
+/*
+ * Enable worker states events (steal, push, data read, data write) to be traced
+ */
+
+#define TRACE_WORKER_STATES 1
+
+/*
+ * Enable PAPI events to be traced
+ * Additional options:
+ * 		- WS_PAPI_MAX_NUM_EVENTS sets the maximum possible number of user-defined events
+ * 		- WS_PAPI_EVENTS_ENV_VAR sets the env var for user to provide comma-separated events
+ * 		- WS_PAPI_MULTIPLEX_ENV_VAR sets the env var for user to enable multiplexing
+ * 		- WS_PAPI_MULTIPLEX provides the default multiplexing setting, if not user-provided
+ */
+
+#define WS_PAPI_PROFILE 1
+#if WS_PAPI_PROFILE
 	#define WS_PAPI_MAX_NUM_EVENTS 45
 	#define WS_PAPI_EVENTS_ENV_VAR "WS_PAPI_EVENTS"
 	#define WS_PAPI_MULTIPLEX_ENV_VAR "WS_PAPI_MULTIPLEX"
@@ -240,17 +268,20 @@
 #ifndef IN_GCC
 #include <string.h>
 
-#ifdef WS_PAPI_PROFILE
+// TODO requires command-line specification of which hardware event should be used for cache miss
+#if 0
+#define MEM_CACHE_MISS_POS 0
 #define mem_cache_misses(th) ((th)->papi_counters[MEM_CACHE_MISS_POS])
 #else
 #define mem_cache_misses(th) 0
-#endif // !defined(WS_PAPI_PROFILE)
+#endif
 
 #endif /* IN_GCC */
 
 /*
  * Some configuration checks
  */
+
 #if ALLOW_WQEVENT_SAMPLING && !WQUEUE_PROFILE
 #error "ALLOW_WQEVENT_SAMPLING defined, but WQUEUE_PROFILE != 1"
 #endif
@@ -261,6 +292,32 @@
 
 #if ALLOW_PUSHES && !WQUEUE_PROFILE
 #error "WORK_PUSHING defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if WS_PAPI_PROFILE && !WQUEUE_PROFILE
+#error "WS_PAPI_PROFILE defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if TRACE_COMMUNICATION && !WQUEUE_PROFILE
+#error "TRACE_COMMUNICATION defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if TRACE_WORKER_STATES && !WQUEUE_PROFILE
+#error "TRACE_WORKER_STATES defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if PROFILE_RUSAGE && !WQUEUE_PROFILE
+#error "PROFILE_RUSAGE defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if TRACE_QUEUE_STATS && !WQUEUE_PROFILE
+#error "TRACE_QUEUE_STATS defined, but WQUEUE_PROFILE != 1"
+#endif
+
+#if (WS_PAPI_PROFILE || TRACE_COMMUNICATION || \
+		TRACE_WORKER_STATES || TRACE_QUEUE_STATS) \
+	&& !ALLOW_WQEVENT_SAMPLING
+#error "Must provide sufficient MAX_WQEVENT_SAMPLES to trace events"
 #endif
 
 #endif

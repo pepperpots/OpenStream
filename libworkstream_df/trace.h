@@ -158,7 +158,7 @@ void dump_events_ostv(int num_workers, struct wstream_df_thread** wstream_df_wor
 #define dump_events_ostv(num_workers, wstream_df_worker_threads) do { } while(0)
 #endif
 
-#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_QUEUE_STATS) && WQUEUE_PROFILE
+#if ALLOW_WQEVENT_SAMPLING && TRACE_QUEUE_STATS && WQUEUE_PROFILE
 void trace_runtime_counters(struct wstream_df_thread* cthread);
 #else
 #define trace_runtime_counters(cthread) do { } while(0)

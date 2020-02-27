@@ -1157,7 +1157,6 @@ void pre_main()
   size_t num_cpu_affinities = 0;
   cpu_set_t cs;
 
-
   if (!discover_machine_topology()) {
     wstream_df_fatal("[hwloc] Cannot get architecture information from system");
   }
@@ -1704,7 +1703,7 @@ static void trace_signal_handler(int sig)
 
 void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th, int64_t timestamp)
 {
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 	/* Event set will continue counting, but no values will be recorded */
 	if(th->papi_num_events > 0) {
 		update_papi_timestamp(th, timestamp);
@@ -1724,13 +1723,15 @@ void openstream_start_hardware_counters(void) {
   trace_measure_start(cthread);
 #endif
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 	/* Potentially re-starting after stopping, so reset the values before reading
 	*  in order to discard counts from the unmonitored phase
 	*/
-	for(unsigned i = 0; i < wstream_num_workers; i++){
-	  wstream_df_worker_threads[i]->papi_reset = 1;
-	  wstream_df_worker_threads[i]->papi_count = 1;
+	if(cthread->papi_num_events > 0){
+		for(unsigned i = 0; i < wstream_num_workers; i++){
+			wstream_df_worker_threads[i]->papi_reset = 1;
+			wstream_df_worker_threads[i]->papi_count = 1;
+		}
 	}
 #endif // WS_PAPI_PROFILE
 }

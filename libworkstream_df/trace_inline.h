@@ -1,4 +1,4 @@
-#ifdef TRACE_WORKER_STATES
+#if TRACE_WORKER_STATES
 
 static inline void trace_state_change(wstream_df_thread_p cthread, unsigned int state){}
 static inline void trace_state_restore(wstream_df_thread_p cthread){}
@@ -51,7 +51,7 @@ static inline void trace_state_restore(wstream_df_thread_p cthread)
 
 #endif
 
-#ifdef TRACE_COMMUNICATION
+#if TRACE_COMMUNICATION
 
 static inline void trace_steal(wstream_df_thread_p cthread, unsigned int src_worker, unsigned int src_cpu, unsigned int size, void* frame){}
 static inline void trace_push(wstream_df_thread_p cthread, unsigned int dst_worker, unsigned int dst_cpu, unsigned int size, void* frame){}

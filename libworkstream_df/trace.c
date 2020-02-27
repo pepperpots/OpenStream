@@ -11,7 +11,7 @@
 #include "hwloc-support.h"
 
 
-#ifdef TRACE_QUEUE_STATS
+#if TRACE_QUEUE_STATS
 static const char* runtime_counter_names[NUM_RUNTIME_COUNTERS] = {
   "wq_length",
   "wq_steals",
@@ -61,7 +61,7 @@ void trace_frame_info(struct wstream_df_thread* cthread, struct wstream_df_frame
   cthread->num_events++;
 }
 
-#if ALLOW_WQEVENT_SAMPLING && defined(TRACE_QUEUE_STATS) && WQUEUE_PROFILE
+#if ALLOW_WQEVENT_SAMPLING && TRACE_QUEUE_STATS && WQUEUE_PROFILE
 void trace_runtime_counters(struct wstream_df_thread* cthread)
 {
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_WQLENGTH, cthread->work_deque.bottom - cthread->work_deque.top);
@@ -79,14 +79,14 @@ void trace_runtime_counters(struct wstream_df_thread* cthread)
 #endif // PROFILE_RUSAGE
 
   uint64_t steals = 0;
-  for(int level = 0; level < MEM_NUM_LEVELS; level++)
+  for(int level = 0; level < topology_depth; level++)
     steals += cthread->steals_mem[level];
 
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_STEALS, steals);
 
 #if ALLOW_PUSHES
   uint64_t pushes = 0;
-  for(int level = 0; level < MEM_NUM_LEVELS; level++)
+  for(int level = 0; level < topology_depth; level++)
     pushes += cthread->pushes_mem[level];
 
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_PUSHES, pushes);
@@ -307,10 +307,12 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 
   write_struct_convert(fp, &dsk_header, sizeof(dsk_header), trace_header_conversion_table, 0);
 
-#ifdef WS_PAPI_PROFILE 
+#if WS_PAPI_PROFILE 
   for(int i = 0; i < papi_num_events; i++) {
     struct trace_counter_description dsk_cd;
     int name_len = strlen(papi_event_names[i]);
+		
+		fprintf(stderr,"Tracing a papi counter %d:%s!\n", i+PAPI_COUNTER_BASE, papi_event_names[i]);
 
     dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
     dsk_cd.name_len = name_len;
@@ -322,10 +324,13 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
   }
 #endif
 
-#ifdef TRACE_QUEUE_STATS
+		//fprintf(stderr,"Dumping stuff!\n");
+#if TRACE_QUEUE_STATS
   for(int i = 0; i < NUM_RUNTIME_COUNTERS; i++) {
     struct trace_counter_description dsk_cd;
     int name_len = strlen(runtime_counter_names[i]);
+
+		fprintf(stderr,"Tracing a runtime counter %d:%s!\n", i+RUNTIME_COUNTER_BASE, runtime_counter_names[i]);
 
     dsk_cd.type = EVENT_TYPE_COUNTER_DESCRIPTION;
     dsk_cd.name_len = name_len;
@@ -352,8 +357,8 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 
     if(th->num_events > 0) {
       for(k = 0; k < th->num_events; k++) {
-	if(MAX_WQEVENT_PARAVER_CYCLES != -1 &&
-	   th->events[k].time-min_time > (int64_t)MAX_WQEVENT_PARAVER_CYCLES)
+	if(MAX_WQEVENT_CYCLES != -1 &&
+	   th->events[k].time-min_time > (int64_t)MAX_WQEVENT_CYCLES)
 	  {
 	    do_dump = 0;
 	  }
@@ -516,6 +521,8 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 	    dsk_cre.header.active_frame = th->events[k].active_frame;
 	    dsk_cre.counter_id = th->events[k].counter.counter_id;
 	    dsk_cre.value = th->events[k].counter.value;
+
+			fprintf(stderr,"Tracing counter id %d with value %llu.\n", th->events[k].counter.counter_id, th->events[k].counter.value);
 
 	    write_struct_convert(fp, &dsk_cre, sizeof(dsk_cre), trace_counter_event_conversion_table, 0);
 	  }

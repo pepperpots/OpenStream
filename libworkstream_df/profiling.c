@@ -43,21 +43,16 @@ extern inline void inc_transfer_matrix_entry(unsigned int consumer,
 
 #endif // MATRIX_PROFILE
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 
-void load_papi_env(){
+int load_papi_env(){
 
 	const char* env_papi_events = getenv(WS_PAPI_EVENTS_ENV_VAR);
-	if(env_papi_events == NULL){
+	if(env_papi_events == NULL || env_papi_events[0] == '\0'){
 		fprintf(stderr,"OpenStream PAPI profiling is enabled, but no events are being traced.\n");
 		papi_num_events = 0;
 		papi_multiplex_enable = 0;
-		return;
-	}
-
-	if(env_papi_events[0] == '\0'){
-		papi_num_events = 0;
-		papi_multiplex_enable = 0;
+		return -1;
 	}
 
 	// Copy the events from the environment as strtok mutates in place
@@ -101,6 +96,8 @@ void load_papi_env(){
 		papi_multiplex_enable = 1;
 	}
 
+	return 0;
+
 }
 
 unsigned long long_wstream_handle() {
@@ -112,7 +109,8 @@ setup_papi(void)
 {
 	int retval;
 
-	load_papi_env();
+	if (load_papi_env() < 0)
+		return;
 
 	retval = PAPI_library_init(PAPI_VER_CURRENT);
 
@@ -156,6 +154,14 @@ setup_papi(void)
 void
 init_papi (wstream_df_thread_p th)
 {
+
+	if(papi_num_events == 0){
+		// If we aren't tracing any events, don't bother initialising
+		th->papi_count = 0;
+		th->papi_num_events = 0;
+		return;
+	}
+
 	int err, i;
 	int component_idx = 0;
 
@@ -386,7 +392,7 @@ void
 dump_wqueue_counters_single (wstream_df_thread_p th)
 {
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 	int i;
 #endif // defined(WS_PAPI_PROFILE)
 
@@ -450,7 +456,7 @@ dump_wqueue_counters_single (wstream_df_thread_p th)
 	}
 #endif
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 	for(i = 0; i < th->papi_num_events; i++) {
 		printf ("Thread %d: papi_%s = %lld\n",
 			th->worker_id,
@@ -506,7 +512,7 @@ void dump_numa_counters_single(wstream_df_numa_node_p numa_node)
 
 void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p* wstream_df_worker_threads)
 {
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 	#ifdef DUMP_NUMA_COUNTERS
 	for(int i = 0; i < num_numa_nodes; i++) {
 		dump_numa_counters_single(numa_node_by_id(i));
