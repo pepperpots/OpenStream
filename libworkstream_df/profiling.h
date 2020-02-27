@@ -4,28 +4,30 @@
 #include "config.h"
 #include <stdint.h>
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 #include <papi.h>
 #endif
 
 struct wstream_df_thread;
 struct wstream_df_numa_node;
+extern unsigned wstream_num_workers;
 
-#if ALLOW_PUSHES
+#if ALLOW_PUSHES && WQUEUE_PROFILE
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
 	unsigned long long steals_pushed; \
-	unsigned long long pushes_mem[MEM_NUM_LEVELS]; \
+	unsigned long long *pushes_mem; \
 	unsigned long long pushes_fails;
 #else
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS
 #endif
 
-#ifdef WS_PAPI_PROFILE
+#if WS_PAPI_PROFILE
 
 #define WSTREAM_DF_THREAD_PAPI_FIELDS \
 	int papi_count; \
-	long long papi_counters[WS_PAPI_NUM_EVENTS]; \
-	long long papi_event_mapping[WS_PAPI_NUM_EVENTS]; \
+	int papi_reset; \
+	long long papi_counters[WS_PAPI_MAX_NUM_EVENTS]; \
+	long long papi_event_mapping[WS_PAPI_MAX_NUM_EVENTS]; \
 	int papi_event_set; \
 	int papi_num_events;
 
@@ -40,6 +42,14 @@ update_papi_timestamp(struct wstream_df_thread* th, int64_t timestamp);
 
 void
 init_papi(struct wstream_df_thread* th);
+
+extern int papi_multiplex_enable;
+extern int papi_num_events;
+extern char* papi_event_names[WS_PAPI_MAX_NUM_EVENTS];
+int papi_multiplex_enable;
+int papi_num_events;
+char* papi_event_names[WS_PAPI_MAX_NUM_EVENTS];
+
 #else
 #define WSTREAM_DF_THREAD_PAPI_FIELDS
 #define setup_papi() do { } while(0)
@@ -48,23 +58,29 @@ init_papi(struct wstream_df_thread* th);
 #define update_papi_timestamp(th, ts) do { } while(0)
 #endif
 
+#if PROFILE_RUSAGE
+#define PROFILE_RUSAGE_FIELDS \
+	unsigned long long system_time_us; \
+	unsigned long long major_page_faults; \
+	unsigned long long minor_page_faults; \
+	unsigned long long max_resident_size; \
+	unsigned long long inv_context_switches;
+#else // !PROFILE_RUSAGE
+#define PROFILE_RUSAGE_FIELDS
+#endif // PROFILE_RUSAGE
+
 #if WQUEUE_PROFILE 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
 	unsigned long long steals_fails; \
 	unsigned long long steals_owncached; \
 	unsigned long long steals_ownqueue; \
-	unsigned long long steals_mem[MEM_NUM_LEVELS]; \
-	unsigned long long bytes_mem[MEM_NUM_LEVELS]; \
+	unsigned long long *steals_mem; \
+	unsigned long long *bytes_mem; \
 	unsigned long long tasks_created; \
 	unsigned long long tasks_executed; \
 	unsigned long long tasks_executed_localalloc; \
 	unsigned long long reuse_addr; \
-	unsigned long long reuse_copy; \
-	unsigned long long system_time_us; \
-	unsigned long long major_page_faults; \
-	unsigned long long minor_page_faults; \
-	unsigned long long max_resident_size; \
-	unsigned long long inv_context_switches; \
+	unsigned long long reuse_copy;
 
 void
 init_wqueue_counters (struct wstream_df_thread* th);
@@ -78,12 +94,11 @@ stop_wqueue_counters (void);
 void
 wqueue_counters_enter_runtime(struct wstream_df_thread* th);
 
-#ifdef PROFILE_RUSAGE
-  void
-  wqueue_counters_profile_rusage(struct wstream_df_thread* th);
-#else
+#if PROFILE_RUSAGE
+void wqueue_counters_profile_rusage(struct wstream_df_thread *th);
+#else // !PROFILE_RUSAGE
   #define wqueue_counters_profile_rusage(th) do {} while(0)
-#endif
+#endif // PROFILE_RUSAGE
 
 void
 dump_wqueue_counters (unsigned int num_workers, struct wstream_df_thread** wstream_df_worker_threads);
@@ -121,27 +136,32 @@ dump_global_wqueue_counters ();
 #define set_wqueue_counter_if_zero(ctr, val) do {} while(0)
 #endif
 
-#ifdef MATRIX_PROFILE
-extern unsigned long long transfer_matrix[MAX_CPUS][MAX_CPUS];
+#if MATRIX_PROFILE
 
-static inline void
-inc_transfer_matrix_entry(unsigned int consumer, unsigned int producer,
-			  unsigned long long num_bytes)
-{
-	transfer_matrix[consumer][producer] += num_bytes;
+extern void *tm_data__;
+#define transfer_matrix ((unsigned long long(*)[wstream_num_workers])tm_data__)
+
+inline void inc_transfer_matrix_entry(unsigned int consumer,
+                                      unsigned int producer,
+                                      unsigned long long num_bytes) {
+  transfer_matrix[consumer][producer] += num_bytes;
 }
 
 void init_transfer_matrix(void);
 void dump_transfer_matrix(unsigned int num_workers);
-#else
+
+#else // !MATRIX_PROFILE
+
 #define inc_transfer_matrix_entry(consumer, producer, num_bytes) do {} while(0)
 #define init_transfer_matrix() do {} while(0)
 #define dump_transfer_matrix(num_workers) do {} while(0)
-#endif
+
+#endif // MATRIX_PROFILE
 
 #define WSTREAM_DF_THREAD_WQUEUE_PROFILE_FIELDS \
 	WSTREAM_DF_THREAD_WQUEUE_PROFILE_BASIC_FIELDS \
 	WSTREAM_DF_THREAD_WQUEUE_PROFILE_PUSH_FIELDS \
+	PROFILE_RUSAGE_FIELDS \
 	WSTREAM_DF_THREAD_PAPI_FIELDS
 
 #endif

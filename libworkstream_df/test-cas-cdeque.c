@@ -71,6 +71,9 @@ thief_main (void *data)
   return data;
 }
 
+#define perror_and_exit_failure(err_message) \
+  { perror(err_message); exit(EXIT_FAILURE); }
+
 int
 main (int argc, char *argv[])
 {
@@ -88,11 +91,17 @@ main (int argc, char *argv[])
   worker_deque = cdeque_alloc (6);
   assert (worker_deque != NULL);
 
-  assert (pthread_create (&worker_thread, NULL, worker_main, &n) == 0);
-  assert (pthread_create (&thief_thread, NULL, thief_main, NULL) == 0);
-  assert (pthread_join (worker_thread, NULL) == 0);
-  assert (pthread_cancel (thief_thread) == 0);
-  assert (pthread_join (thief_thread, NULL) == 0);
+
+  if (pthread_create (&worker_thread, NULL, worker_main, &n))
+    perror_and_exit_failure("pthread_create:");
+  if (pthread_create (&thief_thread, NULL, thief_main, NULL))
+    perror_and_exit_failure("pthread_create:");
+  if (pthread_join (worker_thread, NULL))
+    perror_and_exit_failure("pthread_join:");
+  if (pthread_cancel (thief_thread))
+    perror_and_exit_failure("pthread_cancel:");
+  if (pthread_join (thief_thread, NULL))
+    perror_and_exit_failure("pthread_join:");
 
   fprintf (stderr, "(worker) nempty = %u\n", worker_nempty);
   fprintf (stderr, "(thief) nempty = %u\n", thief_nempty);

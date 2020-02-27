@@ -6,8 +6,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <stdalign.h>
+#include <stdint.h>
+
 
 #include "config.h"
+#include "hwloc.h"
 #include "trace.h"
 #include "wstream_df.h"
 #include "profiling.h"
@@ -18,7 +22,7 @@
 #include "alloc.h"
 #include "reuse.h"
 #include "prng.h"
-#include "interleave.h"
+#include "hwloc-support.h"
 
 #ifdef DEPENDENCE_AWARE_ALLOC
 	#error "Obsolete option 'dependence-aware allocation' enabled"
@@ -32,10 +36,7 @@ __thread wstream_df_thread_p current_thread = NULL;
 static __thread barrier_p current_barrier = NULL;
 
 static wstream_df_thread_p* wstream_df_worker_threads;
-wstream_df_numa_node_p wstream_df_default_node;
-static int num_workers;
-static int* wstream_df_worker_cpus;
-int __wstream_df_num_cores_cached = -1;
+unsigned wstream_num_workers;
 
 void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 
@@ -44,7 +45,9 @@ void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 /*************************************************************************/
 
 static void worker_thread ();
+#if ALLOW_WQEVENT_SAMPLING
 static void trace_signal_handler(int sig);
+#endif
 
 static inline void wstream_free_frame(wstream_df_frame_p fp)
 {
@@ -187,13 +190,33 @@ wstream_df_taskwait ()
 /***************************************************************************/
 /***************************************************************************/
 
+static inline void *align_up(void *addr, size_t alignment) {
+  uintptr_t ptr = (uintptr_t)addr;
+  ptr = (ptr + alignment - 1) & (~(alignment - 1));
+  return (void *)ptr;
+}
+
 /* Create a new thread, with frame pointer size, and sync counter */
-void *
-__builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
-{
+void *__builtin_ia32_tcreate(size_t sc, size_t size, void *wfn, bool has_lp) {
   wstream_df_frame_p frame_pointer;
   barrier_p cbar = current_barrier;
   wstream_df_thread_p cthread = current_thread;
+#if WQUEUE_PROFILE
+  // Allocating more place for profiling data
+  size_t extra_size =
+      num_numa_nodes * sizeof(*frame_pointer->bytes_prematch_nodes) +
+      alignof(int) +
+      num_numa_nodes * sizeof(*frame_pointer->bytes_reuse_nodes) +
+      alignof(int) +
+      wstream_num_workers * sizeof(*frame_pointer->bytes_cpu_in) +
+      alignof(int) +
+      wstream_num_workers * sizeof(*frame_pointer->cache_misses) +
+      alignof(long long) +
+      wstream_num_workers * sizeof(*frame_pointer->bytes_cpu_ts) +
+      alignof(long long);
+#else
+  size_t extra_size = 0;
+#endif
 
   __compiler_fence;
 
@@ -202,26 +225,57 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   trace_tcreate(cthread, NULL);
 
 #if ALLOW_WQEVENT_SAMPLING
-  int curr_idx = cthread->num_events-1;
-#endif
-  frame_pointer = slab_alloc(cthread, cthread->slab_cache, size);
+  int curr_idx = cthread->num_events - 1;
+#endif // ALLOW_WQEVENT_SAMPLING
+  frame_pointer = slab_alloc(cthread, cthread->slab_cache, size + extra_size);
 
   //  printf("F+ Allocating %p\n", frame_pointer);
 
-  frame_pointer->synchronization_counter = sc+1;
+  frame_pointer->synchronization_counter = sc + 1;
   frame_pointer->size = size;
-  frame_pointer->last_owner = cthread->worker_id;
+  frame_pointer->work_fn = (void (*)(void *))wfn;
+  frame_pointer->refcount = 1;
+  frame_pointer->input_view_chain = NULL;
+  frame_pointer->output_view_chain = NULL;
+
+#if WQUEUE_PROFILE
+
+  // The slab alocator is expensive (mainly spinlock), so reducing the calls to
+  // the allocator to one per task creation is necessary for fine grained
+  // programs.
+
+  // Compute profiling array address within the extra space allocated after the
+  // frame
+  char *fp = (char *)frame_pointer;
+  fp += size;
+  memset(fp, 0, extra_size);
+
+  fp = align_up(fp, alignof(int));
+  frame_pointer->bytes_prematch_nodes = (int *)fp;
+  fp += num_numa_nodes * sizeof(int);
+
+  frame_pointer->bytes_reuse_nodes = (int *)fp;
+  fp += num_numa_nodes * sizeof(int);
+
+  frame_pointer->bytes_cpu_in = (int *)fp;
+  fp += wstream_num_workers * sizeof(int);
+
+  fp = align_up(fp, alignof(long long));
+  frame_pointer->bytes_cpu_ts = (long long *)fp;
+  fp += wstream_num_workers * sizeof(long long);
+
+  frame_pointer->cache_misses = (long long *)fp;
+
   frame_pointer->steal_type = STEAL_TYPE_UNKNOWN;
-  frame_pointer->work_fn = (void (*) (void *)) wfn;
+  frame_pointer->last_owner = cthread->worker_id;
   frame_pointer->creation_timestamp = rdtsc() - cthread->tsc_offset;
   frame_pointer->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
   frame_pointer->dominant_input_data_node_id = -1;
   frame_pointer->dominant_input_data_size = 0;
   frame_pointer->dominant_prematch_data_node_id = -1;
   frame_pointer->dominant_prematch_data_size = 0;
-  frame_pointer->refcount = 1;
-  frame_pointer->input_view_chain = NULL;
-  frame_pointer->output_view_chain = NULL;
+
+#endif
 
 #if ALLOW_WQEVENT_SAMPLING
   cthread->events[curr_idx].tcreate.frame = (uint64_t)frame_pointer;
@@ -229,25 +283,17 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
 
   inc_wqueue_counter(&cthread->tasks_created, 1);
 
-  memset(frame_pointer->bytes_prematch_nodes, 0, sizeof(frame_pointer->bytes_prematch_nodes));
-  memset(frame_pointer->bytes_cpu_in, 0, sizeof(frame_pointer->bytes_cpu_in));
-  memset(frame_pointer->bytes_cpu_ts, 0, sizeof(frame_pointer->bytes_cpu_ts));
-  memset(frame_pointer->cache_misses, 0, sizeof(frame_pointer->cache_misses));
-  memset(frame_pointer->bytes_reuse_nodes, 0, sizeof(frame_pointer->bytes_reuse_nodes));
+  if (has_lp) {
+    barrier_p temp_bar = cbar;
+    cbar = wstream_df_create_barrier();
+    current_barrier = cbar;
+    cbar->save_barrier = temp_bar;
+  }
 
-  if (has_lp)
-    {
-      barrier_p temp_bar = cbar;
-      cbar = wstream_df_create_barrier ();
-      current_barrier = cbar;
-      cbar->save_barrier = temp_bar;
-    }
-
-  if (cbar == NULL)
-    {
-      cbar = wstream_df_create_barrier ();
-      current_barrier = cbar;
-    }
+  if (cbar == NULL) {
+    cbar = wstream_df_create_barrier();
+    current_barrier = cbar;
+  }
 
   cbar->barrier_counter_created++;
   frame_pointer->own_barrier = cbar;
@@ -257,49 +303,40 @@ __builtin_ia32_tcreate (size_t sc, size_t size, void *wfn, bool has_lp)
   return frame_pointer;
 }
 
-void get_max_worker(int* bytes_cpu, unsigned int num_workers,
-		    unsigned int* pmax_worker, int* pmax_data)
-{
-  int cpu;
+void get_max_worker(int *bytes_cpu, unsigned int num_workers,
+                    unsigned int *pmax_worker, int *pmax_data) {
   unsigned int max_worker = 0;
   int max_data = 0;
 
-  for(unsigned int worker_id = 0; worker_id < num_workers; worker_id++)
-    {
-      cpu = worker_id_to_cpu(worker_id);
+  for (unsigned int worker_id = 0; worker_id < num_workers; worker_id++) {
 
-      if(bytes_cpu[cpu] > max_data) {
-	max_data = bytes_cpu[cpu];
-	max_worker = worker_id;
-      }
+    if (bytes_cpu[worker_id] > max_data) {
+      max_data = bytes_cpu[worker_id];
+      max_worker = worker_id;
     }
+  }
 
   *pmax_worker = max_worker;
   *pmax_data = max_data;
 }
 
-void get_max_worker_same_node(int* bytes_cpu, unsigned int num_workers,
-			      unsigned int* pmax_worker, int* pmax_data,
-			      int numa_node_id)
-{
-  int cpu;
+void get_max_worker_same_node(int *bytes_cpu, unsigned int num_workers,
+                              unsigned int *pmax_worker, int *pmax_data,
+                              int numa_node_id) {
   unsigned int max_worker = 0;
   int max_data = 0;
 
-  for(unsigned int worker_id = 0; worker_id < num_workers; worker_id++)
-    {
-      cpu = worker_id_to_cpu(worker_id);
+  for (unsigned int worker_id = 0; worker_id < num_workers; worker_id++) {
 
-      if(bytes_cpu[cpu] > max_data) {
-	wstream_df_thread_p worker = wstream_df_worker_threads[worker_id];
+    if (bytes_cpu[worker_id] > max_data) {
+      wstream_df_thread_p worker = wstream_df_worker_threads[worker_id];
 
-	if(worker->numa_node->id == numa_node_id) {
-	  max_data = bytes_cpu[cpu];
-	  max_worker = worker_id;
-	}
+      if (worker->numa_node->id == numa_node_id) {
+        max_data = bytes_cpu[worker_id];
+        max_worker = worker_id;
       }
     }
-
+  }
   *pmax_worker = max_worker;
   *pmax_data = max_data;
 }
@@ -315,8 +352,6 @@ void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p 
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
-  unsigned int max_worker;
-  int max_data;
 
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
   wstream_df_thread_p cthread = current_thread;
@@ -324,11 +359,13 @@ tdecrease_n (void *data, size_t n, bool is_write)
   trace_state_change(cthread, WORKER_STATE_RT_TDEC);
 
   if(is_write) {
-    inc_wqueue_counter(&fp->bytes_cpu_in[cthread->cpu], n);
-    set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->cpu], rdtsc() - cthread->tsc_offset);
+#if WQUEUE_PROFILE
+    inc_wqueue_counter(&fp->bytes_cpu_in[cthread->worker_id], n);
+    set_wqueue_counter_if_zero(&fp->bytes_cpu_ts[cthread->worker_id], rdtsc() - cthread->tsc_offset);
 
-    if(fp->cache_misses[cthread->cpu] == 0)
-      fp->cache_misses[cthread->cpu] = mem_cache_misses(cthread);
+    if (fp->cache_misses[cthread->worker_id] == 0)
+      fp->cache_misses[cthread->worker_id] = mem_cache_misses(cthread);
+#endif
   }
 
   int sc = 0;
@@ -351,14 +388,18 @@ tdecrease_n (void *data, size_t n, bool is_write)
 
       update_numa_nodes_of_views(cthread, fp);
 
+#if ALLOW_WQEVENT_SAMPLING
       fp->last_owner = cthread->worker_id;
       fp->steal_type = STEAL_TYPE_PUSH;
       fp->ready_timestamp = rdtsc() - cthread->tsc_offset;
+#endif
 
 #if ALLOW_PUSHES
       int target_worker;
       /* Check whether the frame should be pushed somewhere else */
-      int beneficial = work_push_beneficial(fp, cthread, num_workers, &target_worker);
+      int beneficial =
+          work_push_beneficial(fp, cthread, wstream_num_workers,
+                               wstream_df_worker_threads, &target_worker);
 
 #ifdef PUSH_ONLY_IF_NOT_STOLEN_AND_CACHE_EMPTY
       int curr_stolen = (cthread->current_frame &&
@@ -486,10 +527,11 @@ void __built_in_wstream_df_determine_dominant_input_numa_node(void* f)
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache)
 {
 	wstream_df_thread_p cthread = current_thread;
-	wstream_df_frame_p fp = view->owner;
 
 	view->data = slab_alloc(cthread, slab_cache, size);
 
+#if ALLOW_WQEVENT_SAMPLING
+	wstream_df_frame_p fp = view->owner;
 	/* Update data statistics of the frame */
 	if(!slab_is_fresh(view->data)) {
 		int node_id = slab_numa_node_of(view->data);
@@ -497,6 +539,7 @@ void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t s
 		if(node_id >= 0)
 			fp->bytes_prematch_nodes[node_id] += size;
 	}
+#endif
 }
 
 void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
@@ -518,7 +561,7 @@ void __built_in_wstream_df_alloc_view_data(void* v, size_t size)
 
 void __built_in_wstream_df_alloc_view_data_deferred(void* v, size_t size)
 {
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	wstream_df_view_p view = v;
 	view->data = NULL;
 #else
@@ -576,23 +619,25 @@ void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n)
   __sync_add_and_fetch (&(fp->refcount), n);
 }
 
-void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt)
-{
-  wstream_df_thread_p cthread = current_thread;
-  int sc = __sync_sub_and_fetch (&bt->refcount, 1);
+#if USE_BROADCAST_TABLES
 
-  if(sc == 0) {
+void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt) {
+  wstream_df_thread_p cthread = current_thread;
+  int sc = __sync_sub_and_fetch(&bt->refcount, 1);
+
+  if (sc == 0) {
     /* Free local copies */
-    for(int i = 0; i < MAX_NUMA_NODES; i++) {
-      if(bt->node_src[i]) {
-	wstream_df_numa_node_p node = numa_node_by_id(i);
-	slab_free(&node->slab_cache, (void*)bt->node_src[i]);
+    for (unsigned i = 0; i < num_numa_nodes; i++) {
+      if (bt->node_src[i]) {
+        wstream_df_numa_node_p node = numa_node_by_id(i);
+        slab_free(&node->slab_cache, (void *)bt->node_src[i]);
       }
     }
-
     slab_free(cthread->slab_cache, bt);
   }
 }
+
+#endif
 
 /* In_view is the input view of the terminating task */
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
@@ -603,9 +648,11 @@ void __built_in_wstream_df_dec_view_ref(wstream_df_view_p in_view, size_t n)
 
   if(sc == 0) {
     /* If this is a reusing peek view check broadcast table */
+#if USE_BROADCAST_TABLES
     if(in_view->broadcast_table)
       dec_broadcast_table_ref(in_view->broadcast_table);
     else
+#endif // USE_BROADCAST_TABLES
 	__built_in_wstream_df_free_view_data(in_view);
   }
 }
@@ -717,7 +764,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 		  match_reuse_output_clause_with_input_clause(prod_view, view);
 	      }
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	      /* Data of the consumer view has not been allocated
 	       * yet. If we are the only producer, we further defer
 	       * allocation until the producer gets ready. Otherwise
@@ -784,7 +831,7 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 	      match_reuse_output_clause_with_input_clause(view, cons_view);
 	  }
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
 	  /* Data of the consumer view has not been allocated
 	   * yet. If we are the only producer, we further defer
 	   * allocation until the producer gets ready. Otherwise
@@ -829,111 +876,109 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 /* Threads and scheduling.  */
 /***************************************************************************/
 
-__attribute__((__optimize__("O1")))
-static void
-worker_thread (void)
-{
+__attribute__((__optimize__("O1"))) static void worker_thread(void) {
   wstream_df_thread_p cthread = current_thread;
 
   current_barrier = NULL;
 
   prng_init(&cthread->rands, cthread->worker_id);
-  cthread->last_steal_from = -1;
+#if CACHE_LAST_STEAL_VICTIM
+  cthread->last_steal_from = NULL;
+#endif // WQUEUE_PROFILE
 
   /* Worker 0 has already been initialized */
-  if(!cthread->tsc_offset_init) {
-    cthread->tsc_offset = get_tsc_offset(&global_tsc_ref, cthread->cpu);
+  if (!cthread->tsc_offset_init) {
+    cthread->tsc_offset =
+        get_tsc_offset(&global_tsc_ref, cthread->worker_id);
     cthread->tsc_offset_init = 1;
   }
 
   /* Enable barrier passing if needed.  */
-  if (cthread->swap_barrier != NULL)
-    {
-      barrier_p bar = cthread->swap_barrier;
-      cthread->swap_barrier = NULL;
-      try_pass_barrier (bar);
-      /* If a swap occurs in try_pass_barrier, then that swap is final
-	 and this stack is recycled, so no need to restore TLS local
-	 saves.  */
+  if (cthread->swap_barrier != NULL) {
+    barrier_p bar = cthread->swap_barrier;
+    cthread->swap_barrier = NULL;
+    try_pass_barrier(bar);
+    /* If a swap occurs in try_pass_barrier, then that swap is final
+       and this stack is recycled, so no need to restore TLS local
+       saves.  */
+  }
+
+  trace_state_change(cthread, WORKER_STATE_SEEKING);
+  while (true) {
+    if (cthread->yield) {
+      while (true) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+        nanosleep(&ts, NULL);
+      }
     }
-
-trace_state_change(cthread, WORKER_STATE_SEEKING);
-  while (true)
-    {
-      if(cthread->yield)
-	while(true) {
-	  struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000 };
-	  nanosleep(&ts, NULL);
-	}
-
 
 #if ALLOW_PUSHES
 #if !ALLOW_PUSH_REORDER
-      import_pushes(cthread);
+    import_pushes(cthread);
 #else
-      reorder_pushes(cthread);
+    reorder_pushes(cthread);
 #endif
 #endif
 
-      wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
+    wstream_df_frame_p fp = obtain_work(cthread, wstream_df_worker_threads);
 
-      if(fp != NULL)
-	{
-	  cthread->current_work_fn = fp->work_fn;
-	  cthread->current_frame = fp;
+    if (fp != NULL) {
+      cthread->current_work_fn = fp->work_fn;
+      cthread->current_frame = fp;
 
-	  wqueue_counters_enter_runtime(current_thread);
-	  trace_task_exec_start(cthread, fp);
-	  trace_state_change(cthread, WORKER_STATE_TASKEXEC);
+      wqueue_counters_enter_runtime(current_thread);
+      trace_task_exec_start(cthread, fp);
+      trace_state_change(cthread, WORKER_STATE_TASKEXEC);
 
-	  wqueue_counters_profile_rusage(cthread);
-	  update_papi(cthread);
-	  trace_runtime_counters(cthread);
+      wqueue_counters_profile_rusage(cthread);
+      update_papi(cthread);
+      trace_runtime_counters(cthread);
 
-	  fp->work_fn (fp);
+      fp->work_fn(fp);
 
-	  wqueue_counters_profile_rusage(cthread);
-	  trace_runtime_counters(cthread);
-	  update_papi(cthread);
+      wqueue_counters_profile_rusage(cthread);
+      trace_runtime_counters(cthread);
+      update_papi(cthread);
 
-	  __compiler_fence;
+      __compiler_fence;
 
-	  /* It is possible that the work function was suspended then
-	     its continuation migrated.  We need to restore TLS local
-	     saves.  */
+      /* It is possible that the work function was suspended then
+         its continuation migrated.  We need to restore TLS local
+         saves.  */
 
-	  /* WARNING: Hack to prevent GCC from deadcoding the next
-	     assignment (volatile qualifier does not prevent the
-	     optimization).  CTHREAD is guaranteed not to be null
-	     here.  */
-	  if (cthread != NULL)
-	    {
+      /* WARNING: Hack to prevent GCC from deadcoding the next
+         assignment (volatile qualifier does not prevent the
+         optimization).  CTHREAD is guaranteed not to be null
+         here.  */
+      if (cthread != NULL) {
 #ifdef __aarch64__
-	      __asm __volatile ("str %[current_thread], %[cthread]"
-				: [cthread] "=m" (cthread) : [current_thread] "r" (current_thread) : "memory");
+        __asm __volatile("str %[current_thread], %[cthread]"
+                         : [ cthread ] "=m"(cthread)
+                         : [ current_thread ] "r"(current_thread)
+                         : "memory");
 #else
-	      __asm__ __volatile__ ("mov %[current_thread], %[cthread]"
-				    : [cthread] "=m" (cthread) : [current_thread] "R" (current_thread) : "memory");
+        __asm__ __volatile__("mov %[current_thread], %[cthread]"
+                             : [ cthread ] "=m"(cthread)
+                             : [ current_thread ] "R"(current_thread)
+                             : "memory");
 #endif
-	    }
-	  __compiler_fence;
+      }
+      __compiler_fence;
 
-	  trace_task_exec_end(cthread, fp);
-	  cthread->current_work_fn = NULL;
-	  cthread->current_frame = NULL;
+      trace_task_exec_end(cthread, fp);
+      cthread->current_work_fn = NULL;
+      cthread->current_frame = NULL;
 
-	  trace_state_restore(cthread);
+      trace_state_restore(cthread);
 
-	  wqueue_counters_enter_runtime(current_thread);
-	  inc_wqueue_counter(&cthread->tasks_executed, 1);
-	}
-      else
-	{
-#ifndef _WS_NO_YIELD_SPIN
-	  sched_yield ();
+      wqueue_counters_enter_runtime(current_thread);
+      inc_wqueue_counter(&cthread->tasks_executed, 1);
+    } else {
+#if WS_NO_YIELD_SPIN
+      sched_yield();
 #endif
-	}
     }
+  }
 }
 
 void *
@@ -1047,182 +1092,146 @@ openstream_parse_affinity (unsigned short **cpus_out, size_t *num_cpus_out)
 
 int worker_id_to_cpu(unsigned int worker_id)
 {
-  return wstream_df_worker_threads[worker_id]->cpu;
+  return wstream_df_worker_threads[worker_id]->cpu->logical_index;
 }
 
-int cpu_to_worker_id(int cpu)
+static wstream_df_thread_p allocate_worker_struct(hwloc_obj_t on_cpu_mem)
 {
-  return wstream_df_worker_cpus[cpu];
-}
-
-int cpu_used(int cpu)
-{
-  return (cpu_to_worker_id(cpu) != -1);
-}
-
-wstream_df_thread_p allocate_worker_struct(int for_cpu)
-{
-	int node = mem_numa_node(for_cpu);
 	void* ptr;
 	size_t size = ROUND_UP(sizeof(wstream_df_thread_t), PAGE_SIZE);
 
 	if(posix_memalign(&ptr, PAGE_SIZE, size))
 		wstream_df_fatal("Memory allocation failed!");
 
-	wstream_df_alloc_on_node(ptr, size, node);
+  if(bind_memory_to_cpu_memspace(ptr, size, on_cpu_mem)) {
+    perror("hwloc_membind");
+  }
 
 	return ptr;
 }
 
 static void
-start_worker (wstream_df_thread_p wstream_df_worker, int ncores,
-	      unsigned short *cpu_affinities, size_t num_cpu_affinities,
+start_worker (wstream_df_thread_p wstream_df_worker, hwloc_obj_t cpu, size_t num_cpu_affinities,
 	      void *(*work_fn) (void *))
 {
   pthread_attr_t thread_attr;
-  unsigned int i;
-  int numa_node_id;
-  wstream_df_numa_node_p numa_node;
 
-  int id = wstream_df_worker->worker_id;
-
-  if (cpu_affinities == NULL)
-    wstream_df_worker->cpu = id % ncores;
-  else
-    wstream_df_worker->cpu = cpu_affinities[id % num_cpu_affinities];
-
-  numa_node_id = mem_numa_node(wstream_df_worker->cpu);
-  numa_node = numa_node_by_id(numa_node_id);
-  numa_node_add_thread(numa_node, wstream_df_worker);
+  unsigned numa_node = closest_numa_node_of_processing_unit(cpu);
+  numa_node_add_thread(numa_node_by_id(numa_node), wstream_df_worker);
 
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker->push_fifo);
 #endif
 
-#ifdef _PRINT_STATS
-  printf ("worker %d mapped to core %d\n", id, wstream_df_worker->cpu);
-#endif
-
   pthread_attr_init (&thread_attr);
   pthread_attr_setdetachstate (&thread_attr, PTHREAD_CREATE_DETACHED);
 
-  cpu_set_t cs;
-  CPU_ZERO (&cs);
-  CPU_SET (wstream_df_worker->cpu, &cs);
+  cpu_set_t cs = object_glibc_cpuset(wstream_df_worker->cpu);
 
-  if(cpu_used(wstream_df_worker->cpu)) {
-	  printf("WORKER %d fails for cpu %d!\n", wstream_df_worker->worker_id, wstream_df_worker->cpu);
-  }
-  assert(!cpu_used(wstream_df_worker->cpu));
-  wstream_df_worker_cpus[wstream_df_worker->cpu] = wstream_df_worker->worker_id;
-
-  int errno = pthread_attr_setaffinity_np (&thread_attr, sizeof (cs), &cs);
-  if (errno < 0)
-    wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
+  int error_val = pthread_attr_setaffinity_np(&thread_attr, sizeof(cs), &cs);
+  if (error_val < 0)
+    wstream_df_fatal("pthread_attr_setaffinity_np error: %s\n",
+                     strerror(error_val));
 
   void *stack = slab_alloc(NULL, wstream_df_worker_threads[0]->slab_cache, WSTREAM_STACK_SIZE);
-  errno = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
+  error_val = pthread_attr_setstack (&thread_attr, stack, WSTREAM_STACK_SIZE);
   wstream_df_worker->current_stack = stack;
 
-  pthread_create (&wstream_df_worker->posix_thread_id, &thread_attr,
-		  work_fn, wstream_df_worker);
+  error_val = pthread_create(&wstream_df_worker->posix_thread_id, &thread_attr,
+                             work_fn, wstream_df_worker);
+  if (error_val)
+    wstream_df_fatal("pthread_create error: %s\n", strerror(error_val));
 
-  CPU_ZERO (&cs);
-  errno = pthread_getaffinity_np (wstream_df_worker->posix_thread_id, sizeof (cs), &cs);
-  if (errno != 0)
-    wstream_df_fatal ("pthread_getaffinity_np error: %s\n", strerror (errno));
-
-  for (i = 0; i < CPU_SETSIZE; i++)
-    if (CPU_ISSET (i, &cs) && i != wstream_df_worker->cpu)
-      wstream_df_error ("got affinity to core %d, expecting %d\n", i, wstream_df_worker->cpu);
-
-  if (!CPU_ISSET (wstream_df_worker->cpu, &cs))
-    wstream_df_error ("no affinity to core %d\n", wstream_df_worker->cpu);
+  check_bond_to_cpu(wstream_df_worker->posix_thread_id, wstream_df_worker->cpu);
 
   pthread_attr_destroy (&thread_attr);
 }
 
 /* Use main as root task */
-void main(void);
+int main(void);
 
 __attribute__((constructor))
 void pre_main()
 {
-  int i, ncores;
   unsigned short *cpu_affinities = NULL;
   size_t num_cpu_affinities = 0;
-  int numa_node;
-  int worker0_cpu, cpu;
+  cpu_set_t cs;
+
+  if (!discover_machine_topology()) {
+    wstream_df_fatal("[hwloc] Cannot get architecture information from system");
+  }
+
+  /* Restrict topology to the CPU set */
+  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
+  if (num_cpu_affinities > 0) {
+    CPU_ZERO(&cs);
+    for (size_t j = 0; j < num_cpu_affinities; ++j)
+      CPU_SET(cpu_affinities[j], &cs);
+    if (!restrict_topology_to_glibc_cpuset(cs)) {
+      wstream_df_error("[hwloc] Warning: could not restrict cpuset");
+    }
+  }
+  free(cpu_affinities);
+
+  /* Restrict the topology according to the number of threads */
+  wstream_num_workers = num_available_processing_units();
+#ifndef _WSTREAM_DF_NUM_THREADS
+  if (getenv("OMP_NUM_THREADS")) {
+    unsigned omp_num_threads = atoi(getenv("OMP_NUM_THREADS"));
+    if (omp_num_threads > wstream_num_workers) {
+      fprintf(stderr,
+              "Warning: you are requesting more workers than available "
+              "processing units, falling back to %u workers\n",
+              wstream_num_workers);
+    } else {
+      wstream_num_workers = omp_num_threads;
+    }
+  }
+#endif
 
   init_transfer_matrix();
 
-  /* Set workers number as the number of cores.  */
-#ifndef _WSTREAM_DF_NUM_THREADS
-  if(getenv("OMP_NUM_THREADS"))
-    num_workers = atoi(getenv("OMP_NUM_THREADS"));
-  else
-    num_workers = wstream_df_num_cores_unbound ();
-#else
-  num_workers = _WSTREAM_DF_NUM_THREADS;
+#if HWLOC_VERBOSE
+  fprintf(stdout, "\n[HWLOC Info] Using %u workers distributed as:\n", wstream_num_workers);
+#endif
+  hwloc_obj_t *processor_mapping = NULL;
+  if (!distribute_worker_on_topology(wstream_num_workers, &processor_mapping,
+                                     WORKER_DISTRIBUTION_ALGORITHM)) {
+    wstream_df_error("[hwloc] Warning: could distribute workers on %d CPUs\n",
+                     wstream_num_workers);
+  }
+#if HWLOC_VERBOSE
+  fprintf(stdout, "\n[HWLOC Info] Worker placement topology:\n");
+  print_topology_tree(stdout);
 #endif
 
   if (posix_memalign ((void **)&wstream_df_worker_threads, 64,
-		      num_workers * sizeof (wstream_df_thread_t*)))
+		      wstream_num_workers * sizeof (wstream_df_thread_t*)))
     wstream_df_fatal ("Out of memory ...");
-
-  if (posix_memalign ((void **)&wstream_df_worker_cpus, 64,
-		      MAX_CPUS * sizeof (unsigned int)))
-    wstream_df_fatal ("Out of memory ...");
-
-  for(i = 0; i < MAX_CPUS; i++)
-    wstream_df_worker_cpus[i] = -1;
 
   /* Add a guard frame for the control program (in case threads catch
      up with the control program).  */
 
   tsc_reference_offset_init(&global_tsc_ref);
-  openstream_parse_affinity(&cpu_affinities, &num_cpu_affinities);
 
-  if (cpu_affinities == NULL)
-    worker0_cpu = 0;
-  else
-    worker0_cpu = cpu_affinities[0];
-
-  wstream_df_worker_threads[0] = allocate_worker_struct(worker0_cpu);
+  wstream_df_worker_threads[0] = allocate_worker_struct(processor_mapping[0]);
   current_thread = wstream_df_worker_threads[0];
-  current_thread->cpu = worker0_cpu;
   current_barrier = NULL;
+  // Store the thread structure for easy access to work deque
 
   numa_nodes_init();
 
-  wstream_df_worker_cpus[current_thread->cpu] = 0;
-
-  ncores = wstream_df_num_cores_unbound ();
-  __wstream_df_num_cores_cached = ncores;
-
-  numa_node = mem_numa_node(current_thread->cpu);
+  unsigned numa_node = closest_numa_node_of_processing_unit(processor_mapping[0]);
   numa_node_add_thread(numa_node_by_id(numa_node), current_thread);
-  wstream_df_default_node = numa_node_by_id(numa_node);
-
-  trace_init(current_thread);
 
 #if ALLOW_PUSHES
   fifo_init(&wstream_df_worker_threads[0]->push_fifo);
 #endif
 
-#ifdef _PRINT_STATS
-  printf ("Creating %d workers for %d cores\n", num_workers, ncores);
-#endif
-
-  for (i = 0; i < num_workers; ++i)
+  for (unsigned i = 0; i < wstream_num_workers; ++i)
     {
-      if (cpu_affinities == NULL)
-	cpu = i % ncores;
-      else
-	cpu = cpu_affinities[i % num_cpu_affinities];
-
       if(i != 0)
-	wstream_df_worker_threads[i] = allocate_worker_struct(cpu);
+        wstream_df_worker_threads[i] = allocate_worker_struct(processor_mapping[i]);
 
       cdeque_init (&wstream_df_worker_threads[i]->work_deque, WSTREAM_DF_DEQUE_LOG_SIZE);
       wstream_df_worker_threads[i]->worker_id = i;
@@ -1232,34 +1241,38 @@ void pre_main()
       wstream_df_worker_threads[i]->current_work_fn = NULL;
       wstream_df_worker_threads[i]->current_frame = NULL;
       wstream_df_worker_threads[i]->yield = 0;
+      wstream_df_worker_threads[i]->cpu = processor_mapping[i];
+      wstream_df_worker_threads[i]->cpu->userdata = wstream_df_worker_threads[i];
 #if !DISABLE_WQUEUE_LOCAL_CACHE
       wstream_df_worker_threads[i]->own_next_cached_thread = NULL;
 #endif // !DISABLE_WQUEUE_LOCAL_CACHE
-    
     }
+  
+    cs = object_glibc_cpuset(current_thread->cpu);
 
-  cpu_set_t cs;
-  CPU_ZERO (&cs);
-  CPU_SET (current_thread->cpu, &cs);
+    int error_val = pthread_setaffinity_np(pthread_self(), sizeof(cs), &cs);
+    if (error_val < 0)
+      wstream_df_fatal("pthread_attr_setaffinity_np error: %s\n",
+                       strerror(error_val));
+    check_bond_to_cpu(pthread_self(), current_thread->cpu);
 
-  int errno = pthread_setaffinity_np (pthread_self(), sizeof (cs), &cs);
-  if (errno < 0)
-    wstream_df_fatal ("pthread_attr_setaffinity_np error: %s\n", strerror (errno));
+    current_thread->tsc_offset =
+        get_tsc_offset(&global_tsc_ref, current_thread->worker_id);
+    current_thread->tsc_offset_init = 1;
 
-  current_thread->tsc_offset = get_tsc_offset(&global_tsc_ref, current_thread->cpu);
-  current_thread->tsc_offset_init = 1;
+    setup_wqueue_counters();
 
-  setup_wqueue_counters();
+    for (unsigned i = 1; i < wstream_num_workers; ++i)
+      start_worker(wstream_df_worker_threads[i], processor_mapping[i],
+                   num_cpu_affinities, wstream_df_worker_thread_fn);
 
-  for (i = 1; i < num_workers; ++i)
-    start_worker (wstream_df_worker_threads[i], ncores, cpu_affinities, num_cpu_affinities,
-		  wstream_df_worker_thread_fn);
+    init_wqueue_counters(wstream_df_worker_threads[0]);
 
-  free (cpu_affinities);
-  init_wqueue_counters(wstream_df_worker_threads[0]);
+    wstream_df_worker_threads[0]->current_work_fn = (void *)main;
+    wstream_df_worker_threads[0]->current_frame = NULL;
 
-  wstream_df_worker_threads[0]->current_work_fn = (void*)main;
-  wstream_df_worker_threads[0]->current_frame = NULL;
+  free(processor_mapping);
+  trace_init(current_thread);
 
 #if ALLOW_WQEVENT_SAMPLING
   if(signal(SIGUSR1, trace_signal_handler) == SIG_ERR)
@@ -1278,12 +1291,13 @@ void post_main()
      scheduler functions and exiting once it clears.  */
   wstream_df_taskwait ();
 
-  for (int i = 0; i < num_workers; ++i)
+  for (unsigned i = 0; i < wstream_num_workers; ++i)
     wstream_df_worker_threads[i]->yield = 1;
 
-  dump_events_ostv(num_workers, wstream_df_worker_threads);
-  dump_wqueue_counters(num_workers, wstream_df_worker_threads);
-  dump_transfer_matrix(num_workers);
+  dump_events_ostv(wstream_num_workers, wstream_df_worker_threads);
+  dump_wqueue_counters(wstream_num_workers, wstream_df_worker_threads);
+  dump_transfer_matrix(wstream_num_workers);
+  openstream_hwloc_cleanup();
 }
 
 
@@ -1374,35 +1388,6 @@ dec_stream_ref (void *s)
       force_empty_queues (s);
       slab_free(current_thread->slab_cache, s);
     }
-#if 0
-  int refcount = stream->refcount;
-
-  // debug --
-#ifdef _WSTREAM_DF_DEBUG
-  if (refcount < 1)
-    wstream_df_fatal ("Stream destructor called for a refcount < 1 (refcount == %d)", refcount);
-#endif
-
-  if (refcount > 1)
-    refcount = __sync_sub_and_fetch (&stream->refcount, 1);
-  else
-    {
-#ifdef _WSTREAM_DF_DEBUG
-      refcount = __sync_sub_and_fetch (&stream->refcount, 1);
-
-      if (refcount != 0)
-	wstream_df_fatal ("Stream destructor called for a refcount < 1 (refcount == %d)", refcount);
-#else
-      refcount = 0;
-#endif
-    }
-
-  if (refcount == 0)
-    {
-      force_empty_queues (s);
-      wstream_free(s, sizeof (wstream_df_stream_t));
-    }
-#endif
 }
 
 void
@@ -1477,7 +1462,9 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       }
 
       view->reuse_data_view = NULL;
+#if USE_BROADCAST_TABLES
       view->broadcast_table = NULL;
+#endif
       view->consumer_view = NULL;
       view->refcount = dummy_view->refcount;
 
@@ -1494,10 +1481,14 @@ static inline void
 broadcast (void *v)
 {
   wstream_df_view_p prod_view = (wstream_df_view_p) v;
-  wstream_df_thread_p cthread = current_thread;
-  wstream_df_broadcast_table_p bt = NULL;
 
+#if ALLOW_WQEVENT_SAMPLING || USE_BROADCAST_TABLES
+  wstream_df_thread_p cthread = current_thread;
+#endif
+
+#if ALLOW_WQEVENT_SAMPLING
   trace_state_change(cthread, WORKER_STATE_RT_BCAST);
+#endif
 
   size_t offset = prod_view->reached_position;
   size_t burst = prod_view->burst;
@@ -1511,7 +1502,8 @@ broadcast (void *v)
     return;
   }
 
-#ifdef USE_BROADCAST_TABLES
+#if USE_BROADCAST_TABLES
+  wstream_df_broadcast_table_p bt = NULL;
   /* If the producer's burst matches all of the the consumer's
    *  horizons then use a broadcast table */
   if(first_cons_view) {
@@ -1532,7 +1524,7 @@ broadcast (void *v)
     bt->refcount = 1;
     bt->node_src[bt->src_node] = first_cons_view->data;
   }
-#endif
+#endif // USE_BROADCAST_TABLES
 
   for(wstream_df_view_p peek_view = prod_view->sibling;
       peek_view;
@@ -1543,12 +1535,12 @@ broadcast (void *v)
 	 use_broadcast_table)
 	{
 	  /* Defer copy */
+#if USE_BROADCAST_TABLES
 	  peek_view->broadcast_table = bt;
 	  bt->refcount++;
-	}
-      else
-	{
-#ifdef DEFERRED_ALLOC
+#endif
+      } else {
+#if DEFERRED_ALLOC
 	  if(!peek_view->data)
 	    __built_in_wstream_df_alloc_view_data(peek_view, peek_view->horizon);
 #endif
@@ -1595,9 +1587,10 @@ __builtin_ia32_tick (void *s, size_t burst)
   wstream_df_list_p cons_queue = &stream->consumer_queue;
   wstream_df_view_p cons_view;
 
+#if WQUEUE_PROFILE
   wstream_df_thread_p cthread = current_thread;
-
   wqueue_counters_enter_runtime(cthread);
+#endif // WQUEUE_PROFILE
 
   if(cons_queue->active_peek_chain == NULL) {
 	  wstream_df_frame_p cons_frame;
@@ -1667,6 +1660,7 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
   assert(0);
 #endif
 
+#if ALLOW_WQEVENT_SAMPLING
   wstream_df_thread_p cthread = current_thread;
   wstream_df_view_p view = v;
 
@@ -1682,12 +1676,14 @@ void __built_in_wstream_df_trace_view_access(void* v, int is_write)
       if(!leader)
 	trace_data_read(cthread, 0, slab_size_of(view->data), 0, view->data);
       else
-	trace_data_read(cthread, leader->cpu, slab_size_of(view->data), 0, view->data);
+	trace_data_read(cthread, leader->cpu->logical_index, slab_size_of(view->data), 0, view->data);
   }
+#endif // ALLOW_WQEVENT_SAMPLING
 }
 
 void __built_in_wstream_df_trace_view_access_vec(size_t num, void* v, int is_write)
 {
+#if ALLOW_WQEVENT_SAMPLING
   wstream_df_view_p view = v;
 
   for (size_t i = 0; i < num; ++i)
@@ -1695,69 +1691,43 @@ void __built_in_wstream_df_trace_view_access_vec(size_t num, void* v, int is_wri
       wstream_df_view_p pview = &((wstream_df_view_p) view->next)[i];
       __built_in_wstream_df_trace_view_access(pview, is_write);
     }
+#endif // ALLOW_WQEVENT_SAMPLING
 }
 
+#if ALLOW_WQEVENT_SAMPLING
 static void trace_signal_handler(int sig)
 {
-  dump_events_ostv(num_workers, wstream_df_worker_threads);
+  dump_events_ostv(wstream_num_workers, wstream_df_worker_threads);
 }
-
-void openstream_start_hardware_counters_single(wstream_df_thread_p th)
-{
-#ifdef WS_PAPI_PROFILE
-	int err;
-
-	if(th->papi_num_events > 0) {
-		/* reset */
-		if ((err = PAPI_reset(th->papi_event_set)) != PAPI_OK) {
-			fprintf(stderr, "Could not reset counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
-
-		/* Start counting */
-		if ((err = PAPI_start(th->papi_event_set)) != PAPI_OK) {
-			fprintf(stderr, "Could not start counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
-
-		th->papi_count = 1;
-	}
 #endif
-}
-
-void openstream_pause_hardware_counters_single_timestamp(wstream_df_thread_p th, int64_t timestamp)
-{
-#ifdef WS_PAPI_PROFILE
-	int err;
-
-	if(th->papi_num_events > 0) {
-		long long dump[th->papi_num_events];
-
-		update_papi_timestamp(th, timestamp);
-		th->papi_count = 0;
-
-		/* Stop counting */
-		if ((err = PAPI_stop(th->papi_event_set, dump)) != PAPI_OK) {
-			fprintf(stderr, "Could not stop counters: %s!\n", PAPI_strerror(err));
-			exit(1);
-		}
-	}
-#endif
-}
 
 void openstream_pause_hardware_counters_single(wstream_df_thread_p th)
 {
-  openstream_pause_hardware_counters_single_timestamp(th, rdtsc());
+#if WS_PAPI_PROFILE
+	/* Event set will continue counting, but no values will be recorded */
+	if(th->papi_num_events > 0) {
+		th->papi_count = 0;
+	}
+#endif
 }
 
-void openstream_start_hardware_counters(void)
-{
-	wstream_df_thread_p cthread = current_thread;
+void openstream_start_hardware_counters(void) {
+#if ALLOW_WQEVENT_SAMPLING
+  wstream_df_thread_p cthread = current_thread;
+  trace_measure_start(cthread);
+#endif
 
-	trace_measure_start(cthread);
-
-	for(int i = 0; i < num_workers; i++)
-	  openstream_start_hardware_counters_single(wstream_df_worker_threads[i]);
+#if WS_PAPI_PROFILE
+	/* Potentially re-starting after stopping, so reset the values before reading
+	*  in order to discard counts from the unmonitored phase
+	*/
+	if(cthread->papi_num_events > 0){
+		for(unsigned i = 0; i < wstream_num_workers; i++){
+			wstream_df_worker_threads[i]->papi_reset = 1;
+			wstream_df_worker_threads[i]->papi_count = 1;
+		}
+	}
+#endif // WS_PAPI_PROFILE
 }
 
 void openstream_pause_hardware_counters(void)
@@ -1765,11 +1735,8 @@ void openstream_pause_hardware_counters(void)
 	int64_t local_ts = rdtsc();
 	wstream_df_thread_p cthread = current_thread;
 
-	for(int i = 0; i < num_workers; i++) {
-	  wstream_df_thread_p target_thread = wstream_df_worker_threads[i];
-	  openstream_pause_hardware_counters_single_timestamp(wstream_df_worker_threads[i],
-							      local_ts - cthread->tsc_offset + target_thread->tsc_offset);
-	}
+	for(unsigned i = 0; i < wstream_num_workers; i++) 
+	  openstream_pause_hardware_counters_single(wstream_df_worker_threads[i]);
 
 	trace_measure_end(cthread);
 }

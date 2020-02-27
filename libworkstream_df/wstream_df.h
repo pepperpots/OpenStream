@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <hwloc.h>
 
 #include "fibers.h"
 #include "cdeque.h"
@@ -59,6 +60,7 @@ extern void wstream_df_stream_array_dtor (void **, size_t);
    task.  */
 extern void wstream_df_stream_reference (void *, size_t);
 
+extern unsigned wstream_num_workers;
 
 /***************************************************************************/
 /* Data structures for T*.  */
@@ -87,7 +89,9 @@ typedef struct wstream_df_view
   size_t copy_count;
   size_t reuse_count;
   size_t ignore_count;
+#if USE_BROADCAST_TABLES
   struct wstream_df_broadcast_table* broadcast_table;
+#endif
 } wstream_df_view_t, *wstream_df_view_p;
 
 /* The stream data structure.  It only relies on two linked lists of
@@ -114,27 +118,29 @@ typedef struct wstream_df_frame
   int size;
   void (*work_fn) (void *);
   struct barrier *own_barrier;
+  size_t refcount;
+  wstream_df_view_p input_view_chain;
+  wstream_df_view_p output_view_chain;
+
+#if WQUEUE_PROFILE
 
   int steal_type;
   int last_owner;
-  int bytes_prematch_nodes[MAX_NUMA_NODES];
-  int bytes_cpu_in[MAX_CPUS];
-  long long bytes_cpu_ts[MAX_CPUS];
-  long long cache_misses[MAX_CPUS];
+  int *bytes_prematch_nodes;
+  int *bytes_cpu_in;
+  long long *bytes_cpu_ts;
+  long long *cache_misses;
   int64_t creation_timestamp;
   int64_t ready_timestamp;
 
-  int bytes_reuse_nodes[MAX_NUMA_NODES];
+  int *bytes_reuse_nodes;
   int dominant_input_data_node_id;
   size_t dominant_input_data_size;
   int dominant_prematch_data_node_id;
   size_t dominant_prematch_data_size;
 
-  size_t refcount;
-  wstream_df_view_p input_view_chain;
-  wstream_df_view_p output_view_chain;
-  /* Variable size struct */
-  //char buf [];
+#endif
+
 } wstream_df_frame_t, *wstream_df_frame_p;
 
 typedef struct barrier
@@ -210,13 +216,15 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 #endif // !DISABLE_WQUEUE_LOCAL_CACHE
 
   unsigned int rands;
-  unsigned int cpu;
+  hwloc_obj_t cpu;
   struct wstream_df_numa_node* numa_node;
   int64_t tsc_offset;
   int tsc_offset_init;
   int yield;
 
-  int last_steal_from;
+#if CACHE_LAST_STEAL_VICTIM
+  hwloc_obj_t last_steal_from;
+#endif
 
   void* current_work_fn;
   void* current_frame;
@@ -234,8 +242,6 @@ typedef struct __attribute__ ((aligned (64))) wstream_df_thread
 int wstream_self(void);
 
 int worker_id_to_cpu(unsigned int worker_id);
-int cpu_to_worker_id(int cpu);
-int cpu_used(int cpu);
 
 void get_max_worker(int* bytes_cpu, unsigned int num_workers,
 		    unsigned int* max_worker, int* max_data);
@@ -248,6 +254,10 @@ void __built_in_wstream_df_inc_frame_ref(wstream_df_frame_p fp, size_t n);
 void __built_in_wstream_df_dec_frame_ref(wstream_df_frame_p fp, size_t n);
 void __built_in_wstream_df_inc_view_ref(wstream_df_view_p view, size_t n);
 void __built_in_wstream_df_dec_view_ref(wstream_df_view_p view, size_t n);
+
+#if USE_BROADCAST_TABLES
 void dec_broadcast_table_ref(wstream_df_broadcast_table_p bt);
+#endif // USE_BROADCAST_TABLES
+
 
 #endif

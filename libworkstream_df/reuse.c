@@ -2,6 +2,7 @@
 #include "alloc.h"
 #include "numa.h"
 #include "broadcast.h"
+#include <assert.h>
 
 void __built_in_wstream_df_alloc_view_data_slab(wstream_df_view_p view, size_t size, slab_cache_p slab_cache);
 extern __thread wstream_df_thread_p current_thread;
@@ -67,14 +68,14 @@ void match_reuse_output_clause_with_reuse_input_clause(wstream_df_view_p out_vie
 
 void match_reuse_input_clause_with_output_clause(wstream_df_view_p out_view, wstream_df_view_p in_view)
 {
-  wstream_df_thread_p cthread = current_thread;
 
   reuse_view_sanity_check(out_view, in_view);
   in_view->reuse_data_view = NULL;
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
   out_view->consumer_view = in_view;
 #else
+  wstream_df_thread_p cthread = current_thread;
   /* The output clause assumes that it writes to a regular input
    * clause and expects in_view->data to be a valid pointer.
    * FIXME: Do not use local slab cache here */
@@ -93,7 +94,7 @@ void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wst
   assert(!is_reuse_view(in_view));
   assert(in_view->refcount == 1);
 
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
   if(!in_view->data) {
     match_reuse_output_clause_with_reuse_input_clause(out_view, in_view);
     return;
@@ -107,34 +108,27 @@ void match_reuse_output_clause_with_input_clause(wstream_df_view_p out_view, wst
   __built_in_wstream_df_inc_view_ref(out_view->reuse_associated_view, 1);
 }
 
-void __built_in_wstream_df_prepare_peek_data(void* v)
-{
-#ifdef USE_BROADCAST_TABLES
-  wstream_df_thread_p cthread = current_thread;
+#if USE_BROADCAST_TABLES
+void __built_in_wstream_df_prepare_peek_data(void *v) {
   wstream_df_view_p peek_view = v;
   wstream_df_broadcast_table_p bt = peek_view->broadcast_table;
-  int this_node_id = cthread->numa_node->id;
-  void* wait_for_update_val = (void*)1;
 
   /* Data pointer already assigned. Nothing to do */
-  if(peek_view->data)
+  if (peek_view->data)
     return;
 
-  peek_view->data = bt->node_src[bt->src_node];
+  peek_view->data = (void *)bt->node_src[bt->src_node];
   return;
-#endif
 }
 
-void __built_in_wstream_df_prepare_peek_data_vec(size_t n, void* v)
-{
-#ifdef USE_BROADCAST_TABLES
+void __built_in_wstream_df_prepare_peek_data_vec(size_t n, void *v) {
   wstream_df_view_p fake_view = v;
   wstream_df_view_p view_arr = fake_view->next;
 
-  for(size_t i = 0; i < n; i++)
+  for (size_t i = 0; i < n; i++)
     __built_in_wstream_df_prepare_peek_data(&view_arr[i]);
-#endif
 }
+#endif // USE_BROADCAST_TABLES
 
 /* The parameter v is a pointer to the fake output view of the task
  * that is to be executed.
@@ -250,7 +244,7 @@ void __built_in_wstream_df_prepare_data_vec(size_t n, void* v)
 
 void __built_in_wstream_df_reuse_update_data(void* v)
 {
-#ifdef DEFERRED_ALLOC
+#if DEFERRED_ALLOC
     const int deferred_alloc_enabled = 1;
 #else
     const int deferred_alloc_enabled = 0;
