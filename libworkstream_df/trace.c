@@ -79,7 +79,7 @@ void trace_runtime_counters(struct wstream_df_thread* cthread)
 #endif // PROFILE_RUSAGE
 
   uint64_t steals = 0;
-  for(int level = 0; level < topology_depth; level++)
+  for(unsigned level = 0; level < topology_depth; level++)
     steals += cthread->steals_mem[level];
 
   trace_counter(cthread, RUNTIME_COUNTER_BASE+RUNTIME_COUNTER_STEALS, steals);
@@ -522,7 +522,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 	    dsk_cre.counter_id = th->events[k].counter.counter_id;
 	    dsk_cre.value = th->events[k].counter.value;
 
-			fprintf(stderr,"Tracing counter id %d with value %llu.\n", th->events[k].counter.counter_id, th->events[k].counter.value);
+			fprintf(stderr,"Tracing counter id %" PRIu64 " with value %" PRId64 ".\n", th->events[k].counter.counter_id, th->events[k].counter.value);
 
 	    write_struct_convert(fp, &dsk_cre, sizeof(dsk_cre), trace_counter_event_conversion_table, 0);
 	  }

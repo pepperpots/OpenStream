@@ -525,7 +525,7 @@ void dump_wqueue_counters (unsigned int num_workers, wstream_df_thread_p* wstrea
 
 	memset(papi_counters_accum, 0, sizeof(papi_counters_accum));
 
-	for (int i = 0; i < num_workers; ++i) {
+	for (unsigned i = 0; i < num_workers; ++i) {
 		for(evt = 0; evt < papi_num_events; evt++) {
 			papi_counters_accum[evt] += wstream_df_worker_threads[i]->papi_counters[evt];
 		}

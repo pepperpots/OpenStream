@@ -1732,10 +1732,7 @@ void openstream_start_hardware_counters(void) {
 
 void openstream_pause_hardware_counters(void)
 {
-	int64_t local_ts = rdtsc();
-	wstream_df_thread_p cthread = current_thread;
-
-	for(unsigned i = 0; i < wstream_num_workers; i++) 
+	for(unsigned i = 0; i < wstream_num_workers; i++)
 	  openstream_pause_hardware_counters_single(wstream_df_worker_threads[i]);
 
 	trace_measure_end(cthread);
