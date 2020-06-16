@@ -1279,7 +1279,7 @@ void pre_main()
     fprintf(stderr, "Cannot install signal handler for SIGUSR1\n");
 #endif
 
-  #ifdef TRACE_RT_INIT_STATE
+  #if TRACE_RT_INIT_STATE
     trace_state_change(current_thread, WORKER_STATE_RT_INIT);
   #endif
 }

@@ -164,7 +164,7 @@
  * using OpenStream.
  */
 
-#define WQUEUE_PROFILE 1
+#define WQUEUE_PROFILE 0
 
 /*
  * MATRIX_PROFILE profiles the amount of information exchanged between the the
@@ -203,7 +203,7 @@
  * All tracing to disk requires WQUEUE_PROFILE and sufficient MAX_WQEVENT_SAMPLES
  */
 
-#define MAX_WQEVENT_SAMPLES 100000000
+#define MAX_WQEVENT_SAMPLES 0 // 100000000
 #define WQEVENT_SAMPLING_OUTFILE_ENV_VAR "WQEVENT_SAMPLING_OUTFILE"
 #define WQEVENT_SAMPLING_OUTFILE "events.ost"
 
@@ -212,7 +212,7 @@
  * first state will be a work seeking state.
  */
 
-#define TRACE_RT_INIT_STATE
+#define TRACE_RT_INIT_STATE 1
 
 /*
  * If MAX_WQEVENT_CYCLES set to 0 or more, trace event samples will only be recorded
@@ -226,19 +226,19 @@
  * Enable communication events (steal, push, data read, data write) to be traced
  */
 
-#define TRACE_COMMUNICATION 1
+#define TRACE_COMMUNICATION 0
 
 /*
  * Enable runtime counters (wq_length, num tcreates, rusage events, etc) to be traced
  */
 
-#define TRACE_QUEUE_STATS 1
+#define TRACE_QUEUE_STATS 0
 
 /*
  * Enable worker states events (steal, push, data read, data write) to be traced
  */
 
-#define TRACE_WORKER_STATES 1
+#define TRACE_WORKER_STATES 0
 
 /*
  * Enable PAPI events to be traced
@@ -249,7 +249,7 @@
  * 		- WS_PAPI_MULTIPLEX provides the default multiplexing setting, if not user-provided
  */
 
-#define WS_PAPI_PROFILE 1
+#define WS_PAPI_PROFILE 0
 #if WS_PAPI_PROFILE
 	#define WS_PAPI_MAX_NUM_EVENTS 45
 	#define WS_PAPI_EVENTS_ENV_VAR "WS_PAPI_EVENTS"

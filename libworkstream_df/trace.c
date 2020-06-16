@@ -385,7 +385,7 @@ void dump_events_ostv(int num_workers, wstream_df_thread_p* wstream_df_worker_th
 	    state_durations[state] += th->events[k].time - th->events[last_state_idx].time;
 	    total_duration += th->events[k].time - th->events[last_state_idx].time;
 	  } else {
-#ifdef TRACE_RT_INIT_STATE
+#if TRACE_RT_INIT_STATE
 	    /* First state change, by default the initial state is "initialization" */
 	    if(do_dump) {
 	      dsk_se.header.type = EVENT_TYPE_STATE;
