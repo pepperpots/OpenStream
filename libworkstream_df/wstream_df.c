@@ -352,6 +352,8 @@ void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p 
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
+  if (!n)
+    return;
 
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
   wstream_df_thread_p cthread = current_thread;
@@ -717,6 +719,13 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
 
   wstream_df_frame_p fp = view->owner;
   int defer_further = 0;
+
+  if (!view->horizon)
+  {
+    if (!is_read_view_p)
+      tdecrease_n (fp, 1, 0);
+    return;
+  }
 
   if(is_read_view_p)
     check_add_view_to_chain(&fp->input_view_chain, view);
