@@ -1460,8 +1460,6 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       view->burst = dummy_view->burst;
       view->horizon = dummy_view->horizon;
 
-      assert(view->horizon != 0);
-
       view->owner = dummy_view->owner;
 
       if(!dummy_view->reuse_associated_view) {
