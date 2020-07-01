@@ -727,12 +727,12 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
     return;
   }
 
+  trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
+
   if(is_read_view_p)
     check_add_view_to_chain(&fp->input_view_chain, view);
   else
     check_add_view_to_chain(&fp->output_view_chain, view);
-
-  trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
 
   pthread_mutex_lock (&stream->stream_lock);
 
