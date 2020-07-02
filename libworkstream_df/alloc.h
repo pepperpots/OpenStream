@@ -454,6 +454,25 @@ slab_free (slab_cache_p slab_cache, void *e)
     }
 }
 
+static inline void *slab_realloc(slab_cache_p slab_cache, void *e,
+                                 size_t size) {
+  slab_metainfo_p metainfo = NULL;
+  if (e) {
+    metainfo = slab_metainfo(e);
+  }
+  if (!e || (e && size > metainfo->size)) {
+    void *new_alloc = slab_alloc(NULL, slab_cache, size);
+    if (e) {
+      new_alloc =
+          memcpy(new_alloc, e, size < metainfo->size ? size : metainfo->size);
+      slab_free(slab_cache, e);
+    }
+    return new_alloc;
+  } else {
+    return e;
+  }
+}
+
 static inline void
 slab_init_allocator (slab_cache_p slab_cache, unsigned int allocator_id)
 {
