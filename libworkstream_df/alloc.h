@@ -430,6 +430,8 @@ retry:
 static inline void
 slab_free (slab_cache_p slab_cache, void *e)
 {
+  if (!e)
+    return;
   slab_p elem = (slab_p) e;
   slab_metainfo_p metainfo = slab_metainfo(e);
   unsigned int idx = get_slab_index (metainfo->size);
