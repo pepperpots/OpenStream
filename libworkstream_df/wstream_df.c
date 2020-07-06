@@ -1297,7 +1297,6 @@ void post_main()
   dump_events_ostv(wstream_num_workers, wstream_df_worker_threads);
   dump_wqueue_counters(wstream_num_workers, wstream_df_worker_threads);
   dump_transfer_matrix(wstream_num_workers);
-  openstream_hwloc_cleanup();
 }
 
 
