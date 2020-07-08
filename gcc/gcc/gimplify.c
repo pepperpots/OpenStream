@@ -3088,15 +3088,21 @@ gimplify_compound_lval (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 
 		  gcc_assert (TREE_CODE (view) == VAR_DECL);
 
-		  /* A view struct currently contains 7 integers and 9
+		  /* A view struct currently contains 7 integers and 9 or 8
 		     pointers.  This ugly size evaluation should be
 		     replaced with something less fragile.  */
 		  t1 = fold_build2 (MULT_EXPR, size_type_node,
 				    TYPE_SIZE_UNIT (size_type_node),
 				    size_int (7));
+#if USE_BROADCAST_TABLES
 		  t2 = fold_build2 (MULT_EXPR, size_type_node,
 				    TYPE_SIZE_UNIT (ptr_type_node),
 				    size_int (9));
+#else
+		  t2 = fold_build2 (MULT_EXPR, size_type_node,
+				    TYPE_SIZE_UNIT (ptr_type_node),
+				    size_int (8));
+#endif
 		  view_struct_size = fold_build2 (PLUS_EXPR, size_type_node,
 						  t1, t2);
 		  offset = fold_build2 (MULT_EXPR, size_type_node,
