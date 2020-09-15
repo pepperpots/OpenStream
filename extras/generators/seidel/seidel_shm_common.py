@@ -3,6 +3,10 @@
 import sys
 from seidel_positions import *
 import seidel_common
+from functools import reduce
+
+def ilen(iterable):
+    return reduce(lambda sum, element: sum + 1, iterable, 0)
 
 def dump_terminal_task(config, pref):
     if config["debug_printf"]:
@@ -257,7 +261,7 @@ def dump_seidel_fun(config):
                     zerodims = comb[0]
                     freedims = comb[1]
 
-                    sys.stdout.write(indent+"/* Intro: "+("-".join(freedims))+" "+seidel_common.geom_name(len(freedims))+" */\n");
+                    sys.stdout.write(indent+"/* Intro: "+("-".join(freedims))+" "+seidel_common.geom_name(ilen(freedims))+" */\n");
                     bounds = map(lambda x: x in zerodims and ["0", "1"] or ["1", "block_size_"+x], config["dim_names"])
                     dump_seidel_fun_loopnest(config, indent, mode, bounds)
         elif mode == "main":
@@ -270,7 +274,7 @@ def dump_seidel_fun(config):
                     zerodims = comb[0]
                     freedims = comb[1]
 
-                    sys.stdout.write(indent+"/* Outro: "+("-".join(freedims))+" "+seidel_common.geom_name(len(freedims))+" */\n");
+                    sys.stdout.write(indent+"/* Outro: "+("-".join(freedims))+" "+seidel_common.geom_name(ilen(freedims))+" */\n");
                     bounds = map(lambda x: x in zerodims and ["block_size_"+x+"-1", "block_size_"+x] or ["1", "block_size_"+x+"-1"], config["dim_names"])
                     dump_seidel_fun_loopnest(config, indent, mode, bounds)
 
