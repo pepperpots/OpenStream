@@ -141,6 +141,9 @@ void __built_in_wstream_df_prepare_data(void* v)
   wstream_df_view_p out_view = v;
   int force_reuse = 0;
 
+  if (!out_view->horizon)
+    return;
+
   /* View of a direct consumer of the task to be executed */
   wstream_df_view_p consumer_view = out_view->consumer_view;
 

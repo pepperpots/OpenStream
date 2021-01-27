@@ -352,6 +352,8 @@ void update_numa_nodes_of_views(wstream_df_thread_p cthread, wstream_df_frame_p 
 static inline void
 tdecrease_n (void *data, size_t n, bool is_write)
 {
+  if (!n)
+    return;
 
   wstream_df_frame_p fp = (wstream_df_frame_p) data;
   wstream_df_thread_p cthread = current_thread;
@@ -718,12 +720,19 @@ wstream_df_resolve_dependences (void *v, void *s, bool is_read_view_p)
   wstream_df_frame_p fp = view->owner;
   int defer_further = 0;
 
+  if (!view->horizon)
+  {
+    if (!is_read_view_p)
+      tdecrease_n (fp, 1, 0);
+    return;
+  }
+
+  trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
+
   if(is_read_view_p)
     check_add_view_to_chain(&fp->input_view_chain, view);
   else
     check_add_view_to_chain(&fp->output_view_chain, view);
-
-  trace_state_change(current_thread, WORKER_STATE_RT_RESDEP);
 
   pthread_mutex_lock (&stream->stream_lock);
 
@@ -1449,8 +1458,6 @@ wstream_df_resolve_n_dependences (size_t n, void *v, void *s, bool is_read_view_
       /* Only connections with the same burst are allowed for now.  */
       view->burst = dummy_view->burst;
       view->horizon = dummy_view->horizon;
-
-      assert(view->horizon != 0);
 
       view->owner = dummy_view->owner;
 
